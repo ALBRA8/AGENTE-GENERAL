@@ -9,13 +9,49 @@ CORE_ONLY mode (no external credentials).
 The script depends on the Python stdlib only — it bootstraps `sys.path`
 to point at the project's `src/` directory so it is runnable from ANY cwd.
 
-Each of the 16 required checks prints `[PASS]` or `[FAIL]` with details; the
-script exits 1 if ANY required check fails. `CLEAN-ROOM: PASS` is
-printed only when ALL required checks pass. Check 17 (A2A-CHECK) is
+Each of the 16 required PASS/FAIL checks prints `[PASS]` or `[FAIL]` with
+details; the script exits 1 if ANY required check fails. `CLEAN-ROOM: PASS`
+is printed only when ALL required checks pass. Check 17 (A2A-CHECK) is
 OPTIONAL (required=False): it probes the A2A translation layer
 (AgentCard derivation from AgentManifest) but a SKIP there does NOT
 fail the clean-room verification, because A2A is not needed for a
 CORE_ONLY birth.
+
+Check R (REPRODUCIBILITY-NOTES) is INFORMATIONAL (required=True but
+always passes): it documents what this script actually verifies vs what
+would need an external CI to verify (fresh venv, fresh git clone, real
+network A2A interop, multiple Python versions, external providers). It
+does NOT add new verification — it makes the existing scope honest and
+discoverable.
+
+WHAT THIS SCRIPT VERIFIES (real checks, run in this process tree):
+  1. Package imports cleanly from a fresh subprocess with sanitized env
+  2. Required deps (pydantic/structlog/dotenv) importable in this env
+  3. SeedConfig.from_env() works with no env → CORE_ONLY detected
+  4. Runtime.startup() + readiness()==True
+  5. pytest tests/ passes (444 tests)
+  6. import albra_seed; __seed_version__ accessible
+  7. Agent.run("hello") returns AgentResponse
+  8. runtime.health() returns dict
+  9. runtime.readiness() returns True
+ 10. All golden flows pass (13)
+ 11. FastAPI create_app + GET /api/v1/health (if fastapi installed)
+ 12. CLI main(["health"]) returns 0
+ 13. Memory write/read/isolation
+ 14. Audit append + tamper-evident chain verification
+ 15. Firewall default-deny
+ 16. Doctor.diagnose() returns DiagnosticReport
+ 17. (optional) A2A AgentCard derivable from Manifest
+
+WHAT THIS SCRIPT DOES NOT VERIFY (would need external CI):
+  - Fresh virtualenv creation (assumes deps already installed)
+  - Clone from a git remote (assumes you're already in the checkout)
+  - `pip install -e .` from scratch
+  - Multiple Python version compatibility
+  - Real network A2A interoperability (uses httpx.ASGITransport in tests)
+  - External provider integration (CORE_ONLY mode only)
+
+For the full manual clean-room recipe, see `docs/CLEANROOM.md` §10.
 
 Usage:
     python scripts/clean_room_verify.py
@@ -470,6 +506,107 @@ def check_a2a(rep: Report) -> None:
         ))
 
 
+def check_reproducibility_notes(rep: Report) -> None:
+    """R. REPRODUCIBILITY-NOTES (INFORMATIONAL): documents what this
+    clean-room verification actually verifies vs what would need an
+    external CI to verify. Always passes (informational documentation,
+    not a PASS/FAIL gate).
+
+    This check exists to make the verification scope HONEST and
+    discoverable: anyone reading the clean-room report can see at a
+    glance which guarantees are real (verified in this process tree)
+    and which would need additional CI infrastructure (fresh venv, git
+    clone, multiple Python versions, live network A2A interop, external
+    provider integration).
+    """
+    details = """
+CLEAN-ROOM VERIFICATION SCOPE
+==============================
+
+WHAT THIS SCRIPT VERIFIES (real checks, run in this process tree):
+ 1. Package imports cleanly from a fresh subprocess with sanitized
+    environment (ALBRA_* and provider keys stripped)
+ 2. Required dependencies (pydantic, structlog, dotenv) are importable
+    in the current interpreter (NOTE: assumes they were installed via
+    `pip install -e .` or equivalent — does NOT install from scratch)
+ 3. SeedConfig.from_env() works with no env vars → CORE_ONLY mode
+    detected
+ 4. Runtime.startup() succeeds → readiness() returns True
+ 5. pytest tests/ passes (444 tests as of this release)
+ 6. `import albra_seed; __seed_version__` returns "ALBRA_SEED_V1.0"
+ 7. Agent.run("hello") returns an AgentResponse with non-empty content
+    (uses Mock provider — CORE_ONLY mode)
+ 8. runtime.health() returns a dict containing the "status" key
+ 9. runtime.readiness() returns True
+10. All 13 golden flows pass (tests/golden/test_golden_flows.py)
+11. FastAPI create_app + TestClient GET /api/v1/health returns 200
+    with "status" in body (SKIP if fastapi not installed)
+12. CLI `albra health` returns exit code 0
+13. Memory write/read/isolation works (agent A's records are invisible
+    to agent B; agent_id + user_id + domain + context_id composite key)
+14. Audit log append + tamper-evident chain verification works
+    (verify_chain() returns valid=True; mutate an entry → valid=False)
+15. Firewall default-deny works (no rules → unknown action denied with
+    reason="no_matching_rule")
+16. Doctor.diagnose() returns a DiagnosticReport with at least the
+    components: runtime, memory, providers, tools, audit, security
+17. (OPTIONAL) A2A AgentCard can be built from an AgentManifest
+
+WHAT THIS SCRIPT DOES NOT VERIFY (would need external CI):
+- Fresh virtualenv creation (assumes deps already installed in the
+  current interpreter)
+- Clone from a git remote (assumes you are already inside the checkout
+  you want to verify)
+- `pip install -e .` from scratch (does NOT exercise pyproject.toml
+  install metadata, entry_points, console_scripts)
+- Multiple Python version compatibility (only the current interpreter)
+- Real network A2A interoperability (the test suite uses
+  httpx.ASGITransport, not live HTTP to a remote agent)
+- External provider integration (OpenAI / Anthropic / Groq / Ollama /
+  ZAI) — CORE_ONLY mode only; optional providers are checked for
+  import-ability but never invoked with real credentials
+
+EXTERNAL A2A INTEROP — BEST-EFFORT VERIFICATION:
+The closest thing to real-network A2A interop that can be verified
+without a live remote agent is `tests/a2a/test_external_interop.py`,
+which spins up a non-ALBRA FastAPI fixture implementing the A2A 1.0
+wire format and talks to it via httpx.ASGITransport (in-process, no
+real network socket). 18 tests cover discover/send/get_status/cancel
+in both directions (ALBRA→Remote and Remote→ALBRA) plus ALBRA↔ALBRA
+end-to-end. This is the BEST that can be done in a single-process
+verification run; true cross-host interop would require a CI job that
+deploys a second agent on a separate machine.
+
+TO PERFORM A FULL CLEAN-ROOM VERIFICATION (external CI):
+ 1. Clone the repo into a fresh directory:
+       git clone https://github.com/ALBRA8/AGENTE-GENERAL.git fresh-checkout
+    cd fresh-checkout
+ 2. Create and activate a fresh virtualenv:
+       python -m venv .venv
+       source .venv/bin/activate        # Linux/macOS
+       .venv\\Scripts\\activate          # Windows
+ 3. Install the package + dev extras:
+       pip install -e .[dev]
+    (or: pip install -e . && pip install pytest httpx fastapi)
+ 4. Run the clean-room verification:
+       python scripts/clean_room_verify.py
+ 5. All 16 required PASS/FAIL checks + check R (informational) + the
+    optional checks (2b INSTALL-LIKE optional deps, 17 A2A-CHECK)
+    must PASS. Exit code must be 0.
+
+NOTE: This check is `required=True` but always passes. It is
+documentation, NOT a verification gate. Its purpose is to make the
+scope of the clean-room verification honest and discoverable so that
+readers of the report understand exactly what is and is not covered.
+"""
+    rep.add(CheckResult(
+        name="R. REPRODUCIBILITY-NOTES (informational scope doc)",
+        passed=True,
+        required=True,
+        details=details.strip(),
+    ))
+
+
 # --------------------------------------------------------------------------- #
 # Main                                                                         #
 # --------------------------------------------------------------------------- #
@@ -489,7 +626,8 @@ def main() -> int:
                check_init_from_scratch, check_test_run, check_build,
                check_startup, check_health_readiness, check_golden_flows,
                check_api, check_cli, check_memory, check_audit,
-               check_firewall, check_doctor, check_a2a):
+               check_firewall, check_doctor, check_a2a,
+               check_reproducibility_notes):
         fn(rep)
 
     print("\n" + "=" * 72)

@@ -49,6 +49,6 @@
 | learning | VERIFIED | IMPLEMENTED | PASS | none | HIGH | tests/unit/test_learning.py | LearningManager + ProposalStatus pipeline (PROPOSED→REVIEW→APPROVE→APPLY) with HITL gate |
 | decision_memory | VERIFIED | IMPLEMENTED | PASS | none | MEDIUM | tests/unit/test_decision_memory.py | DecisionRecord wrapper on MemoryRecord(memory_type=DECISION); non-destructive extension of MemoryDV |
 | skill_evolution | VERIFIED | IMPLEMENTED | PASS | none | MEDIUM | tests/unit/test_skill_evolution.py | SkillMetrics + ImprovementProposal + SkillEvolutionManager; extends existing SkillRegistry (not replaces) |
-| parity | VERIFIED | IMPLEMENTED | PASS | none | LOW | tests/genetic/test_parity.py | ParityChecker + UNIVERSAL_DNA_COMPONENTS (98 entries) + ParityReport; verifies specialized agent preserves universal DNA |
+| parity | VERIFIED | IMPLEMENTED | PASS | none | LOW | tests/genetic/test_parity.py | ParityChecker + UNIVERSAL_DNA_COMPONENTS (106 entries) + ParityReport; verifies specialized agent preserves universal DNA |
 | contamination | VERIFIED | IMPLEMENTED | PASS | none (pathlib only) | LOW | tests/contamination/test_contamination.py | ContaminationScanner + 24 forbidden domain keywords + 4 code patterns; detects domain contamination in src/albra_seed/ |
 | a2a | VERIFIED | IMPLEMENTED | PASS | none (InProcessTransport always available; HTTPTransport lazy-imports httpx) | MEDIUM | tests/a2a/test_a2a.py | A2A adapter layer on Handoff; AgentCard derived from Manifest; InProcessTransport always available; HTTPTransport lazy httpx |

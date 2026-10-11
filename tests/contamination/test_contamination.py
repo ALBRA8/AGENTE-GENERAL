@@ -5,7 +5,7 @@ polluted by domain knowledge from any ALBRA specialization
 These tests exercise :class:`ContaminationScanner` against:
 
   * synthetic temp trees (positive + negative cases), and
-  * the actual ALBRA Seed checkout at ``/home/z/my-project/agent-general``
+  * the actual ALBRA Seed checkout at ``<project_root>``
     (the seed MUST be CLEAN — zero critical findings).
 
 The scanner enforces the SEED's core invariant: a specialization is
@@ -34,7 +34,7 @@ from albra_seed.contamination import (
 # tests/contamination/test_contamination.py
 #   parents[0] = tests/contamination
 #   parents[1] = tests
-#   parents[2] = project root (/home/z/my-project/agent-general)
+#   parents[2] = project root (this checkout, wherever it lives)
 SEED_PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -229,10 +229,11 @@ def test_scanner_case_insensitive(tmp_path: Path) -> None:
 
 
 def test_scanner_clean_seed() -> None:
-    """Scan the real Seed at ``/home/z/my-project/agent-general/`` and
-    verify zero critical findings. Any false positive here means the
-    keyword list or ALLOWED_PATHS needs adjustment — NOT the seed
-    code itself."""
+    """Scan the real Seed at ``<project_root>/`` (resolved from this
+    test file's own location via ``parents[2]``) and verify zero
+    critical findings. Any false positive here means the keyword
+    list or ALLOWED_PATHS needs adjustment — NOT the seed code
+    itself."""
     assert SEED_PROJECT_ROOT.exists(), (
         f"seed project root not found at {SEED_PROJECT_ROOT}"
     )

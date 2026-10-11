@@ -28,7 +28,7 @@ EXTERNAL_DEPENDENCY / NOT_CONFIGURED rather than masked.
 Outputs:
     1. Markdown table to stdout.
     2. The same table saved to:
-         /home/z/my-project/agent-general/docs/AUDIT_MATRIX.md
+         <project_root>/docs/AUDIT_MATRIX.md
 
 Usage:
     python scripts/audit_matrix.py
@@ -916,7 +916,7 @@ def probe_parity() -> Row:
         risk="LOW",
         evidence=_evidence_for("genetic/test_parity.py"),
         notes=(
-            "ParityChecker + UNIVERSAL_DNA_COMPONENTS (98 entries) + "
+            "ParityChecker + UNIVERSAL_DNA_COMPONENTS (106 entries) + "
             "ParityReport; verifies specialized agent preserves universal DNA"
             if ok else err
         ),
@@ -935,7 +935,7 @@ def probe_contamination() -> Row:
     def _roundtrip() -> None:
         from albra_seed.contamination import ContaminationScanner
         scanner = ContaminationScanner(
-            project_root=Path("/home/z/my-project/agent-general"),
+            project_root=_PROJECT_ROOT,
         )
         report = scanner.scan()
         assert report is not None

@@ -20,6 +20,10 @@ A2A lives at the same level as MCP and Handoff — three integration
 channels feeding into the same shared execution / evidence / provenance /
 audit spine:
 
+> **Canonical certification record:** [`docs/CERTIFICATION.md`](CERTIFICATION.md).
+> A2A test counts (72 across 4 files) and overall counts (444) are mirrored
+> from that file.
+
 ```
                             ┌─────────────────────────────────────────┐
                             │            ALBRA AGENT (seed)            │
@@ -361,11 +365,14 @@ Honest reporting — no silent stubs that pretend to work:
 | Streaming responses (SSE / chunked)         | **NOT_IMPLEMENTED**   | Async iterator protocol not wired; v2 will add `send_streaming` |
 | Push notifications (webhook subscription)  | **NOT_IMPLEMENTED**   | Requires webhook registration endpoint + retry    |
 | Multimodal parts beyond `text`             | **PARTIAL**           | `A2AMessage`/`A2AArtifact` accept arbitrary parts dicts; only `text` and `data` parts are produced by the adapter. `file`, `image`, `audio` pass-through is not validated. |
-| HTTPTransport.send / get_status / cancel   | **NOT_IMPLEMENTED**   | `httpx` import works; HTTP request/response bodies NOT wired. Use `InProcessTransport`. |
-| External A2A discovery (well-known URL)   | **NOT_IMPLEMENTED**   | No `/.well-known/agent-card` HTTP endpoint exposed |
 | Multiple artifacts per task                | **PARTIAL**           | Adapter appends one artifact per response; clients may set more on the input but the adapter does not enrich them |
 | Role-based authorization (RBAC) step       | **NOT_IMPLEMENTED**   | Composed informally via `principal.roles` flowing into PolicyEngine; no dedicated RBAC layer |
 | Per-task progress events                  | **NOT_IMPLEMENTED**   | v1 returns final state only                         |
+
+The HTTP transport (`HTTPTransport.send` / `get_status` / `cancel` /
+`discover`) and the well-known discovery route (`/.well-known/agent-card.json`)
+were IMPLEMENTED in the A2A-GAP-A + A2A-GAP-B passes (see `tests/a2a/test_a2a_wire.py`,
+`tests/a2a/test_a2a_routes.py`, `tests/a2a/test_external_interop.py`).
 
 ---
 
@@ -393,8 +400,20 @@ returns a task with `state=COMPLETED`.
 
 ## 12. Testing
 
-**28 A2A tests**, 934 lines, in `tests/a2a/test_a2a.py`. All pass in
-<1s with no external dependencies.
+**72 A2A tests** across **4 files**. All pass in <1s with no external
+network (real HTTP is exercised via `httpx.MockTransport` and
+`httpx.ASGITransport`). Counts reproduced from
+[`docs/CERTIFICATION.md`](CERTIFICATION.md).
+
+| File                                  | Tests | Coverage                                                                 |
+| ------------------------------------- | ----- | ------------------------------------------------------------------------ |
+| `tests/a2a/test_a2a.py`                | 28    | Card mapping, translation, lifecycle, security, tracing, transport, error handling, idempotency, artifacts, registry |
+| `tests/a2a/test_a2a_wire.py`           | 16    | A2A 1.0 wire-format serialization (`agent_card_to_wire`, `task_to_wire`, JSON-RPC envelopes) + real HTTP transport via `httpx.MockTransport` |
+| `tests/a2a/test_a2a_routes.py`         | 10    | FastAPI routes via `TestClient`: `/.well-known/agent-card.json` + `/a2a/v1/` JSON-RPC dispatch (message/send, tasks/get, tasks/cancel, unknown method -32601, malformed body, Authorization header propagation, no-server 404) |
+| `tests/a2a/test_external_interop.py`   | 18    | ALBRA ↔ non-ALBRA reference agent (standalone FastAPI fixture with ZERO `albra_seed` imports) via real HTTP over `httpx.ASGITransport`. Covers discovery, send, get_status, cancel in BOTH directions + ALBRA↔ALBRA end-to-end + security propagation + missing-httpx fallback |
+| **Total A2A**                          | **72** |                                                                          |
+
+Per-category breakdown of `tests/a2a/test_a2a.py` (28 tests):
 
 | Test category            | Tests (count) | Representative tests                                                   |
 |--------------------------|---------------|------------------------------------------------------------------------|
@@ -403,14 +422,14 @@ returns a task with `state=COMPLETED`.
 | Lifecycle                | 3             | `test_task_lifecycle_submitted_to_completed`, `test_task_status_query`, `test_task_cancellation` |
 | Security                 | 6             | `test_permission_denied_when_unauthorized`, `test_firewall_blocks_when_no_matching_rule`, `test_policy_engine_returns_require_hitl`, `test_hitl_enforcement_pending_approval`, `test_unauthorized_a2a_request_rejected`, `test_risk_classification_propagates` |
 | Tracing & provenance     | 4             | `test_correlation_id_propagation`, `test_provenance_attached_to_a2a_request`, `test_evidence_attached_to_a2a_response`, `test_audit_log_captures_a2a_operation` |
-| Transport                | 3             | `test_in_process_transport_routes_to_server`, `test_core_only_without_network`, `test_a2a_http_transport_lazy_import` + `test_a2a_http_transport_methods_not_implemented` |
+| Transport                | 3             | `test_in_process_transport_routes_to_server`, `test_core_only_without_network`, `test_a2a_http_transport_lazy_import` + `test_a2a_http_transport_methods_work_with_httpx` |
 | Error handling           | 3             | `test_malformed_a2a_request_rejected`, `test_a2a_timeout`, `test_a2a_failure_propagation` |
 | Idempotency              | 1             | `test_a2a_idempotency`                                                 |
 | Artifacts                | 1             | `test_artifacts_propagation`                                            |
 | Registry                 | 1             | `test_a2a_registry_register_and_lookup`                                 |
 
-**Full-suite impact:** 400 total tests pass (was 372 + 28 new, 0
-regressions).
+**Full-suite impact:** **444 total tests pass** (was 372 after GAP-1..7
++ 28 A2A-IMPL + 26 A2A-GAP-A + 18 A2A-GAP-B = 444; 0 regressions).
 
 ---
 
@@ -566,7 +585,7 @@ execution or handoff logic was reimplemented.
 | `A2AServer`            | `HandoffManager`, `AgentManifest`, audit/evidence/provenance observers | `receive` / `get_status` / `cancel` lifecycle, idempotency dict |
 | `A2AClient`            | `A2ATransport`, `core.types`                       | Transport-agnostic send/status/cancel API                        |
 | `InProcessTransport`   | `A2ATransport` ABC                                 | Dict-backed endpoint registry                                   |
-| `HTTPTransport`        | `A2ATransport` ABC                                 | Lazy `httpx` import guard (methods themselves NOT_IMPLEMENTED)   |
+| `HTTPTransport`        | `A2ATransport` ABC                                 | Lazy `httpx` import guard; methods IMPLEMENTED (real HTTP via `httpx.AsyncClient`) |
 | `A2ARegistry`          | Mirrors `AgentRegistry` shape                      | `A2AAgentRecord` for A2A peers                                   |
 | `a2a.observers`        | `COMPONENT_AUDIT_LOGGER`, `COMPONENT_EVIDENCE_COLLECTOR`, `provenance_tracker` | Lazy no-op fallbacks, `A2A_RECEIVE_ACTION` action name |
 

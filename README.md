@@ -26,8 +26,10 @@ recover, and receive specialization — but **NOT** what to do professionally.
 
 ## ✅ What this IS
 
-A modular, clonable, specializable foundation providing 33 verified transversal
-components organized in 8 pillars:
+A modular, clonable, specializable foundation providing **40 audit-matrix
+probes** (33 original + 7 gap closures) backed by **106 universal DNA
+entries** in `src/albra_seed/parity/dna.py`. The components are organized
+in 8 pillars plus an immutable core:
 
 | Pillar | Components |
 |---|---|
@@ -51,10 +53,17 @@ components organized in 8 pillars:
 git clone https://github.com/ALBRA8/AGENTE-GENERAL.git
 cd AGENTE-GENERAL
 pip install -e .[dev]            # or: pip install -e .  (CORE_ONLY)
-python scripts/clean_room_verify.py
+python scripts/clean_room_verify.py     # 17/17 required + 2/2 optional PASS
+python scripts/audit_matrix.py          # 40/40 VERIFIED
+python scripts/parity_check.py          # exit 0, 106/106 DNA
+python scripts/contamination_scan.py    # exit 0, is_clean=True
+python -m pytest tests/ -q              # 444 passed
 ```
 
-Expected last line: `CLEAN-ROOM: PASS` (16/16 checks).
+Expected last line of clean_room: `CLEAN-ROOM: PASS` (17/17 required + 2/2 optional).
+The 17 required = 16 real PASS/FAIL gates + 1 informational scope-doc
+check R (always passes; documents what the script does and does NOT
+verify — see `docs/CLEANROOM.md` §10).
 
 ### Minimal agent run (CORE_ONLY — no external credentials)
 
@@ -148,7 +157,7 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full architecture map
 6. **Tamper-evident audit** — separate from normal audit log; hash-chained.
 7. **Immutable core** — runtime cannot modify its own DNA.
 8. **Modular & clonable** — `git clone` + add specialization layer = new agent.
-9. **Clean-room verified** — `scripts/clean_room_verify.py` runs 16 checks end-to-end.
+9. **Clean-room verified** — `scripts/clean_room_verify.py` runs 16 real PASS/FAIL checks + 1 informational scope-doc check (R) end-to-end. See `docs/CLEANROOM.md` §10 for the honest scope (what is and is NOT verified).
 10. **Honest status reporting** — Doctor distinguishes IMPLEMENTED / MOCK / PLACEHOLDER / EXTERNAL_DEPENDENCY.
 
 ---
@@ -162,23 +171,39 @@ pytest tests/
 # Run only unit tests
 pytest tests/unit/
 
+# Run A2A tests (72 tests across 4 files)
+pytest tests/a2a/
+
 # Run golden flows (13 scenarios)
 pytest tests/golden/
+
+# Run genetic parity + contamination
+pytest tests/genetic/ tests/contamination/
 
 # Run clean-room verification
 python scripts/clean_room_verify.py
 
 # Generate audit matrix
 python scripts/audit_matrix.py
+
+# Run genetic parity check
+python scripts/parity_check.py
+
+# Run genetic contamination scan
+python scripts/contamination_scan.py
 ```
 
-**Test counts:**
-- 253 unit tests (per module)
+**Test counts** (mirrored from [`docs/CERTIFICATION.md`](docs/CERTIFICATION.md)):
+
+- 316 unit tests (incl. 8 birth/readiness tests)
+- 72 A2A tests (28 main + 16 wire format + 10 routes + 18 external interop)
 - 13 golden flow tests (end-to-end scenarios)
 - 5 integration tests (multi-subsystem)
 - 4 contract tests (interface compliance)
 - 5 security tests (secrets, firewall, tamper detection)
-- **Total: 280 tests passing in ~6s**
+- 17 genetic parity tests (106 DNA entries verified)
+- 12 genetic contamination tests (249 files scanned, 0 critical)
+- **Total: 444 tests passing in ~8s**
 
 ---
 
@@ -216,13 +241,19 @@ src/albra_specialization/
 
 ## 📚 Documentation
 
+- **[Certification Status](docs/CERTIFICATION.md)** — **canonical single source of truth** for all numbers and gate results.
 - [Architecture](docs/ARCHITECTURE.md) — full architecture map
 - [Extending Guide](docs/EXTENDING.md) — how to add tools/skills/providers/plugins
 - [Specialization Contract](docs/SPECIALIZATION.md) — how to build a specialized agent
-- [Audit Matrix](docs/AUDIT_MATRIX.md) — component status matrix (auto-generated)
+- [Audit Matrix](docs/AUDIT_MATRIX.md) — 40-component status matrix (auto-generated)
+- [LIPO Report](docs/LIPO_REPORT.md) — KEEP / REFACTOR / MOVE / classification (40 components)
+- [Universal DNA Gap Closure](docs/UNIVERSAL_DNA_GAP_CLOSURE.md) — 7-gap closure record
+- [A2A Integration](docs/A2A_INTEGRATION.md) — A2A 1.0 adapter design (72 tests)
+- [Birth Contract](docs/BIRTH_CONTRACT.md) — CORE_ONLY birth contract
+- [Final Report](docs/FINAL_REPORT.md) — final implementation report
 - [Security](docs/SECURITY.md) — firewall, policy, HITL, kill switch
 - [Memory](docs/MEMORY.md) — MemoryDV, provenance, evidence
-- [Clean-Room](docs/CLEANROOM.md) — verification protocol
+- [Clean-Room](docs/CLEANROOM.md) — verification protocol (16 real PASS/FAIL + 1 informational scope-doc + 2 optional; honest scope §10)
 
 ---
 
@@ -263,18 +294,21 @@ MIT — see [LICENSE](LICENSE).
 
 ## 🧭 Project Status
 
-| Aspect | Status |
-|---|---|
-| Seed version | `ALBRA_SEED_V1.0` |
-| Runtime version | `1.0.0` |
-| Components | 33 (all VERIFIED) |
-| Unit tests | 253 |
-| Golden flows | 13 |
-| Integration tests | 5 |
-| Contract tests | 4 |
-| Security tests | 5 |
-| Clean-room | PASS (16/16) |
-| Final status | `INTEGRATION_READY` |
+| Aspect                       | Status                                    |
+| ---------------------------- | ----------------------------------------- |
+| Seed version                 | `ALBRA_SEED_V1.0`                         |
+| Runtime version              | `1.0.0`                                   |
+| Audit-matrix probes          | **40** (33 original + 7 gap closures)    |
+| Universal DNA entries         | **106** (`src/albra_seed/parity/dna.py`)   |
+| Allowed specializations       | 8                                         |
+| Total tests                   | **444** (316 unit + 72 a2a + 13 golden + 5 integration + 4 contracts + 5 security + 17 parity + 12 contamination) |
+| A2A tests                    | 72 (28 main + 16 wire + 10 routes + 18 interop) |
+| Clean-room                   | PASS (17/17 required + 2/2 optional; 16 real gates + 1 informational scope-doc R) |
+| Genetic parity               | PASS (`is_pure_seed=True`, 106/106 DNA)   |
+| Genetic contamination         | PASS (`is_clean=True`, 0 critical, 249 files) |
+| Final status                 | **`READY_TO_FREEZE`**                     |
+
+> Canonical certification record: **[`docs/CERTIFICATION.md`](docs/CERTIFICATION.md)**.
 
 ---
 

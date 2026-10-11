@@ -16,15 +16,18 @@ This report documents the closure of **7 gaps** identified in the audit of the
 ALBRA AGENT SEED V1.0 universal DNA. **All gaps were closed by COMPOSING with
 existing components, NOT by duplicating or replacing them.**
 
-**Final Status:** `DEVELOPMENT COMPLETE / INTEGRATION READY / UNIVERSAL DNA COMPLETE`
+> **Canonical numbers live in [`docs/CERTIFICATION.md`](CERTIFICATION.md).**
+> The counts below are mirrored from that file (verified 2026-10-11).
+
+**Final Status:** `READY_TO_FREEZE / UNIVERSAL DNA COMPLETE`
 
 | Gate                          | Result                                                      |
 |---|---|
-| Tests                         | **372 PASS** (was 280 baseline; +92 new; 0 regressions)    |
-| Clean-room                    | **PASS** (16/16 + 1 optional)                               |
-| Genetic Parity                | **PASS** (98/98 DNA components, `is_pure_seed=True`)        |
-| Genetic Contamination         | **PASS** (0 critical findings in 236 files, `is_clean=True`) |
-| Audit Matrix                  | **39/39 VERIFIED** (was 33 + 6 new gap-closure probes)     |
+| Tests                         | **444 PASS** (was 280 baseline; +164 across gap closures + A2A; 0 regressions) |
+| Clean-room                    | **PASS** (17/17 required + 2/2 optional; 16 real PASS/FAIL gates + 1 informational scope-doc check R) |
+| Genetic Parity                | **PASS** (106/106 DNA components, `is_pure_seed=True`)        |
+| Genetic Contamination         | **PASS** (0 critical findings in 249 files, `is_clean=True`) |
+| Audit Matrix                  | **40/40 VERIFIED** (33 original + 7 gap-closure probes)     |
 | CORE_ONLY birth              | **PASS** (Mock provider auto-registered at birth)           |
 
 ---
@@ -241,7 +244,7 @@ existing components, NOT by duplicating or replacing them.**
    accidentally remove a DNA component (e.g., the kill switch) and no test
    would fail.
 2. **SOLUTION**: New `parity/` package with `ParityChecker` +
-   `ParityReport` dataclass + `UNIVERSAL_DNA_COMPONENTS` catalog (98
+   `ParityReport` dataclass + `UNIVERSAL_DNA_COMPONENTS` catalog (**106**
    entries, every entry maps to an importable `albra_seed.<component>`
    module) + `ALLOWED_SPECIALIZATIONS` (8 entries). 15 check methods:
    `check_imports`, `check_classes` (15 key public classes), `check_runtime_birth`,
@@ -259,13 +262,16 @@ existing components, NOT by duplicating or replacing them.**
    mode remains intact. No domain knowledge of its own.
 5. **TESTS**: 17 tests in `tests/genetic/test_parity.py` (15 required +
    2 bonus: DNA catalog well-formed + report `to_dict()` shape).
-6. **RESULT**: **PASS** — Seed is verified pure: 98/98 DNA components
+6. **RESULT**: **PASS** — Seed is verified pure: 106/106 DNA components
    present, 13/13 behavioral checks pass, 0 specialization components
    detected, `is_pure_seed=True`. Verified by both
    `test_parity_report_is_pure_seed` AND the CLI:
    `python scripts/parity_check.py` exits 0.
 7. **RISKS**: LOW — catalog is a pure data file; scanner has no side effects.
-8. **LIMITATIONS**: 98 universal DNA components cataloged.
+8. **LIMITATIONS**: 106 universal DNA components cataloged (the 8 A2A
+   modules `a2a.card/contract/adapter/security/transport/server/client/registry`
+   were appended on 2026-10-12 by GAP-A2A-IMPL, taking the catalog from 98
+   to 106 — non-breaking addition).
    `ParityChecker.run_all()` verifies all are importable + behavioral
    checks pass. `is_pure_seed=True` for the Seed itself. A specialization
    MAY add components in `specialization.*` (those in
@@ -302,14 +308,14 @@ existing components, NOT by duplicating or replacing them.**
    finds-class-name-pattern/finds-hardcoded-domain/whole-word-match/
    case-insensitive/clean-seed/pydantic-model-shape/
    critical-vs-warning/catalog-well-formed).
-6. **RESULT**: **PASS** — 236 files scanned, 0 critical findings, 0
+6. **RESULT**: **PASS** — 249 files scanned, 0 critical findings, 0
    warning findings, `is_clean=True`. Verified by both
    `test_scanner_clean_seed` AND the CLI:
    `python scripts/contamination_scan.py` exits 0.
 7. **RISKS**: LOW — scanner is read-only, never mutates files.
 8. **LIMITATIONS**: 24 forbidden domain keywords + 4 forbidden code
    patterns. Scanner skips `ALLOWED_PATHS` (docs, tests, scripts). Seed
-   scan: 236 files, 0 critical findings, `is_clean=True`. The 3 seed
+   scan: 249 files, 0 critical findings, `is_clean=True`. The 3 seed
    source files whose docstrings mention a domain name only to assert
    "no domain here" are listed in `ALLOWED_PATHS` (not modified) per the
    task's explicit rule: "fix the keyword list or allowed paths, NOT
@@ -331,18 +337,19 @@ component at construction time or mirrors an existing pattern.
 | `skill_evolution`   | `SkillRegistry`, `SkillLifecycle`, `FeedbackManager`                 | `skills/lifecycle.py` |
 | `parity`            | All 33+ existing components (lazy import inside check methods)        | — |
 | `contamination`     | `pathlib` only                                                        | — |
+| `a2a`               | `HandoffManager`, `AgentManifest`, audit/evidence/provenance observers | `mcp/` (translation-layer pattern) |
 
 ---
 
 ## What Did NOT Change
 
 - ✅ All **33 existing audit-matrix components** unchanged (no probe modified)
-- ✅ All **280 original tests** still pass (verified by `pytest tests/ -q` → 372)
-- ✅ **Clean-room verification** still PASS (16/16 + 1 optional)
+- ✅ All **280 original tests** still pass (verified by `pytest tests/ -q` → 444)
+- ✅ **Clean-room verification** still PASS (17/17 required + 2/2 optional; 16 real gates + 1 informational scope-doc R)
 - ✅ **Mock provider** remains the birth default
 - ✅ **CORE_ONLY mode** preserved (`SeedConfig.is_core_only` still works)
 - ✅ **API and CLI** unchanged
-- ✅ **No domain knowledge** added (contamination scan: 0 critical findings)
+- ✅ **No domain knowledge** added (contamination scan: 0 critical findings across 249 files)
 - ✅ All existing source files preserved (the only files modified were
   `src/albra_seed/__init__.py` for new exports, `src/albra_seed/core/types.py`
   to add the 6th `MemoryType.DECISION` value, `src/albra_seed/skills/__init__.py`
@@ -352,9 +359,11 @@ component at construction time or mirrors an existing pattern.
 
 ## What WAS Added (Purely Additive)
 
-- **6 new subpackages**: `feedback/`, `learning/`, `contamination/`, `parity/`
+- **7 new subpackages**: `feedback/`, `learning/`, `contamination/`, `parity/`
   (4 new packages) + 2 new modules in existing packages:
   `memory/decisions.py`, `memory/decision_store.py`, `skills/evolution.py`
+  + the `a2a/` package (8 modules: `card`, `contract`, `adapter`, `security`,
+  `transport`, `server`, `client`, `registry`)
 - **1 enum value added**: `MemoryType.DECISION` (non-breaking — 6th value
   after the original 5)
 - **1 method added to Runtime**: `birth()` (non-breaking, additive)
@@ -362,36 +371,40 @@ component at construction time or mirrors an existing pattern.
   `ProviderRouter` if missing (non-breaking — caller's registration wins)
 - **1 optional constructor arg** in `SkillExecutor`: `evolution_manager`
   (default `None`; backward-compatible)
-- **92 new tests** (372 total, was 280 baseline)
-- **6 new probes in audit_matrix.py** (39 total, was 33)
-- **2 new CLI scripts**: `scripts/parity_check.py`,
+- **164 new tests** (444 total, was 280 baseline; +92 from gap closures +
+  +72 from A2A across 4 test files)
+- **7 new probes in audit_matrix.py** (40 total, was 33; the 7th is `a2a`)
+- **3 new CLI scripts**: `scripts/parity_check.py`,
   `scripts/contamination_scan.py`
 - **1 new doc**: `docs/BIRTH_CONTRACT.md`
+- **A2A interop docs**: `docs/A2A_INTEGRATION.md`
 - **This report**: `docs/UNIVERSAL_DNA_GAP_CLOSURE.md`
+- **Canonical certification record**: `docs/CERTIFICATION.md`
 
 ---
 
 ## Reproducing This Report
 
 All claims in this report are reproducible by running the following commands
-from `/home/z/my-project/agent-general/`:
+from `/home/z/my-project/agent-general/`. The canonical certification record
+lives in [`docs/CERTIFICATION.md`](CERTIFICATION.md).
 
 ```bash
-# Audit matrix (39 components probed — 33 original + 6 gap-closure)
+# Audit matrix (40 components probed — 33 original + 7 gap-closure)
 python scripts/audit_matrix.py 2>&1 | tail -3
-# Expected: Total components: 39 / Status counts: {'VERIFIED': 39}
+# Expected: Total components: 40 / Status counts: {'VERIFIED': 40}
 
-# Genetic parity (98 DNA components, 13 behavioral checks)
+# Genetic parity (106 DNA components, 13 behavioral checks)
 python scripts/parity_check.py
-# Expected: exit 0, is_pure_seed=True, 98/98 DNA present, 13/13 checks pass
+# Expected: exit 0, is_pure_seed=True, 106/106 DNA present, 13/13 checks pass
 
-# Genetic contamination (236 files, 0 critical findings)
+# Genetic contamination (249 files, 0 critical findings)
 python scripts/contamination_scan.py
-# Expected: exit 0, is_clean=True, 0 critical findings, 236 files scanned
+# Expected: exit 0, is_clean=True, 0 critical findings, 249 files scanned
 
-# Full test suite (372 tests, 0 regressions)
+# Full test suite (444 tests, 0 regressions)
 python -m pytest tests/ -q
-# Expected: 372 passed in ~7s
+# Expected: 444 passed in ~8s
 ```
 
 ---
@@ -399,8 +412,7 @@ python -m pytest tests/ -q
 ## Final Status
 
 ```
-DEVELOPMENT_COMPLETE
-INTEGRATION_READY
+READY_TO_FREEZE
 UNIVERSAL_DNA_COMPLETE
 ```
 
@@ -408,8 +420,12 @@ The ALBRA AGENT SEED V1.0 universal DNA is **closed**: every audit gap has
 been addressed by composition, every gate passes, every test is green, and
 the Seed remains domain-agnostic. Specialized ALBRA agents may now be built
 on top of the Seed with the guarantee that:
-1. The 98 universal DNA components are preserved (GAP-6).
+1. The 106 universal DNA components are preserved (GAP-6).
 2. No domain knowledge has leaked into the Seed (GAP-7).
 3. CORE_ONLY birth works out-of-the-box (GAP-5).
 4. The feedback → learning → decision → evolution loop is in place for
    outcome-driven improvement (GAP-1/2/3/4) with HITL gates throughout.
+5. A2A 1.0 wire-format interop is proven against a non-ALBRA reference
+   agent in both directions (A2A-GAP-A + A2A-GAP-B).
+
+> Canonical certification record: **[`docs/CERTIFICATION.md`](CERTIFICATION.md)**.
