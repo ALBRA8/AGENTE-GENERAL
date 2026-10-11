@@ -24,11 +24,15 @@ class RequestContext:
         *,
         config: ConfigManager | None = None,
         agents: dict[str, Any] | None = None,
+        a2a_server: Any = None,
     ) -> None:
         self.runtime = runtime
         self.config: ConfigManager = config or ConfigManager(seed=runtime.config)
         # Map of agent_id -> Agent instance (registered by callers).
         self.agents: dict[str, Any] = agents or {}
+        # Optional A2AServer — when provided, the FastAPI app mounts the
+        # A2A JSON-RPC + well-known routes. None = CORE_ONLY (no A2A HTTP).
+        self.a2a_server: Any = a2a_server
         # Last execution trace by execution_id (in-memory; not durable).
         self._traces: dict[str, dict[str, Any]] = {}
 

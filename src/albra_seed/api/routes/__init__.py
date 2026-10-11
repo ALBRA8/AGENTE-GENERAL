@@ -9,6 +9,7 @@ Two prefixes:
     /internal/  — internal
 """
 
+from albra_seed.api.routes.a2a import build_public_a2a_router, build_well_known_router
 from albra_seed.api.routes.agent import build_public_agent_router
 from albra_seed.api.routes.diagnostics import build_internal_diagnostics_router
 from albra_seed.api.routes.execution import build_public_execution_router
@@ -21,4 +22,6 @@ __all__ = [
     "build_public_agent_router",
     "build_public_execution_router",
     "build_internal_diagnostics_router",
+    "build_public_a2a_router",
+    "build_well_known_router",
 ]

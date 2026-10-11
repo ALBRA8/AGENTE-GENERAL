@@ -35,6 +35,7 @@ def create_app(
     agents: dict[str, Any] | None = None,
     title: str = "ALBRA SEED API",
     version: str = "1.0.0",
+    a2a_server: Any = None,
 ) -> Any:
     """Create a FastAPI app bound to `runtime`.
 
@@ -49,10 +50,19 @@ def create_app(
         Optional initial agent registry keyed by agent_id.
     title, version : str
         API metadata shown by /docs.
+    a2a_server : Any | None
+        Optional A2AServer. When provided, the A2A JSON-RPC route
+        (``POST /a2a/v1/``) and the discovery route
+        (``GET /.well-known/agent-card.json``) are mounted. When None
+        (CORE_ONLY), only the well-known route is mounted and it
+        returns HTTP 404. This keeps the A2A HTTP layer optional —
+        importing the package does not require it.
     """
     fastapi = _require_fastapi()
     FastAPI = fastapi.FastAPI
-    ctx = RequestContext(runtime, config=config, agents=agents)
+    ctx = RequestContext(
+        runtime, config=config, agents=agents, a2a_server=a2a_server
+    )
     app = FastAPI(title=title, version=version)
     app.state.ctx = ctx
 
@@ -72,6 +82,17 @@ def create_app(
     from albra_seed.api.routes import build_internal_diagnostics_router
     app.include_router(build_internal_diagnostics_router(ctx), prefix="/internal")
 
+    # A2A routes — always mount the well-known router (returns 404 when
+    # no server is configured); mount the JSON-RPC router only when an
+    # A2AServer is provided (CORE_ONLY safe).
+    from albra_seed.api.routes.a2a import (
+        build_public_a2a_router,
+        build_well_known_router,
+    )
+    app.include_router(build_well_known_router(ctx))
+    if a2a_server is not None:
+        app.include_router(build_public_a2a_router(ctx))
+
     @app.get("/", tags=["root"])
     async def root() -> dict[str, str]:  # pragma: no cover - trivial
         return {
@@ -80,6 +101,7 @@ def create_app(
             "docs": "/docs",
             "public_prefix": "/api/v1",
             "internal_prefix": "/internal",
+            "a2a_prefix": "/a2a/v1" if a2a_server is not None else "",
         }
 
     return app

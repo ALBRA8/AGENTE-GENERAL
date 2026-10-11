@@ -136,6 +136,18 @@ def __getattr__(name: str):  # pragma: no cover - lazy public API
         "A2AClient",
         "A2ARegistry",
         "A2AAgentRecord",
+        # wire format + exposition (added by A2A-GAP-A)
+        "agent_card_to_wire",
+        "wire_to_agent_card",
+        "message_to_wire",
+        "wire_to_message",
+        "artifact_to_wire",
+        "wire_to_artifact",
+        "task_to_wire",
+        "wire_to_task",
+        "make_jsonrpc_request",
+        "make_jsonrpc_response",
+        "build_a2a_server",
     }
     if name in _A2A_EXPORTS:
         from albra_seed import a2a as _a2a
@@ -234,4 +246,16 @@ __all__ = [
     "A2AClient",
     "A2ARegistry",
     "A2AAgentRecord",
+    # wire format + exposition (added by A2A-GAP-A)
+    "agent_card_to_wire",
+    "wire_to_agent_card",
+    "message_to_wire",
+    "wire_to_message",
+    "artifact_to_wire",
+    "wire_to_artifact",
+    "task_to_wire",
+    "wire_to_task",
+    "make_jsonrpc_request",
+    "make_jsonrpc_response",
+    "build_a2a_server",
 ]

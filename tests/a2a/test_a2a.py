@@ -878,24 +878,85 @@ def test_a2a_http_transport_lazy_import():
         HTTPTransport()
 
 
-async def test_a2a_http_transport_methods_not_implemented():
-    """If httpx IS installed, HTTPTransport still raises NotImplementedError
-    for send/get_status/cancel (per design — concrete HTTP wire protocol
-    is a specialization concern)."""
+async def test_a2a_http_transport_methods_work_with_httpx():
+    """When httpx IS installed, HTTPTransport methods do NOT raise
+    NotImplementedError — they perform real HTTP via httpx.
+
+    Uses ``httpx.MockTransport`` so no live network is required. The
+    mock handler captures the JSON-RPC envelope and returns a canned
+    A2A 1.0 wire response so we can verify the full round-trip.
+    """
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = request.read()
+        import json
+        rpc = json.loads(body) if body else {}
+        method = rpc.get("method", "")
+        if method == "message/send":
+            return httpx.Response(200, json={
+                "jsonrpc": "2.0",
+                "id": rpc.get("id"),
+                "result": {
+                    "id": rpc.get("id", "task-x"),
+                    "status": {"state": "completed", "message": None},
+                    "message": None,
+                    "artifacts": [],
+                    "metadata": {},
+                },
+            })
+        if method == "tasks/get":
+            return httpx.Response(200, json={
+                "jsonrpc": "2.0",
+                "id": rpc.get("id"),
+                "result": {
+                    "id": rpc.get("id", "task-x"),
+                    "status": {"state": "working", "message": None},
+                    "artifacts": [],
+                },
+            })
+        if method == "tasks/cancel":
+            return httpx.Response(200, json={
+                "jsonrpc": "2.0",
+                "id": rpc.get("id"),
+                "result": {
+                    "id": rpc.get("id", "task-x"),
+                    "status": {"state": "canceled", "message": None},
+                    "artifacts": [],
+                    "metadata": {},
+                },
+            })
+        return httpx.Response(200, json={
+            "jsonrpc": "2.0",
+            "id": rpc.get("id"),
+            "error": {"code": -32601, "message": "method not found"},
+        })
+
     try:
-        transport = HTTPTransport()
+        transport = HTTPTransport(transport=httpx.MockTransport(handler))
     except NotImplementedError:
-        # httpx not installed — skip this test (covered by the lazy-import test).
         pytest.skip("httpx not installed; lazy-import test covers this path.")
         return
 
-    task = A2ATask(requester="x", target="y", message=A2AMessage.from_text("hi"))
-    with pytest.raises(NotImplementedError):
-        await transport.send("https://example.com", task)
-    with pytest.raises(NotImplementedError):
-        await transport.get_status("https://example.com", "task-1")
-    with pytest.raises(NotImplementedError):
-        await transport.cancel("https://example.com", "task-1")
+    # send → A2ATask (state=COMPLETED from the mock)
+    task = A2ATask(
+        requester="x", target="y", message=A2AMessage.from_text("hi"),
+        task_id="task-send-1",
+    )
+    sent = await transport.send("https://example.com", task)
+    assert sent.state == TaskState.COMPLETED
+
+    # get_status → A2ATaskStatus (state=WORKING from the mock)
+    status = await transport.get_status("https://example.com", "task-send-1")
+    assert status is not None
+    assert status.state == TaskState.WORKING
+
+    # cancel → A2ATask (state=CANCELED from the mock)
+    cancelled = await transport.cancel("https://example.com", "task-send-1")
+    assert cancelled is not None
+    assert cancelled.state == TaskState.CANCELED
+
+    await transport.close()
 
 
 def test_a2a_registry_register_and_lookup():
