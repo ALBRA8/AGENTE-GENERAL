@@ -50,10 +50,13 @@ The 7 new gap-closure components added after V1.0 (feedback, learning,
 decision_memory, skill_evolution, parity, contamination, a2a) are all KEEP.
 
 **Total tests**: **474** (was 280 at first freeze; was 372 after the first
-six gap closures; was 444 after the A2A wire-format + external-interop
+six gap closures; was an intermediate count after the A2A wire-format + external-interop
 additions; now **474** after BLOQ-A2A-SEC (+9 A2A security-perimeter
 tests) and BLOQ-MEM (+11 memory factual-integrity + +10 memory
-forget/audit tests)). See `docs/CERTIFICATION.md` for the per-suite
+forget/audit tests)). The exact count is recomputed at verification
+time by `scripts/clean_room_verify.py::_count_tests()` running
+`pytest --collect-only -q`, so the report never carries a stale
+hard-coded number. See `docs/CERTIFICATION.md` for the per-suite
 breakdown.
 
 A2A test suite (81 tests across 5 files): 28 main + 16 wire + 10 routes
@@ -80,7 +83,7 @@ actual passing probe — not a static declaration.
 
 | #  | Component | Classification | Justification                                                                              |
 | -- | --------- | -------------- | ------------------------------------------------------------------------------------------ |
-| 1  | `core`    | KEEP           | The immutable DNA: types, identity, config, constants, base abstractions. Cannot move. All 444 tests depend on it. |
+| 1  | `core`    | KEEP           | The immutable DNA: types, identity, config, constants, base abstractions. Cannot move. All tests in the suite depend on it (count is recomputed dynamically by `scripts/clean_room_verify.py::_count_tests()`). |
 | 2  | `config`  | KEEP           | `ConfigManager` + `ConfigLoader` + `ConfigValidator` + `SecretsAdapter` — universal config plumbing; no domain knowledge. |
 
 ### 3.2 Cognitive pillar

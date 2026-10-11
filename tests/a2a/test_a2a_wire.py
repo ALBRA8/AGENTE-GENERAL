@@ -236,6 +236,7 @@ def test_make_jsonrpc_response_error():
 
 def test_http_transport_init_with_httpx():
     """When httpx IS installed, HTTPTransport instantiates without error."""
+    pytest.importorskip("httpx")
     transport = HTTPTransport()
     assert transport is not None
     # health should report alive (client not closed)
@@ -269,6 +270,7 @@ def _mock_handler(canned_result: dict[str, Any] | None = None,
 
 async def test_http_transport_send_real_http():
     """send() posts JSON-RPC message/send and returns the wire task."""
+    pytest.importorskip("httpx")
     import httpx
 
     canned = task_to_wire(A2ATask(
@@ -298,6 +300,7 @@ async def test_http_transport_send_real_http():
 
 async def test_http_transport_get_status_real_http():
     """get_status() posts JSON-RPC tasks/get and returns A2ATaskStatus."""
+    pytest.importorskip("httpx")
     import httpx
 
     canned = {
@@ -320,6 +323,7 @@ async def test_http_transport_get_status_real_http():
 
 async def test_http_transport_cancel_real_http():
     """cancel() posts JSON-RPC tasks/cancel and returns the cancelled task."""
+    pytest.importorskip("httpx")
     import httpx
 
     canned = task_to_wire(A2ATask(
@@ -341,6 +345,7 @@ async def test_http_transport_cancel_real_http():
 
 async def test_http_transport_discover_agent_card():
     """discover() GETs /.well-known/agent-card.json and returns AgentCard."""
+    pytest.importorskip("httpx")
     import httpx
 
     wire_card = agent_card_to_wire(_card())
@@ -361,6 +366,7 @@ async def test_http_transport_discover_agent_card():
 
 async def test_http_transport_propagates_error_response():
     """JSON-RPC error response → task FAILED with error in metadata."""
+    pytest.importorskip("httpx")
     import httpx
 
     err = {"code": -32602, "message": "invalid params"}
@@ -381,6 +387,7 @@ async def test_http_transport_propagates_error_response():
 
 async def test_http_transport_send_includes_authorization_header():
     """When token is passed, Authorization: Bearer header is set."""
+    pytest.importorskip("httpx")
     import httpx
 
     canned = task_to_wire(A2ATask(task_id="auth-1", state=TaskState.COMPLETED))

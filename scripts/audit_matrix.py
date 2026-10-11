@@ -1042,13 +1042,16 @@ def probe_a2a() -> Row:
         status="VERIFIED" if ok else "PARTIAL",
         implementation="IMPLEMENTED",
         test="PASS" if ok else "FAIL",
-        dependency="none (InProcessTransport always available; "
-                   "HTTPTransport lazy-imports httpx)",
+        dependency="none (CORE_ONLY uses InProcessTransport; "
+                   "httpx optional for HTTP transport, lazy-imported)",
         risk="MEDIUM",
         evidence=_evidence_for("a2a/test_a2a.py"),
         notes=(
-            "A2A adapter layer on Handoff; AgentCard derived from Manifest; "
-            "InProcessTransport always available; HTTPTransport lazy httpx; "
+            "A2A adapter layer; httpx optional for HTTP transport "
+            "(CORE_ONLY uses InProcessTransport); AgentCard derived from "
+            "Manifest; InProcessTransport always available; HTTPTransport "
+            "lazy-imports httpx (gated by pytest.importorskip in tests + "
+            "[a2a] extra in pyproject.toml); "
             "security perimeter CLOSED for ALL 3 inbound ops "
             "(message/send + tasks/get + tasks/cancel) with token "
             "plumbing end-to-end (BLOQ-A2A-SEC); 81 tests across 5 files "

@@ -886,6 +886,7 @@ async def test_a2a_http_transport_methods_work_with_httpx():
     mock handler captures the JSON-RPC envelope and returns a canned
     A2A 1.0 wire response so we can verify the full round-trip.
     """
+    pytest.importorskip("httpx")
     import httpx
 
     def handler(request: httpx.Request) -> httpx.Response:

@@ -29,7 +29,8 @@ WHAT THIS SCRIPT VERIFIES (real checks, run in this process tree):
   2. Required deps (pydantic/structlog/dotenv) importable in this env
   3. SeedConfig.from_env() works with no env → CORE_ONLY detected
   4. Runtime.startup() + readiness()==True
-  5. pytest tests/ passes (444 tests)
+  5. pytest tests/ passes (test count is computed dynamically by
+     running `pytest --collect-only -q`; see _count_tests())
   6. import albra_seed; __seed_version__ accessible
   7. Agent.run("hello") returns AgentResponse
   8. runtime.health() returns dict
@@ -157,6 +158,44 @@ def _run_async(coro: Awaitable[Any]) -> tuple[bool, str]:
         return asyncio.run(coro)
     except Exception as exc:  # noqa: BLE001
         return False, f"{type(exc).__name__}: {exc}"
+
+
+def _count_tests() -> int:
+    """Compute the ACTUAL test count by running `pytest --collect-only -q`.
+
+    Returns the number of tests pytest would collect on the current
+    environment (this varies by which optional extras are installed:
+    httpx + fastapi pull in the A2A HTTP tests, CORE_ONLY skips them).
+    Returns 0 if pytest cannot be invoked or the output cannot be parsed
+    (callers treat 0 as "unknown count — do not print a hard number").
+    Uses only the Python stdlib (subprocess, sys, re) so the script
+    remains runnable on Python 3.10/3.11/3.12 without extra deps.
+    """
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pytest", "--collect-only", "-q",
+             str(_PROJECT_ROOT / "tests")],
+            cwd=str(_PROJECT_ROOT),
+            env=_sanitize_env({**os.environ, "PYTHONPATH": str(_SRC)}),
+            capture_output=True, text=True, timeout=60,
+        )
+        # The last non-empty line typically looks like:
+        #   "474 tests collected in 3.79s"  (or "1 test collected")
+        for line in reversed(result.stdout.splitlines()):
+            line = line.strip()
+            if not line:
+                continue
+            m = re.match(r"(\d+) tests? collected", line)
+            if m:
+                return int(m.group(1))
+            # Some pytest versions print "no tests ran" differently;
+            # also accept a trailing "X passed" form as a fallback.
+            m = re.search(r"(\d+) passed", line)
+            if m:
+                return int(m.group(1))
+    except Exception:  # noqa: BLE001 — best-effort dynamic count
+        return 0
+    return 0
 
 
 async def _bootstrap_runtime() -> Any:
@@ -519,7 +558,19 @@ def check_reproducibility_notes(rep: Report) -> None:
     clone, multiple Python versions, live network A2A interop, external
     provider integration).
     """
-    details = """
+    # DYNAMIC test count: computed by running `pytest --collect-only -q`
+    # so the report never carries a stale hard-coded number. The actual
+    # number varies by which optional extras are installed in the env
+    # (e.g. httpx + fastapi pull in the A2A HTTP tests; CORE_ONLY
+    # skips them). 0 means "could not be determined" and we say so
+    # explicitly rather than printing a misleading number.
+    test_count = _count_tests()
+    test_count_str = (
+        f"{test_count} tests collected in this environment"
+        if test_count > 0
+        else "test count computed dynamically at run time (see check 5)"
+    )
+    details = f"""
 CLEAN-ROOM VERIFICATION SCOPE
 ==============================
 
@@ -532,7 +583,11 @@ WHAT THIS SCRIPT VERIFIES (real checks, run in this process tree):
  3. SeedConfig.from_env() works with no env vars → CORE_ONLY mode
     detected
  4. Runtime.startup() succeeds → readiness() returns True
- 5. pytest tests/ passes (444 tests as of this release)
+ 5. pytest tests/ passes ({test_count_str}; count is computed
+    dynamically by `_count_tests()` running `pytest --collect-only -q`
+    so it never goes stale; the actual number depends on which
+    optional extras are installed — httpx + fastapi pull in the A2A
+    HTTP tests, CORE_ONLY skips them)
  6. `import albra_seed; __seed_version__` returns "ALBRA_SEED_V1.0"
  7. Agent.run("hello") returns an AgentResponse with non-empty content
     (uses Mock provider — CORE_ONLY mode)

@@ -328,7 +328,7 @@ Summary:
   structured correctly as lazy-loaded adapters implementing `LLMProvider` ABC).
 - **AUXILIARY**: scripts (`clean_room_verify.py`, `audit_matrix.py`,
   `parity_check.py`, `contamination_scan.py`), examples (15 files), tests
-  (45 files / 444 tests), docs (14 files), `pyproject.toml`,
+  (45 files / test count computed dynamically at verification time), docs (14 files), `pyproject.toml`,
   `requirements.txt`, `LICENSE`.
 - **DELETE**: 0 (no dead code).
 - **REFACTOR**: 0 (all source files within the 80–250 line guideline; all

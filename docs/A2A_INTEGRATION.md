@@ -461,9 +461,13 @@ Per-category breakdown of `tests/a2a/test_a2a.py` (28 tests):
 | Artifacts                | 1             | `test_artifacts_propagation`                                            |
 | Registry                 | 1             | `test_a2a_registry_register_and_lookup`                                 |
 
-**Full-suite impact:** **474 total tests pass** (was 444 before
-BLOQ-A2A-SEC + BLOQ-MEM; +9 A2A security-perimeter + 11 memory
-factual-integrity + 10 memory forget/audit; 0 regressions).
+**Full-suite impact:** **all tests pass** (was an earlier hard-coded
+count before BLOQ-A2A-SEC + BLOQ-MEM; +9 A2A security-perimeter + 11 memory
+factual-integrity + 10 memory forget/audit; 0 regressions). The exact
+count is recomputed at verification time by
+`scripts/clean_room_verify.py::_count_tests()` running
+`pytest --collect-only -q`, so the report never carries a stale
+hard-coded number.
 
 ---
 

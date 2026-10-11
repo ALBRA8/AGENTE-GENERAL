@@ -82,7 +82,7 @@ verification scope honest and discoverable in the report itself.
 | 2b | INSTALL-LIKE (optional deps)  | `openai` / `anthropic` / `fastapi` / `uvicorn` / `httpx` reported as `OK` or `NOT_INSTALLED` without failing.             | no        |
 | 3  | CONFIG-FROM-SCRATCH           | `SeedConfig.from_env()` in a subprocess with `ALBRA_*` and provider env vars stripped returns `is_core_only() == True`.    | yes       |
 | 4  | INIT-FROM-SCRATCH              | `Runtime.startup()` + register `ProviderRouter(MockProvider)` → `readiness() == True`; then `shutdown()` cleanly.         | yes       |
-| 5  | TEST-RUN                       | `pytest tests` runs cleanly: `N passed, 0 failed`. (Counts the entire suite — currently 444 tests.)                       | yes       |
+| 5  | TEST-RUN                       | `pytest tests` runs cleanly: `N passed, 0 failed`. (Counts the entire suite — the exact count is recomputed dynamically by `scripts/clean_room_verify.py::_count_tests()` via `pytest --collect-only -q`, so it never goes stale; the number varies by which optional extras are installed.)                       | yes       |
 | 6  | BUILD-CHECK                    | `python -c "import albra_seed; print(__seed_version__)"` returns `"ALBRA_SEED_V1.0"`.                                       | yes       |
 | 7  | STARTUP-CHECK                  | `Agent(identity, runtime).run("hello")` returns an `AgentResponse` with non-empty content (using Mock provider).            | yes       |
 | 8  | HEALTH-CHECK                   | `runtime.health()` returns a dict with a `status` key.                                                                     | yes       |
@@ -159,7 +159,7 @@ SUMMARY
 3   2b. INSTALL-LIKE (optional deps)                             PASS
 4   3. CONFIG-FROM-SCRATCH (from_env → CORE_ONLY)                PASS
 5   4. INIT-FROM-SCRATCH (startup + readiness=True)              PASS
-6   5. TEST-RUN (pytest: 444 passed, 0 failed)                   PASS
+6   5. TEST-RUN (pytest: all tests passed, 0 failed)              PASS
 7   6. BUILD-CHECK (import albra_seed; __seed_version__)         PASS
 8   7. STARTUP-CHECK (Agent.run('hello'))                        PASS
 9   8. HEALTH-CHECK (runtime.health() has 'status')              PASS
@@ -259,7 +259,8 @@ pytest tests/ -q
 The first command MUST exit 0 (17/17 required + 2/2 optional). The
 second regenerates the audit matrix (ignored output, but the file is
 committed). The third and fourth run the genetic gates. The fifth runs
-the full test suite (444 tests as of this release).
+the full test suite (test count computed dynamically at verification time
+by `scripts/clean_room_verify.py::_count_tests()`).
 
 NOTE: §10.2 lists what the script does NOT verify (fresh venv, fresh
 clone, `pip install -e .` from scratch). The CI pipeline itself is
@@ -290,7 +291,7 @@ It is reproduced here for offline reading.
    in the current interpreter.
 3. `SeedConfig.from_env()` works with no env vars → `CORE_ONLY` mode.
 4. `Runtime.startup()` succeeds → `readiness()` returns `True`.
-5. `pytest tests/` passes (444 tests).
+5. `pytest tests/` passes (all tests pass; exact count is recomputed dynamically by `scripts/clean_room_verify.py::_count_tests()`).
 6. `import albra_seed; __seed_version__` returns `"ALBRA_SEED_V1.0"`.
 7. `Agent.run("hello")` returns an `AgentResponse` with non-empty content
    (Mock provider — CORE_ONLY).
@@ -384,7 +385,7 @@ python scripts/clean_room_verify.py
 python scripts/audit_matrix.py          # 40/40 VERIFIED
 python scripts/parity_check.py          # exit 0, 106/106 DNA present
 python scripts/contamination_scan.py    # exit 0, 0 critical
-python -m pytest tests/ -q              # 444 passed
+python -m pytest tests/ -q              # all tests pass (count recomputed dynamically)
 ```
 
 If any of step 3 or step 4 fails on a fresh clone + fresh venv, the seed

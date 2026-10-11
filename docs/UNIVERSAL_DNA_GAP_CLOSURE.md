@@ -31,7 +31,7 @@ COMPOSING with existing components, NOT by duplicating or replacing them.**
 
 | Gate                          | Result                                                      |
 |---|---|
-| Tests                         | **474 PASS** (was 280 baseline; was 444 after GAP-1..7 + A2A; now 474 after BLOQ-A2A-SEC + BLOQ-MEM; 0 regressions) |
+| Tests                         | **474 PASS** (was 280 baseline; was an intermediate count after GAP-1..7 + A2A; now 474 after BLOQ-A2A-SEC + BLOQ-MEM; 0 regressions). Count is recomputed at verification time by `scripts/clean_room_verify.py::_count_tests()` (`pytest --collect-only -q`), so the report never carries a stale hard-coded number. |
 | Clean-room                    | **PASS** (17/17 required + 2/2 optional; 16 real PASS/FAIL gates + 1 informational scope-doc check R) |
 | Genetic Parity                | **PASS** (106/106 DNA components, `is_pure_seed=True`)        |
 | Genetic Contamination         | **PASS** (0 critical findings in 249 files, `is_clean=True`) |
@@ -402,14 +402,14 @@ round was staffed by 4 subagents:
 
 1. **GAP**: `docs/CERTIFICATION.md` referenced commit `8af913e` (the
    older A2A gap closure commit), but the audited commit was
-   `1d84d8f`. Test counts were stale (444 vs the actual 474). A2A
+   `1d84d8f`. Test counts were stale (an earlier hard-coded number vs the actual 474). A2A
    section did not mention the security perimeter closure. Memory
    section did not mention the FACT rule unification.
 2. **SOLUTION**:
    - Replaced the hard-coded commit hash with `<TBD-final>` + a note
      explaining the hash will be updated to the final SHA after this
      gap-closure round is committed. (Working reference: `1d84d8f`.)
-   - Updated test counts: 474 total (was 444); 81 A2A (was 72); 337
+   - Updated test counts: 474 total (was an earlier stale hard-coded number); 81 A2A (was 72); 337
      unit (was 316); added Memory factual integrity (11) + forget/audit
      (10) + A2A security perimeter (9) rows.
    - Updated A2A section: perimeter CLOSED for ALL 3 inbound ops;
@@ -534,7 +534,7 @@ component at construction time or mirrors an existing pattern.
 ## What Did NOT Change
 
 - ✅ All **33 existing audit-matrix components** unchanged (no probe modified)
-- ✅ All **280 original tests** still pass (verified by `pytest tests/ -q` → 444)
+- ✅ All **280 original tests** still pass (verified by `pytest tests/ -q` → full suite passes; the exact count is recomputed dynamically by `scripts/clean_room_verify.py::_count_tests()`)
 - ✅ **Clean-room verification** still PASS (17/17 required + 2/2 optional; 16 real gates + 1 informational scope-doc R)
 - ✅ **Mock provider** remains the birth default
 - ✅ **CORE_ONLY mode** preserved (`SeedConfig.is_core_only` still works)
@@ -561,8 +561,8 @@ component at construction time or mirrors an existing pattern.
   `ProviderRouter` if missing (non-breaking — caller's registration wins)
 - **1 optional constructor arg** in `SkillExecutor`: `evolution_manager`
   (default `None`; backward-compatible)
-- **164 new tests** (444 total, was 280 baseline; +92 from gap closures +
-  +72 from A2A across 4 test files)
+- **164 new tests** (total grew from 280 baseline through gap closures +
+  +72 from A2A across 4 test files; current count is recomputed dynamically by `scripts/clean_room_verify.py::_count_tests()`)
 - **7 new probes in audit_matrix.py** (40 total, was 33; the 7th is `a2a`)
 - **3 new CLI scripts**: `scripts/parity_check.py`,
   `scripts/contamination_scan.py`
@@ -592,9 +592,10 @@ python scripts/parity_check.py
 python scripts/contamination_scan.py
 # Expected: exit 0, is_clean=True, 0 critical findings, 249 files scanned
 
-# Full test suite (444 tests, 0 regressions)
+# Full test suite (test count computed dynamically at verification time,
+# 0 regressions)
 python -m pytest tests/ -q
-# Expected: 444 passed in ~8s
+# Expected: all tests pass in ~8s (count is recomputed by `clean_room_verify.py::_count_tests()`)
 ```
 
 ---

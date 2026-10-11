@@ -55,7 +55,17 @@ def test_create_app_returns_fastapi(runtime: Runtime) -> None:
     # The app exposes a root index, /api/v1/health, /api/v1/readiness,
     # /api/v1/agent/info, /api/v1/agent/capabilities, /api/v1/execution,
     # /internal/diagnostics.
-    routes = {r.path for r in app.routes}
+    # Walk app.routes recursively — included routers (starlette._IncludedRouter)
+    # don't expose .path directly; flatten their inner .routes.
+    def _all_paths(routes):
+        paths = set()
+        for r in routes:
+            if hasattr(r, "path"):
+                paths.add(r.path)
+            if hasattr(r, "routes"):
+                paths |= _all_paths(r.routes)
+        return paths
+    routes = _all_paths(app.routes)
     assert "/api/v1/health" in routes
     assert "/api/v1/readiness" in routes
     assert "/api/v1/agent/info" in routes
