@@ -6,6 +6,12 @@ initialization without modifying core.
 """
 
 from albra_seed.skills.contract import SkillContract
+from albra_seed.skills.evolution import (
+    ImprovementProposal,
+    SkillEvolutionError,
+    SkillEvolutionManager,
+    SkillMetrics,
+)
 from albra_seed.skills.executor import (
     SkillExecutionTrace,
     SkillExecutor,
@@ -48,4 +54,8 @@ __all__ = [
     "SkillRegistry",
     "SkillValidationResult",
     "SkillValidator",
+    "ImprovementProposal",
+    "SkillEvolutionError",
+    "SkillEvolutionManager",
+    "SkillMetrics",
 ]

@@ -18,12 +18,11 @@ only identity + a reference to the Runtime.
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
-from typing_extensions import TYPE_CHECKING
 
-from albra_seed.core.base import LLMProvider, MemoryStore, Tool
+from albra_seed.core.base import LLMProvider
 from albra_seed.core.identity import AgentIdentity
 from albra_seed.core.types import (
     AgentResponse,
@@ -34,34 +33,32 @@ from albra_seed.core.types import (
     Session,
     ToolCall,
     ToolResult,
-    new_id,
     utc_now,
 )
 from albra_seed.runtime.loop import (
     AgentLoop,
     PhaseEvent,
-    PhaseStatus,
     PhaseFn,
+    PhaseStatus,
 )
 from albra_seed.runtime.runtime import (
-    Runtime,
     COMPONENT_APPROVAL_ENGINE,
     COMPONENT_AUDIT_LOGGER,
     COMPONENT_EVIDENCE_COLLECTOR,
     COMPONENT_FIREWALL,
     COMPONENT_POLICY_ENGINE,
     COMPONENT_PROVIDER_ROUTER,
-    COMPONENT_TOOL_REGISTRY,
+    Runtime,
 )
 from albra_seed.runtime.state import AgentState
 
 if TYPE_CHECKING:  # pragma: no cover
     # Imported only for type hints; concrete classes are provided by other
     # subagents at runtime via the registry.
-    from albra_seed.security.firewall import ActionFirewall  # noqa: F401
-    from albra_seed.policy.engine import PolicyEngine  # noqa: F401
     from albra_seed.approvals.engine import ApprovalEngine  # noqa: F401
+    from albra_seed.policy.engine import PolicyEngine  # noqa: F401
     from albra_seed.providers.router import ProviderRouter  # noqa: F401
+    from albra_seed.security.firewall import ActionFirewall  # noqa: F401
 
 log = structlog.get_logger("albra.agent")
 
@@ -234,27 +231,43 @@ class Agent:
         return {"intent": "default", "raw_content": content, "entities": {}}
 
     async def _phase_reason(self, agent: Agent, ctx: dict[str, Any]) -> dict[str, Any]:
-        """Call the LLM provider router to produce a reasoning trace."""
-        router = self.runtime.get_component(COMPONENT_PROVIDER_ROUTER)
-        if router is None:
-            # Fallback: use the first registered LLMProvider directly.
-            provider = self._default_provider()
-            if provider is None:
-                return {"reasoning": "no-provider", "draft": ctx["RECEIVE"]["content"]}
-            messages = [ctx["input_message"]]
-            response = await provider.complete(
-                messages, context=ctx["context"]
-            )
+        """Call an LLM provider to produce a reasoning trace.
+
+        Resolution order (since GAP-5):
+
+        1. If the caller has explicitly registered providers via
+           `runtime.register_provider(...)`, the FIRST one (preferring
+           `identity.providers`) is called directly. This preserves the
+           pre-GAP-5 behavior where a custom Mock/Stub provider would
+           always be the one to handle the request.
+
+        2. Otherwise, fall back to the `provider_router` component
+           (auto-registered at `Runtime.startup()` in CORE_ONLY mode).
+           The router routes through its own registry, terminating at
+           the always-on Mock provider when nothing else is configured.
+
+        This keeps CORE_ONLY birth working out of the box (router auto-
+        registered with Mock) AND keeps existing tests / specializations
+        that register a custom provider directly via `register_provider()`
+        working unchanged.
+        """
+        messages = [ctx["input_message"]]
+        provider = self._default_provider()
+        if provider is not None:
+            response = await provider.complete(messages, context=ctx["context"])
             ctx["draft_response"] = response
             return {"reasoning": "provider", "draft": response.content}
-        # Provider router is responsible for routing + fallbacks.
-        response = await router.complete(
-            [ctx["input_message"]], context=ctx["context"]
-        )
-        ctx["draft_response"] = response
-        run_ctx: RunContext = ctx["context"]
-        run_ctx.providers_used.append(getattr(router, "name", "router"))
-        return {"reasoning": "router", "draft": response.content}
+        router = self.runtime.get_component(COMPONENT_PROVIDER_ROUTER)
+        if router is not None:
+            # Provider router is responsible for routing + fallbacks.
+            response = await router.complete(messages, context=ctx["context"])
+            ctx["draft_response"] = response
+            run_ctx: RunContext = ctx["context"]
+            run_ctx.providers_used.append(getattr(router, "name", "router"))
+            return {"reasoning": "router", "draft": response.content}
+        # No provider and no router — emit a no-op draft so the rest of
+        # the loop can proceed (CORE_ONLY graceful degradation).
+        return {"reasoning": "no-provider", "draft": ctx["RECEIVE"]["content"]}
 
     async def _phase_plan(self, agent: Agent, ctx: dict[str, Any]) -> dict[str, Any]:
         """Extract tool calls from the draft response (if any)."""

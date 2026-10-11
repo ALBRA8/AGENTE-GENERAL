@@ -738,6 +738,230 @@ def probe_config() -> Row:
 
 
 # ---------------------------------------------------------------------------
+# GAP-1 through GAP-7 gap-closure probes (added 2026-10-11 by GAP-DOCS)
+# ---------------------------------------------------------------------------
+
+
+def probe_feedback() -> Row:
+    """GAP-1: Universal Feedback mechanism."""
+    ok, err = _try_import("albra_seed.feedback")
+    if not ok:
+        return Row("feedback", "MISSING", "NOT_VERIFIED", "FAIL", "none", "MEDIUM", "—", err)
+
+    def _roundtrip() -> None:
+        import asyncio
+        from albra_seed.feedback import FeedbackManager, FeedbackType
+        mgr = FeedbackManager()
+        fid = asyncio.run(mgr.record(
+            agent_id="audit",
+            feedback_type=FeedbackType.POSITIVE,
+            evaluation="ok",
+            source="audit",
+            source_type="system",
+        ))
+        assert asyncio.run(mgr.get(fid)) is not None
+
+    ok, err = _probe(_roundtrip)
+    return Row(
+        component="feedback",
+        status="VERIFIED" if ok else "PARTIAL",
+        implementation="IMPLEMENTED",
+        test="PASS" if ok else "FAIL",
+        dependency="none",
+        risk="MEDIUM",
+        evidence=_evidence_for("unit/test_feedback.py"),
+        notes=(
+            "FeedbackManager + FeedbackStore + 6 types "
+            "(POSITIVE/NEGATIVE/CORRECTION/HUMAN/SYSTEM/AUTOMATED)"
+            if ok else err
+        ),
+    )
+
+
+def probe_learning() -> Row:
+    """GAP-2: Universal Learning (proposal pipeline, NOT ML)."""
+    ok, err = _try_import("albra_seed.learning")
+    if not ok:
+        return Row("learning", "MISSING", "NOT_VERIFIED", "FAIL", "none", "HIGH", "—", err)
+
+    def _roundtrip() -> None:
+        import asyncio
+        from albra_seed.learning import (
+            LearningManager,
+            LearningProposal,
+            LearningSignal,
+        )
+        mgr = LearningManager()
+        prop = LearningProposal(
+            agent_id="audit",
+            signal_type=LearningSignal.FEEDBACK,
+            observation="obs",
+            proposed_change="change",
+            rationale="why",
+            target_component="skill",
+        )
+        pid = asyncio.run(mgr.propose(prop))
+        assert asyncio.run(mgr.get(pid)) is not None
+
+    ok, err = _probe(_roundtrip)
+    return Row(
+        component="learning",
+        status="VERIFIED" if ok else "PARTIAL",
+        implementation="IMPLEMENTED",
+        test="PASS" if ok else "FAIL",
+        dependency="none",
+        risk="HIGH",
+        evidence=_evidence_for("unit/test_learning.py"),
+        notes=(
+            "LearningManager + ProposalStatus pipeline "
+            "(PROPOSED→REVIEW→APPROVE→APPLY) with HITL gate"
+            if ok else err
+        ),
+    )
+
+
+def probe_decision_memory() -> Row:
+    """GAP-3: Decision Memory (extension of MemoryDV)."""
+    ok, err = _try_import("albra_seed.memory.decision_store")
+    if not ok:
+        return Row(
+            "decision_memory", "MISSING", "NOT_VERIFIED", "FAIL",
+            "none", "MEDIUM", "—", err,
+        )
+
+    def _roundtrip() -> None:
+        import asyncio
+        from albra_seed.memory import DecisionMemory, DecisionRecord
+        from albra_seed.memory.inmemory_store import InMemoryMemoryStore
+        dm = DecisionMemory(InMemoryMemoryStore())
+        d = DecisionRecord(
+            agent_id="audit",
+            objective="test",
+            decision_taken="yes",
+            reasoning="because",
+        )
+        did = asyncio.run(dm.record_decision(d))
+        assert asyncio.run(dm.get_decision(did)) is not None
+
+    ok, err = _probe(_roundtrip)
+    return Row(
+        component="decision_memory",
+        status="VERIFIED" if ok else "PARTIAL",
+        implementation="IMPLEMENTED",
+        test="PASS" if ok else "FAIL",
+        dependency="none",
+        risk="MEDIUM",
+        evidence=_evidence_for("unit/test_decision_memory.py"),
+        notes=(
+            "DecisionRecord wrapper on MemoryRecord(memory_type=DECISION); "
+            "non-destructive extension of MemoryDV"
+            if ok else err
+        ),
+    )
+
+
+def probe_skill_evolution() -> Row:
+    """GAP-4: Skill Evolution (extends SkillRegistry)."""
+    ok, err = _try_import("albra_seed.skills.evolution")
+    if not ok:
+        return Row(
+            "skill_evolution", "MISSING", "NOT_VERIFIED", "FAIL",
+            "none", "MEDIUM", "—", err,
+        )
+
+    def _roundtrip() -> None:
+        from albra_seed.skills.evolution import SkillEvolutionManager
+        mgr = SkillEvolutionManager(skill_registry=None)
+        assert mgr is not None
+
+    ok, err = _probe(_roundtrip)
+    return Row(
+        component="skill_evolution",
+        status="VERIFIED" if ok else "PARTIAL",
+        implementation="IMPLEMENTED",
+        test="PASS" if ok else "FAIL",
+        dependency="none",
+        risk="MEDIUM",
+        evidence=_evidence_for("unit/test_skill_evolution.py"),
+        notes=(
+            "SkillMetrics + ImprovementProposal + SkillEvolutionManager; "
+            "extends existing SkillRegistry (not replaces)"
+            if ok else err
+        ),
+    )
+
+
+def probe_parity() -> Row:
+    """GAP-6: Genetic Parity Test."""
+    ok, err = _try_import("albra_seed.parity")
+    if not ok:
+        return Row("parity", "MISSING", "NOT_VERIFIED", "FAIL", "none", "LOW", "—", err)
+
+    def _roundtrip() -> None:
+        import asyncio
+        from albra_seed.parity import ParityChecker
+        checker = ParityChecker()
+        report = asyncio.run(checker.run_all())
+        assert report is not None
+        assert report.missing == 0, f"missing DNA: {report.missing_components}"
+        assert report.is_pure_seed is True
+
+    ok, err = _probe(_roundtrip)
+    return Row(
+        component="parity",
+        status="VERIFIED" if ok else "PARTIAL",
+        implementation="IMPLEMENTED",
+        test="PASS" if ok else "FAIL",
+        dependency="none",
+        risk="LOW",
+        evidence=_evidence_for("genetic/test_parity.py"),
+        notes=(
+            "ParityChecker + UNIVERSAL_DNA_COMPONENTS (98 entries) + "
+            "ParityReport; verifies specialized agent preserves universal DNA"
+            if ok else err
+        ),
+    )
+
+
+def probe_contamination() -> Row:
+    """GAP-7: Genetic Contamination Test."""
+    ok, err = _try_import("albra_seed.contamination")
+    if not ok:
+        return Row(
+            "contamination", "MISSING", "NOT_VERIFIED", "FAIL",
+            "none", "LOW", "—", err,
+        )
+
+    def _roundtrip() -> None:
+        from albra_seed.contamination import ContaminationScanner
+        scanner = ContaminationScanner(
+            project_root=Path("/home/z/my-project/agent-general"),
+        )
+        report = scanner.scan()
+        assert report is not None
+        assert report.critical_findings == 0, (
+            f"contamination found: {report.critical_findings} critical"
+        )
+        assert report.is_clean is True
+
+    ok, err = _probe(_roundtrip)
+    return Row(
+        component="contamination",
+        status="VERIFIED" if ok else "PARTIAL",
+        implementation="IMPLEMENTED",
+        test="PASS" if ok else "FAIL",
+        dependency="none (pathlib only)",
+        risk="LOW",
+        evidence=_evidence_for("contamination/test_contamination.py"),
+        notes=(
+            "ContaminationScanner + 24 forbidden domain keywords + "
+            "4 code patterns; detects domain contamination in src/albra_seed/"
+            if ok else err
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Build & render
 # ---------------------------------------------------------------------------
 
@@ -776,6 +1000,13 @@ PROBES: list[tuple[str, Callable[[], Row]]] = [
     ("api", probe_api),
     ("cli", probe_cli),
     ("config", probe_config),
+    # GAP-1 through GAP-7 gap-closure components (added by GAP-DOCS)
+    ("feedback", probe_feedback),
+    ("learning", probe_learning),
+    ("decision_memory", probe_decision_memory),
+    ("skill_evolution", probe_skill_evolution),
+    ("parity", probe_parity),
+    ("contamination", probe_contamination),
 ]
 
 

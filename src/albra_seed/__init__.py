@@ -82,6 +82,27 @@ from albra_seed.core.base import (
     Plugin,
     Capability,
 )
+from albra_seed.memory import DecisionMemory, DecisionRecord
+from albra_seed.feedback import (
+    FeedbackManager,
+    FeedbackRecord,
+    FeedbackStore,
+    FeedbackType,
+)
+from albra_seed.learning import (
+    LearningManager,
+    LearningProposal,
+    LearningSignal,
+    LearningStore,
+    ProposalGenerator,
+    ProposalStatus,
+)
+from albra_seed.skills import (
+    ImprovementProposal,
+    SkillEvolutionError,
+    SkillEvolutionManager,
+    SkillMetrics,
+)
 from albra_seed.runtime.agent import Agent
 from albra_seed.runtime.runtime import Runtime
 
@@ -145,6 +166,22 @@ __all__ = [
     "Workflow",
     "Plugin",
     "Capability",
+    "DecisionRecord",
+    "DecisionMemory",
+    "FeedbackManager",
+    "FeedbackRecord",
+    "FeedbackStore",
+    "FeedbackType",
+    "LearningManager",
+    "LearningProposal",
+    "LearningSignal",
+    "LearningStore",
+    "ProposalGenerator",
+    "ProposalStatus",
+    "SkillMetrics",
+    "ImprovementProposal",
+    "SkillEvolutionManager",
+    "SkillEvolutionError",
     # Lazy exports (resolved on first access via __getattr__):
     "create_app",
     "main",

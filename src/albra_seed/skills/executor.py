@@ -91,10 +91,17 @@ class SkillExecutor:
         validator: SkillValidator | None = None,
         lifecycle: SkillLifecycle | None = None,
         evidence_sink: SkillEvidenceSink | None = None,
+        evolution_manager: Any | None = None,
     ) -> None:
         self._validator = validator or SkillValidator()
         self._lifecycle = lifecycle or SkillLifecycle()
         self._evidence_sink = evidence_sink
+        # Optional SkillEvolutionManager (GAP-4). When set, the executor
+        # best-effort records each execution's success/duration/error via
+        # `record_execution()`. Wrapped in try/except + hasattr so a
+        # misconfigured or missing manager never breaks the actual skill
+        # execution.
+        self._evolution_manager = evolution_manager
 
     # ------------------------------------------------------------------
     async def execute(
@@ -169,6 +176,7 @@ class SkillExecutor:
                 output={"_trace": trace.to_dict()},
             )
             self._finalize(trace, result, t0, context, contract)
+            await self._record_evolution(contract, result, trace)
             return result
         except Exception as exc:
             trace.errors.append(f"handler_error: {exc}")
@@ -179,6 +187,7 @@ class SkillExecutor:
                 output={"_trace": trace.to_dict()},
             )
             self._finalize(trace, result, t0, context, contract)
+            await self._record_evolution(contract, result, trace)
             return result
 
         # --- success ---
@@ -188,7 +197,36 @@ class SkillExecutor:
             output=output,
         )
         self._finalize(trace, result, t0, context, contract)
+        await self._record_evolution(contract, result, trace)
         return result
+
+    # ------------------------------------------------------------------
+    async def _record_evolution(
+        self,
+        contract: SkillContract,
+        result: ToolResult,
+        trace: SkillExecutionTrace,
+    ) -> None:
+        """Best-effort: notify the optional SkillEvolutionManager (GAP-4)
+        of this execution so it can aggregate metrics. Wrapped in
+        try/except + hasattr so a missing/broken manager NEVER breaks
+        the actual skill execution. Awaited directly (not via
+        create_task) so the metric is visible before the caller's
+        event loop closes (important for short-lived asyncio.run tests).
+        """
+        try:
+            mgr = getattr(self, "_evolution_manager", None)
+            if mgr is None or not hasattr(mgr, "record_execution"):
+                return
+            await mgr.record_execution(
+                contract.skill_id,
+                bool(result.success),
+                float(trace.duration_ms),
+                error=(trace.errors[-1] if trace.errors else None),
+            )
+        except Exception:
+            # Evolution metric collection must NEVER break the actual execution.
+            pass
 
     # ------------------------------------------------------------------
     def _finalize(

@@ -360,9 +360,18 @@ async def test_agent_executes_tool_via_registry(
 
 
 async def test_runtime_readiness_requires_components(runtime: Runtime) -> None:
-    """readiness() is False until the provider_router component is registered."""
-    await runtime.startup()
+    """readiness() is False before startup; True after.
+
+    Since GAP-5, `startup()` auto-registers a `provider_router` (with
+    the always-on Mock) so CORE_ONLY birth works out of the box. The
+    caller can still replace it with a custom router — caller wins.
+    """
+    # Before startup, phase is UNINITIALIZED → readiness False.
     assert runtime.readiness() is False
-    runtime.register("provider_router", mock_provider := MockProvider())
+    await runtime.startup()
+    # Auto-registered provider_router makes readiness True immediately.
+    assert runtime.readiness() is True
+    # Caller can replace with a custom router — readiness stays True.
+    runtime.register("provider_router", MockProvider())
     assert runtime.readiness() is True
     await runtime.shutdown()

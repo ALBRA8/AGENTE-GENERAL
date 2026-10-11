@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
-from typing import Any, Callable, Awaitable
+from typing import Any
 
 import structlog
 
@@ -33,9 +33,8 @@ from albra_seed.core.base import (
     Tool,
 )
 from albra_seed.core.config import SeedConfig
-from albra_seed.core.types import HealthState, Session, utc_now
+from albra_seed.core.types import Session, utc_now
 from albra_seed.runtime.lifecycle import (
-    LifecycleEvent,
     LifecycleManager,
     LifecyclePhase,
 )
@@ -80,6 +79,10 @@ class Runtime:
         self._agent_states: dict[str, AgentState] = {}
         self._phase_hooks: list[EventHook] = []
         self._started_at: datetime | None = None
+        # BIRTH CONTRACT: records how `provider_router` entered the
+        # runtime — "auto" (bootstrapped by startup) or "caller"
+        # (explicitly registered). None before startup runs.
+        self._bootstrap_source: str | None = None
 
     # =====================================================================
     # LIFECYCLE
@@ -91,6 +94,15 @@ class Runtime:
         Startup is intentionally minimal: it transitions the lifecycle and
         logs. Component registration happens via `register(...)` before or
         after startup; the readiness check (`readiness()`) reports the truth.
+
+        BIRTH CONTRACT (GAP-5): if no `provider_router` has been registered
+        by the caller, startup auto-creates one (using `ProviderRouter()`
+        which auto-creates a `ProviderRegistry` with the always-on Mock
+        provider). This makes CORE_ONLY birth work out of the box —
+        `readiness()` is True immediately after `startup()` without any
+        manual registration. Caller's explicit registration ALWAYS wins:
+        if `provider_router` is already in `self._components`, it is left
+        untouched.
         """
         if self.lifecycle.phase != LifecyclePhase.UNINITIALIZED:
             raise RuntimeError(
@@ -100,10 +112,44 @@ class Runtime:
             LifecyclePhase.INITIALIZING, reason="startup requested"
         )
         self._started_at = utc_now()
+
+        # BIRTH CONTRACT: auto-register provider_router if missing.
+        # The caller's explicit registration always wins — we only
+        # bootstrap when the slot is empty so CORE_ONLY mode is born
+        # ready without requiring the caller to know about routers.
+        bootstrap_source: str | None = None
+        if COMPONENT_PROVIDER_ROUTER not in self._components:
+            try:
+                # Local import to avoid importing the providers subpackage
+                # at module load time (keeps the seed decoupled).
+                from albra_seed.providers.router import ProviderRouter
+
+                router = ProviderRouter()  # auto-creates ProviderRegistry with Mock
+                self._components[COMPONENT_PROVIDER_ROUTER] = router
+                bootstrap_source = "auto"
+                log.info(
+                    "runtime.bootstrap.provider_router",
+                    source="auto",
+                    mock=True,
+                )
+            except Exception as exc:  # noqa: BLE001
+                # Never let bootstrap failure crash startup — CORE_ONLY
+                # mode must degrade gracefully. `readiness()` will report
+                # False and the caller can register a router manually.
+                log.warning(
+                    "runtime.bootstrap.provider_router_failed",
+                    error=str(exc),
+                )
+        else:
+            bootstrap_source = "caller"
+
+        self._bootstrap_source = bootstrap_source
+
         log.info(
             "runtime.startup",
             core_only=self.config.is_core_only(),
             components=list(self._components.keys()),
+            provider_router_source=bootstrap_source,
         )
         self.lifecycle.transition(
             LifecyclePhase.READY, reason="startup complete"
@@ -199,6 +245,172 @@ class Runtime:
         return all(
             name in self._components for name in REQUIRED_FOR_READINESS
         )
+
+    # =====================================================================
+    # BIRTH CONTRACT (GAP-5)
+    # =====================================================================
+
+    async def birth(self) -> dict[str, Any]:
+        """Birth contract: returns a snapshot of the seed's birth state.
+
+        "Birth" means: an ALBRA seed, started in CORE_ONLY mode (no
+        external provider credentials), can complete the universal agent
+        loop end-to-end using ONLY its built-in Mock provider. No
+        external service is required, no manual registration is required.
+
+        This method:
+
+        * runs `startup()` if the runtime is still UNINITIALIZED (which
+          auto-registers a `ProviderRouter` with the always-on Mock);
+        * auto-registers an `InMemoryMemoryStore` and an in-memory
+          `AuditLog` if the caller has not provided their own (so the
+          RECORD phase can persist a record and append an audit entry);
+        * verifies the identity carries a `seed_version`;
+        * verifies `readiness()` is True;
+        * verifies the Mock provider is reachable through the router;
+        * executes a no-op agent task (`Agent.run("birth")`) and
+          confirms it produces a non-empty response;
+        * writes+reads a memory record;
+        * appends an audit entry.
+
+        Returns a snapshot dict with at minimum these keys:
+
+          ``identity``              — the AgentIdentity used at birth
+          ``seed_version``          — from the identity
+          ``runtime_ready``         — bool, result of `readiness()`
+          ``phase``                 — lifecycle phase value
+          ``mock_available``        — bool, Mock reachable via router
+          ``agent_loop_ok``         — bool, no-op task produced output
+          ``memory_ok``             — bool, write+read roundtrip succeeded
+          ``audit_ok``              — bool, append succeeded
+          ``external_providers``    — list[str], always [] in CORE_ONLY
+          ``bootstrap_source``      — "auto" | "caller" | None
+          ``born_at``               — ISO timestamp
+        """
+        # Run startup if not yet started — startup auto-registers
+        # the provider_router (BIRTH CONTRACT).
+        if self.lifecycle.phase == LifecyclePhase.UNINITIALIZED:
+            await self.startup()
+
+        # Identity for birth — a default seed identity. The caller can
+        # construct their own Agent with a richer identity afterwards.
+        from albra_seed.core.identity import AgentIdentity
+
+        identity = AgentIdentity(name="albra-birth")
+
+        # Ensure a memory_store is available for the RECORD phase so
+        # the no-op agent run actually exercises write+read. The caller's
+        # explicit registration always wins.
+        memory_store = self.get_memory_store("default")
+        if memory_store is None:
+            from albra_seed.memory.inmemory_store import InMemoryMemoryStore
+
+            memory_store = InMemoryMemoryStore()
+            self.register_memory_store("default", memory_store)
+            self.register(COMPONENT_MEMORY_STORE, memory_store)
+
+        # Same for the audit logger.
+        audit_logger = self.get_component(COMPONENT_AUDIT_LOGGER)
+        if audit_logger is None:
+            from albra_seed.audit.normal import AuditLog
+
+            audit_logger = AuditLog()
+            self.register(COMPONENT_AUDIT_LOGGER, audit_logger)
+
+        # Verify readiness — should be True after startup auto-registered
+        # the provider_router (CORE_ONLY birth contract).
+        runtime_ready = self.readiness()
+        phase = self.lifecycle.phase.value
+
+        # Verify Mock is reachable through the router (preferred) or
+        # directly via the runtime's provider map (back-compat).
+        mock_available = False
+        router = self.get_component(COMPONENT_PROVIDER_ROUTER)
+        if router is not None and hasattr(router, "registry"):
+            mock_available = router.registry.get("mock") is not None
+        if not mock_available:
+            mock_available = self.get_provider("mock") is not None
+
+        # Verify the agent loop can execute a no-op task end-to-end.
+        agent_loop_ok = False
+        try:
+            from albra_seed.runtime.agent import Agent
+
+            agent = Agent(identity, self)
+            response = await agent.run("birth")
+            agent_loop_ok = bool(response and response.content)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("runtime.birth.agent_loop_failed", error=str(exc))
+
+        # Verify the memory store can write+read a record.
+        memory_ok = False
+        try:
+            from albra_seed.core.base import MemoryRecord
+
+            record = MemoryRecord(
+                agent_id=identity.agent_id,
+                memory_type="working",
+                content="birth-probe",
+            )
+            record_id = await memory_store.write(record)
+            fetched = await memory_store.read(record_id)
+            memory_ok = fetched is not None and fetched.content == "birth-probe"
+        except Exception as exc:  # noqa: BLE001
+            log.warning("runtime.birth.memory_roundtrip_failed", error=str(exc))
+
+        # Verify the audit log can append an entry. We support both
+        # the AuditLog.record_async() shape and the looser `append()`
+        # contract used by the agent loop's _AuditAdapter.
+        audit_ok = False
+        try:
+            if hasattr(audit_logger, "record_async"):
+                await audit_logger.record_async(
+                    action="runtime.birth",
+                    actor="runtime",
+                    result="success",
+                )
+                audit_ok = True
+            elif hasattr(audit_logger, "append"):
+                await audit_logger.append(None)
+                audit_ok = True
+        except Exception as exc:  # noqa: BLE001
+            log.warning("runtime.birth.audit_append_failed", error=str(exc))
+
+        # External providers — should be empty in CORE_ONLY mode.
+        external_providers: list[str] = []
+        if router is not None and hasattr(router, "registry"):
+            for name in router.registry.list_all():
+                provider = router.registry.get(name)
+                if provider is not None and getattr(provider, "is_external", False):
+                    external_providers.append(name)
+        for name, provider in self._providers.items():
+            if getattr(provider, "is_external", False) and name not in external_providers:
+                external_providers.append(name)
+
+        snapshot: dict[str, Any] = {
+            "identity": identity,
+            "seed_version": identity.seed_version,
+            "runtime_ready": runtime_ready,
+            "phase": phase,
+            "mock_available": mock_available,
+            "agent_loop_ok": agent_loop_ok,
+            "memory_ok": memory_ok,
+            "audit_ok": audit_ok,
+            "external_providers": external_providers,
+            "bootstrap_source": self._bootstrap_source,
+            "born_at": utc_now().isoformat(),
+        }
+        log.info(
+            "runtime.birth",
+            runtime_ready=runtime_ready,
+            mock_available=mock_available,
+            agent_loop_ok=agent_loop_ok,
+            memory_ok=memory_ok,
+            audit_ok=audit_ok,
+            external_providers=external_providers,
+            bootstrap_source=self._bootstrap_source,
+        )
+        return snapshot
 
     # =====================================================================
     # COMPONENT REGISTRY

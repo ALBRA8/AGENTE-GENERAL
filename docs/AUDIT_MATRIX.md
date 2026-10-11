@@ -5,8 +5,8 @@
 
 ## Summary
 
-- Total components probed: **33**
-- Status distribution: `{'VERIFIED': 33}`
+- Total components probed: **39**
+- Status distribution: `{'VERIFIED': 39}`
 
 ## Matrix
 
@@ -45,3 +45,9 @@
 | api | VERIFIED | IMPLEMENTED | PASS | fastapi, uvicorn (optional) | MEDIUM | tests/unit/test_api.py | create_app + routes + schemas + context + server |
 | cli | VERIFIED | IMPLEMENTED | PASS | none (argparse) | LOW | tests/unit/test_cli.py |  |
 | config | VERIFIED | IMPLEMENTED | PASS | python-dotenv (required); PyYAML (optional) | LOW | tests/unit/test_config.py | manager + loader + validator + secrets adapter |
+| feedback | VERIFIED | IMPLEMENTED | PASS | none | MEDIUM | tests/unit/test_feedback.py | FeedbackManager + FeedbackStore + 6 types (POSITIVE/NEGATIVE/CORRECTION/HUMAN/SYSTEM/AUTOMATED) |
+| learning | VERIFIED | IMPLEMENTED | PASS | none | HIGH | tests/unit/test_learning.py | LearningManager + ProposalStatus pipeline (PROPOSED→REVIEW→APPROVE→APPLY) with HITL gate |
+| decision_memory | VERIFIED | IMPLEMENTED | PASS | none | MEDIUM | tests/unit/test_decision_memory.py | DecisionRecord wrapper on MemoryRecord(memory_type=DECISION); non-destructive extension of MemoryDV |
+| skill_evolution | VERIFIED | IMPLEMENTED | PASS | none | MEDIUM | tests/unit/test_skill_evolution.py | SkillMetrics + ImprovementProposal + SkillEvolutionManager; extends existing SkillRegistry (not replaces) |
+| parity | VERIFIED | IMPLEMENTED | PASS | none | LOW | tests/genetic/test_parity.py | ParityChecker + UNIVERSAL_DNA_COMPONENTS (98 entries) + ParityReport; verifies specialized agent preserves universal DNA |
+| contamination | VERIFIED | IMPLEMENTED | PASS | none (pathlib only) | LOW | tests/contamination/test_contamination.py | ContaminationScanner + 24 forbidden domain keywords + 4 code patterns; detects domain contamination in src/albra_seed/ |

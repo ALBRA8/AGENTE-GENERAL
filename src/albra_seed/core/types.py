@@ -167,6 +167,11 @@ class MemoryType(str, Enum):
     FACTUAL = "factual"
     PROCEDURAL = "procedural"
     WORKING = "working"
+    # DECISION is a non-destructive addition introduced by GAP-3. It stores
+    # structured decision records as MemoryRecord(memory_type=DECISION) with
+    # the decision payload embedded in the `content` dict. Existing memory
+    # semantics are unchanged.
+    DECISION = "decision"
 
 
 class KnowledgeType(str, Enum):
