@@ -316,6 +316,7 @@ def test_dna_catalog_is_well_formed() -> None:
         "doctor.", "recovery.", "mcp.", "handoff.", "communication.",
         "multimodal.", "files.", "tools.", "capabilities.", "skills.",
         "plugins.", "api.", "cli.", "config.", "feedback.", "learning.",
+        "a2a.",  # universal interoperability layer (added by GAP-A2A-IMPL)
     }
     for entry in UNIVERSAL_DNA_COMPONENTS:
         assert any(entry.startswith(p) for p in allowed_prefixes), (

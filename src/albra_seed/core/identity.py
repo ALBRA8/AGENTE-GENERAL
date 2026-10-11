@@ -36,6 +36,10 @@ class AgentIdentity(BaseModel):
     constraints: list[str] = Field(default_factory=list)
     specialization: str | None = None  # None == raw seed
     metadata: dict[str, Any] = Field(default_factory=dict)
+    # A2A discovery endpoint (added by GAP-A2A-IMPL, NON-BREAKING):
+    # when populated, the agent is reachable at this URL via the A2A protocol.
+    # Remains None in CORE_ONLY mode (no network transport needed).
+    endpoint: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
 
     def to_manifest(self) -> AgentManifest:
@@ -78,4 +82,5 @@ class AgentManifest(BaseModel):
             "interfaces": i.interfaces,
             "dependencies": i.dependencies,
             "constraints": i.constraints,
+            "endpoint": i.endpoint,
         }

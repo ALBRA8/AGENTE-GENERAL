@@ -5,8 +5,8 @@
 
 ## Summary
 
-- Total components probed: **39**
-- Status distribution: `{'VERIFIED': 39}`
+- Total components probed: **40**
+- Status distribution: `{'VERIFIED': 40}`
 
 ## Matrix
 
@@ -51,3 +51,4 @@
 | skill_evolution | VERIFIED | IMPLEMENTED | PASS | none | MEDIUM | tests/unit/test_skill_evolution.py | SkillMetrics + ImprovementProposal + SkillEvolutionManager; extends existing SkillRegistry (not replaces) |
 | parity | VERIFIED | IMPLEMENTED | PASS | none | LOW | tests/genetic/test_parity.py | ParityChecker + UNIVERSAL_DNA_COMPONENTS (98 entries) + ParityReport; verifies specialized agent preserves universal DNA |
 | contamination | VERIFIED | IMPLEMENTED | PASS | none (pathlib only) | LOW | tests/contamination/test_contamination.py | ContaminationScanner + 24 forbidden domain keywords + 4 code patterns; detects domain contamination in src/albra_seed/ |
+| a2a | VERIFIED | IMPLEMENTED | PASS | none (InProcessTransport always available; HTTPTransport lazy-imports httpx) | MEDIUM | tests/a2a/test_a2a.py | A2A adapter layer on Handoff; AgentCard derived from Manifest; InProcessTransport always available; HTTPTransport lazy httpx |

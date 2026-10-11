@@ -21,6 +21,16 @@ NO domain knowledge is encoded here. The DNA names are deliberately
 generic (``core.types``, ``runtime.runtime``, ``memory.manager`` ...).
 A specialized agent's domain identity, knowledge, skills, tools and
 policies live in ``specialization.*`` modules — never inside the seed.
+
+A2A (Agent2Agent): the universal interoperability layer was added on
+2026-10-12 by GAP-A2A-IMPL. The 8 A2A modules (``a2a.card``,
+``a2a.contract``, ``a2a.adapter``, ``a2a.security``, ``a2a.transport``,
+``a2a.server``, ``a2a.client``, ``a2a.registry``) are now part of the
+universal DNA. ``a2a.observers`` is an internal helper module and is
+not enumerated separately (it is exercised via the ``a2a.server`` probe
+and the ``tests/a2a/test_a2a.py`` evidence chain). A2A is a pure
+translation layer over Handoff — no new business logic, no parallel
+identity store.
 """
 
 from __future__ import annotations
@@ -141,6 +151,19 @@ UNIVERSAL_DNA_COMPONENTS: list[str] = [
     # NEW (gap closures)
     "feedback.manager",  # GAP-1
     "learning.manager",  # GAP-2
+    # A2A (Agent2Agent) — universal interoperability layer
+    # Added 2026-10-12 by GAP-A2A-IMPL. Pure translation layer over
+    # Handoff; AgentCard is DERIVED from AgentManifest (single source
+    # of truth). CORE_ONLY birth preserved (InProcessTransport always
+    # available, HTTPTransport lazy-imports httpx).
+    "a2a.card",
+    "a2a.contract",
+    "a2a.adapter",
+    "a2a.security",
+    "a2a.transport",
+    "a2a.server",
+    "a2a.client",
+    "a2a.registry",
 ]
 
 # ---------------------------------------------------------------------------

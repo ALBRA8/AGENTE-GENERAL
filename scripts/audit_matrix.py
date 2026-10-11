@@ -961,6 +961,91 @@ def probe_contamination() -> Row:
     )
 
 
+def probe_a2a() -> Row:
+    """A2A (Agent2Agent) — universal interoperability adapter on Handoff.
+
+    Verifies that the A2A package is importable, its key public classes
+    are exposed, and that an ``AgentCard`` can be derived from an
+    ``AgentManifest`` via ``manifest_to_card`` with all the identity
+    fields correctly populated.
+    """
+    ok, err = _try_import("albra_seed.a2a")
+    if not ok:
+        return Row(
+            "a2a", "MISSING", "NOT_VERIFIED", "FAIL",
+            "none", "MEDIUM", "—", err,
+        )
+
+    def _roundtrip() -> None:
+        from albra_seed.a2a import (
+            A2AClient,
+            A2AServer,
+            A2ATask,
+            A2AMessage,
+            AgentCard,
+            InProcessTransport,
+            manifest_to_card,
+        )
+        from albra_seed.core.identity import AgentIdentity
+
+        # Build a manifest from an identity, then derive an AgentCard.
+        identity = AgentIdentity(
+            name="audit-probe-agent",
+            version="9.9.9",
+            capabilities=["a2a.task.receive"],
+            skills=["echo"],
+            endpoint="inprocess://audit-probe",
+        )
+        manifest = identity.to_manifest()
+        card: AgentCard = manifest_to_card(manifest)
+
+        # Verify the card is DERIVED from the manifest (single source of
+        # truth): name, version, protocol_version, endpoint, capabilities
+        # must all be populated from the identity.
+        assert card.name == "audit-probe-agent", (
+            f"card.name={card.name!r} expected 'audit-probe-agent'"
+        )
+        assert card.version == "9.9.9", (
+            f"card.version={card.version!r} expected '9.9.9'"
+        )
+        assert card.protocol_version == "1.0", (
+            f"card.protocol_version={card.protocol_version!r} expected '1.0'"
+        )
+        assert card.endpoint == "inprocess://audit-probe", (
+            f"card.endpoint={card.endpoint!r} expected 'inprocess://audit-probe'"
+        )
+        assert "a2a.task.receive" in card.capabilities, (
+            f"capabilities={card.capabilities!r} missing 'a2a.task.receive'"
+        )
+        # Sanity: skills derived from identity.skills.
+        assert len(card.skills) == 1 and card.skills[0].name == "echo"
+
+        # The other public classes must be classes (not None) — they are
+        # exercised in depth by tests/a2a/test_a2a.py.
+        assert isinstance(A2ATask, type)
+        assert isinstance(A2AMessage, type)
+        assert isinstance(A2AServer, type)
+        assert isinstance(A2AClient, type)
+        assert isinstance(InProcessTransport, type)
+
+    ok, err = _probe(_roundtrip)
+    return Row(
+        component="a2a",
+        status="VERIFIED" if ok else "PARTIAL",
+        implementation="IMPLEMENTED",
+        test="PASS" if ok else "FAIL",
+        dependency="none (InProcessTransport always available; "
+                   "HTTPTransport lazy-imports httpx)",
+        risk="MEDIUM",
+        evidence=_evidence_for("a2a/test_a2a.py"),
+        notes=(
+            "A2A adapter layer on Handoff; AgentCard derived from Manifest; "
+            "InProcessTransport always available; HTTPTransport lazy httpx"
+            if ok else err
+        ),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Build & render
 # ---------------------------------------------------------------------------
@@ -1007,6 +1092,9 @@ PROBES: list[tuple[str, Callable[[], Row]]] = [
     ("skill_evolution", probe_skill_evolution),
     ("parity", probe_parity),
     ("contamination", probe_contamination),
+    # A2A (Agent2Agent) — universal interoperability adapter on Handoff
+    # (added 2026-10-12 by GAP-A2A-INFRA; additive, no existing probe touched)
+    ("a2a", probe_a2a),
 ]
 
 

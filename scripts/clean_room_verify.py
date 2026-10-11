@@ -9,9 +9,13 @@ CORE_ONLY mode (no external credentials).
 The script depends on the Python stdlib only — it bootstraps `sys.path`
 to point at the project's `src/` directory so it is runnable from ANY cwd.
 
-Each of the 16 checks prints `[PASS]` or `[FAIL]` with details; the
+Each of the 16 required checks prints `[PASS]` or `[FAIL]` with details; the
 script exits 1 if ANY required check fails. `CLEAN-ROOM: PASS` is
-printed only when ALL required checks pass.
+printed only when ALL required checks pass. Check 17 (A2A-CHECK) is
+OPTIONAL (required=False): it probes the A2A translation layer
+(AgentCard derivation from AgentManifest) but a SKIP there does NOT
+fail the clean-room verification, because A2A is not needed for a
+CORE_ONLY birth.
 
 Usage:
     python scripts/clean_room_verify.py
@@ -417,6 +421,55 @@ def check_doctor(rep: Report) -> None:
                         ok, details=det))
 
 
+def check_a2a(rep: Report) -> None:
+    """17. A2A-CHECK (OPTIONAL): AgentCard derivable from AgentManifest.
+
+    A2A is an OPTIONAL universal interoperability layer over Handoff. A
+    CORE_ONLY birth does NOT require A2A — the InProcessTransport is
+    always available but A2A itself is a translation layer that may be
+    absent in specialised subsets of the seed. Hence ``required=False``:
+    a SKIP here does NOT fail the clean-room verification.
+    """
+    try:
+        from albra_seed.a2a import AgentCard, manifest_to_card
+        from albra_seed.core.identity import AgentIdentity
+    except ImportError as exc:
+        rep.add(CheckResult(
+            "17. A2A-CHECK (import albra_seed.a2a)", False,
+            required=False,
+            details=f"ImportError: {exc}",
+        ))
+        return
+
+    try:
+        identity = AgentIdentity(
+            name="clean-room-a2a-probe",
+            version="0.0.1",
+            endpoint="inprocess://clean-room",
+        )
+        card: AgentCard = manifest_to_card(identity.to_manifest())
+        ok = (
+            getattr(card, "name", None) == "clean-room-a2a-probe"
+            and getattr(card, "version", None) == "0.0.1"
+            and getattr(card, "protocol_version", None) == "1.0"
+        )
+        rep.add(CheckResult(
+            "17. A2A-CHECK (AgentCard derived from AgentManifest)",
+            ok, required=False,
+            details=(
+                f"name={card.name!r} version={card.version!r} "
+                f"protocol_version={card.protocol_version!r} "
+                f"endpoint={card.endpoint!r}"
+            ),
+        ))
+    except Exception as exc:  # noqa: BLE001
+        rep.add(CheckResult(
+            "17. A2A-CHECK (AgentCard derivation)", False,
+            required=False,
+            details=f"{type(exc).__name__}: {exc}",
+        ))
+
+
 # --------------------------------------------------------------------------- #
 # Main                                                                         #
 # --------------------------------------------------------------------------- #
@@ -436,7 +489,7 @@ def main() -> int:
                check_init_from_scratch, check_test_run, check_build,
                check_startup, check_health_readiness, check_golden_flows,
                check_api, check_cli, check_memory, check_audit,
-               check_firewall, check_doctor):
+               check_firewall, check_doctor, check_a2a):
         fn(rep)
 
     print("\n" + "=" * 72)

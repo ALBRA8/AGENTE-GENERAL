@@ -112,7 +112,35 @@ def __getattr__(name: str):  # pragma: no cover - lazy public API
 
     `create_app` requires fastapi; `main` requires only stdlib (argparse).
     Both are imported on first attribute access.
+
+    A2A exports (AgentCard, A2ATask, A2AAdapter, ...) are also lazy so
+    that importing `albra_seed` in CORE_ONLY mode does not pull in the
+    A2A subpackage (which is purely additive).
     """
+    _A2A_EXPORTS = {
+        "AgentCard",
+        "A2ACardSkill",
+        "manifest_to_card",
+        "TaskState",
+        "A2AMessage",
+        "A2AArtifact",
+        "A2ATask",
+        "A2ATaskStatus",
+        "A2AAdapter",
+        "A2ASecurityFilter",
+        "A2ASecurityDecision",
+        "A2ATransport",
+        "InProcessTransport",
+        "HTTPTransport",
+        "A2AServer",
+        "A2AClient",
+        "A2ARegistry",
+        "A2AAgentRecord",
+    }
+    if name in _A2A_EXPORTS:
+        from albra_seed import a2a as _a2a
+
+        return getattr(_a2a, name)
     if name == "create_app":
         from albra_seed.api.app import create_app
         return create_app
@@ -186,4 +214,24 @@ __all__ = [
     "create_app",
     "main",
     "ConfigManager",
+    # A2A exports (resolved on first access via __getattr__; lazy so
+    # CORE_ONLY mode is not impacted by the additive A2A subpackage):
+    "AgentCard",
+    "A2ACardSkill",
+    "manifest_to_card",
+    "TaskState",
+    "A2AMessage",
+    "A2AArtifact",
+    "A2ATask",
+    "A2ATaskStatus",
+    "A2AAdapter",
+    "A2ASecurityFilter",
+    "A2ASecurityDecision",
+    "A2ATransport",
+    "InProcessTransport",
+    "HTTPTransport",
+    "A2AServer",
+    "A2AClient",
+    "A2ARegistry",
+    "A2AAgentRecord",
 ]
