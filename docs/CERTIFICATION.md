@@ -8,7 +8,7 @@
 > out of date until refreshed from this file.
 
 **Last verified:** 2026-10-12
-**Commit:** `<TBD-final>` — commit hash will be updated to the final
+**Commit:** `914c016`
 commit SHA after this gap-closure round (BLOQ 1–8) is committed.
 Until then, the latest hash on `main` is the working reference: `1d84d8f`.
 **Status:** `READY_TO_FREEZE`
