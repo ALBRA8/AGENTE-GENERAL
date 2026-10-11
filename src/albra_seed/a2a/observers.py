@@ -31,20 +31,42 @@ async def record_audit(
     result: str = "success",
     error: str | None = None,
     approval_id: str | None = None,
+    action: str | None = None,
 ) -> None:
-    """Append an `a2a.task.receive` entry to the audit log (if any)."""
+    """Append an ``a2a.*`` entry to the audit log (if any).
+
+    ``action`` defaults to ``A2A_RECEIVE_ACTION`` (the message/send
+    path). Callers performing ``tasks/get`` / ``tasks/cancel`` security
+    checks should pass the matching action name so the audit trail can
+    distinguish which perimeter operation was denied.
+
+    The audit ``metadata`` field MERGES the task's metadata dict (so
+    ``security_reason`` / ``denied_action`` placed on the task by the
+    security filter are preserved in the audit trail). The canonical
+    ``target`` and ``state`` fields are added on top.
+
+    The token is NEVER included — only ``task.requester`` (the resolved
+    principal's identity, or "anonymous" when authentication failed) is
+    surfaced as ``actor``.
+    """
     audit_logger = runtime.get_component(COMPONENT_AUDIT_LOGGER)
     if audit_logger is None:
         return
+    # Merge the canonical fields with any metadata the caller placed on
+    # the task (e.g. ``security_reason`` / ``denied_action`` from the
+    # security filter). The canonical fields win on conflict.
+    merged_metadata: dict[str, Any] = dict(task.metadata or {})
+    merged_metadata["target"] = task.target
+    merged_metadata["state"] = task.state.value
     payload = {
-        "action": A2A_RECEIVE_ACTION,
+        "action": action or A2A_RECEIVE_ACTION,
         "actor": task.requester,
         "result": result,
         "error": error,
         "correlation_id": task.correlation_id,
         "execution_id": task.task_id,
         "approval_id": approval_id,
-        "metadata": {"target": task.target, "state": task.state.value},
+        "metadata": merged_metadata,
     }
     with contextlib.suppress(Exception):
         if hasattr(audit_logger, "record_async"):

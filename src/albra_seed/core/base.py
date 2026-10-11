@@ -216,7 +216,7 @@ class MemoryRecord(BaseModel):
     version: int = 1
     created_at: Any = Field(default_factory=utc_now)
     modified_at: Any = Field(default_factory=utc_now)
-    is_fact: bool = False  # True only if evidence_type == FACT and confidence >= threshold
+    is_fact: bool = False  # True only if validated by MemoryProvenance.validate_fact
 
 
 class MemoryStore(ABC):
@@ -247,7 +247,13 @@ class MemoryStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def delete(self, record_id: str) -> bool:
+    async def delete(
+        self,
+        record_id: str,
+        *,
+        by: str | None = None,
+        reason: str | None = None,
+    ) -> bool:
         raise NotImplementedError
 
     @abstractmethod

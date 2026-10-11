@@ -1,0 +1,95 @@
+# ALBRA AGENT SEED V1.0 — Clean-Room CI verification.
+#
+# This workflow runs the in-tree clean-room verification on a FRESH
+# checkout + FRESH virtualenv + MULTIPLE Python versions, exercising
+# the parts of the clean-room scope that `scripts/clean_room_verify.py`
+# ALONE cannot verify (see docs/CLEANROOM.md §10.2 "What the script
+# does NOT verify"):
+#
+#   - fresh git clone (actions/checkout@v4)
+#   - fresh virtualenv per matrix cell
+#   - `pip install -e .[dev]` from scratch (exercises pyproject.toml
+#     install metadata + extras resolution + entry_points)
+#   - multiple Python versions (3.10 / 3.11 / 3.12 matrix)
+#
+# The workflow is OPTIONAL — the seed does NOT depend on CI to be
+# READY_TO_FREEZE. `scripts/clean_room_verify.py` is the canonical
+# in-tree verification script; this workflow only adds the external
+# pieces (clone / venv / multi-version). When run on a self-hosted CI,
+# this workflow is the closest automated approximation of the manual
+# procedure documented in docs/CLEANROOM.md §10.4.
+#
+# NOTE: real network A2A interop (cross-host) and external provider
+# integration (OpenAI/Anthropic/etc.) are STILL out of scope — those
+# require live credentials and a second deployed agent.
+
+name: Clean-Room Verification
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # Allow manual triggering from the Actions tab.
+  workflow_dispatch:
+
+jobs:
+  clean-room:
+    name: Python ${{ matrix.python-version }} on ubuntu-latest
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - name: Fresh clone
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install package + dev extras (pip install -e .[dev])
+        # This is the step the in-tree script CANNOT verify on its own
+        # — it exercises pyproject.toml install metadata, optional-deps
+        # resolution, and entry_points.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Verify pyproject.toml parses + optional-dependencies keys
+        run: |
+          python - <<'PY'
+          import tomllib
+          d = tomllib.load(open("pyproject.toml", "rb"))
+          opt = d["project"]["optional-dependencies"]
+          expected = {"openai", "anthropic", "groq", "vector", "api",
+                      "otel", "dev", "all"}
+          missing = expected - set(opt.keys())
+          assert not missing, f"missing optional-dependencies: {missing}"
+          print("optional-dependencies keys OK:", sorted(opt))
+          PY
+
+      - name: Clean-room verification
+        # 16 real PASS/FAIL gates + 1 informational scope-doc check R
+        # + 2 optional checks. Expected: required 17/17 + optional 2/2.
+        run: |
+          python scripts/clean_room_verify.py
+
+      - name: Audit matrix (40/40 VERIFIED)
+        run: |
+          python scripts/audit_matrix.py
+
+      - name: Genetic parity (106/106 DNA present)
+        run: |
+          python scripts/parity_check.py
+
+      - name: Genetic contamination (0 critical findings)
+        run: |
+          python scripts/contamination_scan.py
+
+      - name: Full test suite
+        run: |
+          python -m pytest tests/ -q

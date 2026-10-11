@@ -28,8 +28,10 @@ recover, and receive specialization — but **NOT** what to do professionally.
 
 A modular, clonable, specializable foundation providing **40 audit-matrix
 probes** (33 original + 7 gap closures) backed by **106 universal DNA
-entries** in `src/albra_seed/parity/dna.py`. The components are organized
-in 8 pillars plus an immutable core:
+entries** in `src/albra_seed/parity/dna.py` (plus **3 documented A2A
+helper modules** `a2a.wire` / `a2a.exposition` / `a2a.observers` — NOT in
+the DNA, see `docs/CERTIFICATION.md` § "A2A Helper Modules"). The
+components are organized in 8 pillars plus an immutable core:
 
 | Pillar | Components |
 |---|---|
@@ -57,13 +59,19 @@ python scripts/clean_room_verify.py     # 17/17 required + 2/2 optional PASS
 python scripts/audit_matrix.py          # 40/40 VERIFIED
 python scripts/parity_check.py          # exit 0, 106/106 DNA
 python scripts/contamination_scan.py    # exit 0, is_clean=True
-python -m pytest tests/ -q              # 444 passed
+python -m pytest tests/ -q              # 474 passed
 ```
 
 Expected last line of clean_room: `CLEAN-ROOM: PASS` (17/17 required + 2/2 optional).
 The 17 required = 16 real PASS/FAIL gates + 1 informational scope-doc
 check R (always passes; documents what the script does and does NOT
 verify — see `docs/CLEANROOM.md` §10).
+
+Optional CI workflow (does NOT make the seed depend on CI):
+
+The workflow at `.github/workflows/clean-room.yml` runs the clean-room
+verification on a fresh checkout + fresh virtualenv + multiple Python
+versions (3.10, 3.11, 3.12). Trigger on push to `main` or PR.
 
 ### Minimal agent run (CORE_ONLY — no external credentials)
 
@@ -171,7 +179,7 @@ pytest tests/
 # Run only unit tests
 pytest tests/unit/
 
-# Run A2A tests (72 tests across 4 files)
+# Run A2A tests (81 tests across 5 files: 28 main + 16 wire + 10 routes + 18 interop + 9 security perimeter)
 pytest tests/a2a/
 
 # Run golden flows (13 scenarios)
@@ -195,15 +203,15 @@ python scripts/contamination_scan.py
 
 **Test counts** (mirrored from [`docs/CERTIFICATION.md`](docs/CERTIFICATION.md)):
 
-- 316 unit tests (incl. 8 birth/readiness tests)
-- 72 A2A tests (28 main + 16 wire format + 10 routes + 18 external interop)
+- 337 unit tests (incl. 8 birth/readiness + 11 factual integrity + 10 forget/audit BLOQ-MEM)
+- 81 A2A tests (28 main + 16 wire + 10 routes + 18 external interop + 9 security perimeter BLOQ-A2A-SEC)
 - 13 golden flow tests (end-to-end scenarios)
 - 5 integration tests (multi-subsystem)
 - 4 contract tests (interface compliance)
 - 5 security tests (secrets, firewall, tamper detection)
 - 17 genetic parity tests (106 DNA entries verified)
 - 12 genetic contamination tests (249 files scanned, 0 critical)
-- **Total: 444 tests passing in ~8s**
+- **Total: 474 tests passing in ~8s**
 
 ---
 
@@ -300,12 +308,15 @@ MIT — see [LICENSE](LICENSE).
 | Runtime version              | `1.0.0`                                   |
 | Audit-matrix probes          | **40** (33 original + 7 gap closures)    |
 | Universal DNA entries         | **106** (`src/albra_seed/parity/dna.py`)   |
+| A2A helper modules (NOT DNA)| **3** (`a2a.wire` / `a2a.exposition` / `a2a.observers`) |
 | Allowed specializations       | 8                                         |
-| Total tests                   | **444** (316 unit + 72 a2a + 13 golden + 5 integration + 4 contracts + 5 security + 17 parity + 12 contamination) |
-| A2A tests                    | 72 (28 main + 16 wire + 10 routes + 18 interop) |
+| Total tests                   | **474** (337 unit incl. 8 birth + 11 factual + 10 forget audit + 81 a2a incl. 9 sec perimeter + 13 golden + 5 integration + 4 contracts + 5 security + 17 parity + 12 contamination) |
+| A2A tests                    | 81 (28 main + 16 wire + 10 routes + 18 interop + 9 security perimeter) |
 | Clean-room                   | PASS (17/17 required + 2/2 optional; 16 real gates + 1 informational scope-doc R) |
 | Genetic parity               | PASS (`is_pure_seed=True`, 106/106 DNA)   |
 | Genetic contamination         | PASS (`is_clean=True`, 0 critical, 249 files) |
+| A2A security perimeter        | CLOSED for ALL 3 inbound ops (message/send + tasks/get + tasks/cancel) — BLOQ-A2A-SEC |
+| Memory FACT rule              | UNIFIED via `MemoryProvenance.validate_fact()` — BLOQ-MEM |
 | Final status                 | **`READY_TO_FREEZE`**                     |
 
 > Canonical certification record: **[`docs/CERTIFICATION.md`](docs/CERTIFICATION.md)**.

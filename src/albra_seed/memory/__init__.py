@@ -29,7 +29,7 @@ from albra_seed.memory.inmemory_store import InMemoryMemoryStore
 from albra_seed.memory.isolator import MemoryIsolator
 from albra_seed.memory.lifecycle import MemoryLifecycle, MemoryLifecycleState
 from albra_seed.memory.manager import MemoryManager
-from albra_seed.memory.provenance import MemoryProvenance
+from albra_seed.memory.provenance import FactRule, MemoryProvenance
 from albra_seed.memory.sqlite_store import SQLiteMemoryStore
 
 __all__ = [
@@ -37,6 +37,7 @@ __all__ = [
     "SQLiteMemoryStore",
     "InMemoryMemoryStore",
     "MemoryProvenance",
+    "FactRule",
     "MemoryIsolator",
     "ConsolidationPolicy",
     "MemoryLifecycle",

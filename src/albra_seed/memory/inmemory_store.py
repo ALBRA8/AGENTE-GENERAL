@@ -9,7 +9,7 @@ import asyncio
 from typing import Any
 
 from albra_seed.core.base import MemoryRecord, MemoryStore
-from albra_seed.core.types import MemoryType, new_id
+from albra_seed.core.types import MemoryType, new_id, utc_now
 from albra_seed.memory.isolator import MemoryIsolator
 
 
@@ -60,12 +60,22 @@ class InMemoryMemoryStore(MemoryStore):
                 break
         return results
 
-    async def delete(self, record_id: str) -> bool:
+    async def delete(
+        self,
+        record_id: str,
+        *,
+        by: str | None = None,
+        reason: str | None = None,
+    ) -> bool:
         async with self._lock:
             if record_id not in self._records:
                 return False
             del self._records[record_id]
-            self._tombstones[record_id] = {"deleted_at": "now", "by": None, "reason": None}
+            self._tombstones[record_id] = {
+                "deleted_at": utc_now().isoformat(),
+                "by": by,
+                "reason": reason,
+            }
             return True
 
     async def count(self, *, agent_id: str, domain: str = "default") -> int:

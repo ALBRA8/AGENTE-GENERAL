@@ -506,6 +506,12 @@ These invariants are enforced by code AND covered by tests:
 - [x] Autonomy ≠ Permission (both gates checked independently).
 - [x] UNKNOWN evidence never auto-promotes to FACT.
 - [x] FACT requires `confidence ≥ 0.9` AND qualifying `source_type`.
+- [x] FACT rule UNIFIED via `MemoryProvenance.validate_fact()` — single
+      source of truth (BLOQ-MEM); invalid facts never reach the store;
+      consolidation re-validates and rolls back violations.
+- [x] Memory tombstone `delete()` carries `by` + `reason` end-to-end
+      (BLOQ-MEM); `MemoryManager.forget()` emits `memory.forget` audit
+      event when `audit_sink` is configured.
 - [x] Tamper-evident audit separate from normal audit.
 - [x] Hash chain detects modification of any historical entry.
 - [x] Kill switch is global and overrides explicit ALLOW rules.
@@ -514,6 +520,11 @@ These invariants are enforced by code AND covered by tests:
 - [x] Secrets never appear in logs (redacted at the `_safe_log` boundary).
 - [x] RecoveryManager refuses SECURITY/UNKNOWN auto-recovery.
 - [x] RecoveryManager refuses to register strategies matching dangerous markers.
+- [x] A2A security perimeter CLOSED for ALL 3 inbound operations
+      (`message/send` + `tasks/get` + `tasks/cancel`); same
+      AUTHENTICATE → FIREWALL → POLICY pipeline; token plumbing
+      end-to-end (route → server → filter → authenticator); token
+      NEVER in logs / evidence / audit / task metadata (BLOQ-A2A-SEC).
 
 ---
 
@@ -532,3 +543,109 @@ A specialization layer MUST NOT:
 - Log secret values (use `SecretsManager.get()` and handle the value carefully).
 
 See [`SPECIALIZATION.md`](SPECIALIZATION.md) for the full contract.
+
+---
+
+## 14. A2A Security Perimeter — CLOSED for ALL 3 inbound operations
+
+> Closed by BLOQ-A2A-SEC on 2026-10-12. The A2A adapter no longer has
+> an asymmetric security posture: every inbound operation walks the
+> same AUTHENTICATE → FIREWALL → POLICY pipeline, and the same `token`
+> flows through every layer (route → server → filter → authenticator).
+> See `docs/A2A_INTEGRATION.md` §6 for the per-operation walkthrough
+> and `tests/a2a/test_a2a_security_perimeter.py` for the 9-test
+> evidence chain.
+
+### 14.1 The three inbound operations now covered
+
+| Operation              | Route                       | Before BLOQ-A2A-SEC | After BLOQ-A2A-SEC                          |
+| ---------------------- | --------------------------- | ------------------ | ------------------------------------------- |
+| `message/send`         | `POST /a2a/v1/` JSON-RPC    | Filtered           | Unchanged (still filtered)                  |
+| `tasks/get`            | `POST /a2a/v1/` JSON-RPC    | NOT filtered       | Filtered (NEW — was an open read path)      |
+| `tasks/cancel`         | `POST /a2a/v1/` JSON-RPC    | NOT filtered       | Filtered (NEW — was an open destroy path)   |
+
+The `tasks/get` and `tasks/cancel` paths previously bypassed
+`A2ASecurityFilter.evaluate()` — an attacker (or a misbehaving peer)
+could enumerate or destroy other agents' tasks without authentication,
+authorization, firewall, or policy checks. BLOQ-A2A-SEC closed both
+holes by routing every inbound A2A operation through the same filter.
+
+### 14.2 Token plumbing — end-to-end
+
+The same `token` (extracted by the FastAPI route from the
+`Authorization: Bearer <token>` header) flows through every layer:
+
+```
+   HTTP request with `Authorization: Bearer <token>`
+        │
+        ▼
+   api/routes/a2a.py        extracts token from header
+        │ passes token to A2AServer.receive / get_status / cancel
+        ▼
+   a2a/server.py            receives token alongside the A2ATask
+        │ calls A2ASecurityFilter.evaluate(task, token=token, action=...)
+        ▼
+   a2a/security.py          passes token to Authenticator.authenticate(token)
+        │ resolves token → Principal (roles, identity, scope)
+        ▼
+   security/auth.py         NoopAuthenticator (default) returns anonymous
+                            Real Authenticator + bad token → DENY
+```
+
+The token NEVER appears in:
+
+- **Logs** — `A2ASecurityDecision` and audit payloads record only
+  `task.requester` (the resolved principal's identity, or `"anonymous"`
+  when authentication failed).
+- **Evidence** — the evidence manager is given `task.target` + the
+  `HandoffResponse.result`, never the raw token.
+- **Audit entries** — `a2a.observers.record_audit` writes `actor =
+  task.requester`, never the token.
+- **Task metadata** — `task.metadata` is set by the caller BEFORE the
+  token enters the pipeline; the security filter never mutates
+  `task.metadata` with the token, only with security-rejection
+  metadata (`security_reason`, `denied_action`).
+
+Verified by `test_token_never_in_logs_evidence_audit` in
+`tests/a2a/test_a2a_security_perimeter.py`.
+
+### 14.3 CORE_ONLY birth preserved
+
+Every new `token` parameter is optional with default `None`. The
+`NoopAuthenticator` (the default authenticator when none is registered
+on the runtime) returns an anonymous principal for any token,
+including `None`. CORE_ONLY mode (no `ActionFirewall`, no
+`PolicyEngine`, no `ApprovalEngine` registered) skips the
+corresponding step in the filter without raising.
+
+### 14.4 No `A2ASecurityFilter` replacement — extension only
+
+`A2ASecurityFilter` was NOT replaced; it was EXTENDED with
+`evaluate_action(...)` (and a shared `_evaluate_common` helper that
+both `evaluate` and `evaluate_action` call). The Handoff /
+Execution / MCP paths are untouched. This means:
+
+- Existing tests of `evaluate(...)` continue to pass unchanged.
+- The new `evaluate_action(...)` is what `tasks/get` and
+  `tasks/cancel` call (with the matching action name, e.g.
+  `a2a.task.get` or `a2a.task.cancel`).
+- Both methods share the same AUTHENTICATE → FIREWALL → POLICY
+  pipeline, so the perimeter is uniform across all 3 operations.
+
+### 14.5 Evidence chain
+
+9 tests in `tests/a2a/test_a2a_security_perimeter.py` cover:
+
+1. The same filter runs for `message/send` (existing) — regression
+   guard.
+2. `tasks/get` now runs the filter (was previously unfiltered).
+3. `tasks/cancel` now runs the filter (was previously unfiltered).
+4. Token flows end-to-end (route → server → filter → authenticator).
+5. Bad token → DENY for `tasks/get`.
+6. Bad token → DENY for `tasks/cancel`.
+7. Token NEVER appears in logs (verified by capturing the structured
+   log output).
+8. Token NEVER appears in audit entries (verified by inspecting the
+   audit log contents).
+9. Token NEVER appears in task metadata (verified by inspecting the
+   `task.metadata` dict after the call).

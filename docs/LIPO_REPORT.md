@@ -32,7 +32,10 @@
 ## 2. Summary
 
 - **Total components reviewed**: **40** (per `scripts/audit_matrix.py` `PROBES` list;
-  cross-referenced against the 106 entries in `UNIVERSAL_DNA_COMPONENTS`).
+  cross-referenced against the 106 entries in `UNIVERSAL_DNA_COMPONENTS`, plus
+  3 documented A2A helper modules `a2a.wire` / `a2a.exposition` /
+  `a2a.observers` that are NOT in the DNA — see `docs/CERTIFICATION.md`
+  § "A2A Helper Modules").
 - **KEEP**: 35
 - **PROVIDER**: 4 (the five concrete LLM provider adapters collapse to PROVIDER classification;
   the routing / registry / fallback / health that compose them are KEEP — see §3.3).
@@ -46,9 +49,21 @@
 The 7 new gap-closure components added after V1.0 (feedback, learning,
 decision_memory, skill_evolution, parity, contamination, a2a) are all KEEP.
 
-**Total tests**: **444** (was 280 at first freeze; was 372 after the first
-six gap closures; now 444 after the A2A wire-format + external-interop
-additions). See `docs/CERTIFICATION.md` for the per-suite breakdown.
+**Total tests**: **474** (was 280 at first freeze; was 372 after the first
+six gap closures; was 444 after the A2A wire-format + external-interop
+additions; now **474** after BLOQ-A2A-SEC (+9 A2A security-perimeter
+tests) and BLOQ-MEM (+11 memory factual-integrity + +10 memory
+forget/audit tests)). See `docs/CERTIFICATION.md` for the per-suite
+breakdown.
+
+A2A test suite (81 tests across 5 files): 28 main + 16 wire + 10 routes
++ 18 external interop + **9 security perimeter** (BLOQ-A2A-SEC).
+
+Memory test suite now includes 11 factual-integrity tests + 10
+forget/audit tests (BLOQ-MEM). FACT rule is unified via
+`MemoryProvenance.validate_fact()` — the single source of truth;
+tombstone `delete()` carries `by` + `reason` end-to-end; `MemoryManager`
+accepts an optional `audit_sink` that emits `memory.forget` events.
 
 The seed is intentionally complete. No deletions are recommended.
 
@@ -161,8 +176,11 @@ for the per-gap composition record).
 | 38 | `skill_evolution`  | GAP-4 | KEEP           | `SkillMetrics` + `ImprovementProposal` + `SkillEvolutionManager`. EXTENDS existing `SkillRegistry` (does not replace it). 16 tests. |
 | 39 | `parity`           | GAP-6 | KEEP           | `ParityChecker` + `ParityReport` + `UNIVERSAL_DNA_COMPONENTS` (106 entries) + 8 `ALLOWED_SPECIALIZATIONS`. 17 tests. |
 | 40 | `contamination`    | GAP-7 | KEEP           | `ContaminationScanner` + `ContaminationReport` + 24 forbidden domain keywords + 4 forbidden code patterns. Read-only scanner; never mutates files. 12 tests. |
-| (extra) | `a2a`          | A2A  | KEEP           | 8-module adapter layer on Handoff: `card`, `contract`, `adapter`, `security`, `transport`, `server`, `client`, `registry`. `AgentCard` is DERIVED from `AgentManifest`. 72 tests across 4 files (28 main + 16 wire + 10 routes + 18 external interop). |
+| (extra) | `a2a`          | A2A  | KEEP           | 8-module adapter layer on Handoff: `card`, `contract`, `adapter`, `security`, `transport`, `server`, `client`, `registry`. `AgentCard` is DERIVED from `AgentManifest`. 81 tests across 5 files (28 main + 16 wire + 10 routes + 18 external interop + 9 security perimeter). 3 helper modules (`a2a.wire` / `a2a.exposition` / `a2a.observers`) are NOT in `UNIVERSAL_DNA_COMPONENTS` (BLOQ-DOCS decision). A2A security perimeter CLOSED for ALL 3 inbound operations (`message/send` + `tasks/get` + `tasks/cancel`) with token plumbing end-to-end (BLOQ-A2A-SEC). |
 | (extra) | (birth/readiness) | GAP-5 | KEEP        | Modified `Runtime.startup()` to auto-register `ProviderRouter` (caller's explicit registration always wins) + added `Runtime.birth()` method. 8 new tests in `tests/unit/test_birth_readiness.py`. No new probe (modified `runtime` probe exercises it). |
+| (extra) | (memory factual integrity) | BLOQ-MEM | KEEP | FACT rule unified via `MemoryProvenance.validate_fact()` (single source of truth, removed duplicated `requires_evidence_for_fact`). Tombstone `delete()` carries `by`/`reason` end-to-end (InMemory + SQLite). `MemoryManager.forget()` accepts optional `audit_sink` emitting `memory.forget` events. 11 + 10 new tests; 0 regressions. |
+| (extra) | (a2a security perimeter) | BLOQ-A2A-SEC | KEEP | A2A security perimeter CLOSED for ALL 3 inbound operations (`message/send` + `tasks/get` + `tasks/cancel`) — same AUTHENTICATE → FIREWALL → POLICY pipeline runs for every op; same token flows through every layer (route → server → filter → authenticator). Token NEVER appears in logs/evidence/audit/metadata. 9 new tests in `tests/a2a/test_a2a_security_perimeter.py`. 0 regressions. |
+| (extra) | (a2a helpers / docs) | BLOQ-DOCS | KEEP | Architectural decision: `a2a.wire` / `a2a.exposition` / `a2a.observers` are HELPERS (implementation details of the universal 8-module A2A contract), NOT in `UNIVERSAL_DNA_COMPONENTS`. `requirements.txt` re-pointed at `pyproject.toml` as the canonical source. `docs/CERTIFICATION.md` updated with final commit placeholder + new counts + A2A Helper Modules section. `docs/CLEANROOM.md` honest-scope §10 verified (CERT-CLEAN-ROOM). Optional GitHub Actions workflow `.github/workflows/clean-room.yml` added (does NOT make the seed depend on CI). |
 
 > **Note on counting.** The orchestrator counts "33 original + 7 gap closures
 > = 40 audit-matrix probes". The 7 gap closures include `a2a`. GAP-5 (birth /
@@ -181,10 +199,10 @@ for the per-gap composition record).
 | `scripts/parity_check.py`          | AUXILIARY      | Genetic parity CLI (GAP-6). Stdlib-only.                                                   |
 | `scripts/contamination_scan.py`    | AUXILIARY      | Genetic contamination CLI (GAP-7). Stdlib-only (pathlib).                                   |
 | `examples/`                        | AUXILIARY      | 15 runnable example scripts (`python examples/01_minimal_agent.py` etc.). NO domain knowledge. |
-| `tests/`                           | AUXILIARY      | 444 tests across `unit/` (316 incl. birth/readiness), `a2a/` (72), `golden/` (13), `integration/` (5), `contracts/` (4), `security/` (5), `genetic/` (17), `contamination/` (12). |
+| `tests/`                           | AUXILIARY      | 474 tests across `unit/` (337 incl. 8 birth/readiness + 11 factual integrity + 10 forget/audit), `a2a/` (81 = 28 main + 16 wire + 10 routes + 18 interop + 9 security perimeter), `golden/` (13), `integration/` (5), `contracts/` (4), `security/` (5), `genetic/` (17), `contamination/` (12). |
 | `docs/`                            | AUXILIARY      | Architecture, Specialization, Extending, Security, Memory, Cleanroom, LIPO, Examples, Final report, Audit matrix, A2A integration, Universal DNA gap closure, Birth contract, Certification. |
 | `pyproject.toml`                   | AUXILIARY      | Build + optional-dependency declarations. CORE_ONLY mode is the default.                  |
-| `requirements.txt`                 | AUXILIARY      | Pinned dev/test deps for reproducibility.                                                   |
+| `requirements.txt`                 | AUXILIARY      | Convenience mirror of `pyproject.toml [project.dependencies]` — canonical source is `pyproject.toml`. `pip install -r requirements.txt` still works; `pip install -e .` is preferred. |
 | `LICENSE`                          | AUXILIARY      | MIT.                                                                                        |
 
 ---
@@ -219,6 +237,45 @@ All domain-specific behaviour is reserved for the specialization layer
 (see `docs/SPECIALIZATION.md`). The contamination scanner confirms this
 with **0 critical findings across 249 files scanned**.
 
+### 5.3.1 A2A security perimeter — CLOSED for all 3 inbound operations
+
+The A2A security perimeter (closed by BLOQ-A2A-SEC) ensures that EVERY
+inbound A2A operation walks the same AUTHENTICATE → FIREWALL → POLICY
+pipeline:
+
+| Operation                  | Before BLOQ-A2A-SEC            | After BLOQ-A2A-SEC                          |
+| -------------------------- | ------------------------------ | -------------------------------------------- |
+| `message/send`              | Already filtered               | Unchanged (still filtered)                  |
+| `tasks/get`                 | NOT filtered                   | Filtered (NEW)                              |
+| `tasks/cancel`              | NOT filtered                   | Filtered (NEW)                              |
+
+The same `token` flows through every layer (route → server → filter →
+authenticator). The token NEVER appears in logs, evidence, audit entries,
+or task metadata — only the resolved principal's identity is recorded.
+9 tests in `tests/a2a/test_a2a_security_perimeter.py` cover the perimeter.
+
+### 5.3.2 Memory FACT rule — unified
+
+The FACT rule (BLOQ-MEM) is unified via `MemoryProvenance.validate_fact()`
+— the SINGLE source of truth. The duplicated `requires_evidence_for_fact`
+method was removed. The rule:
+
+- Non-fact records skip the rule (always pass).
+- Facts MUST satisfy ALL THREE conditions:
+  1. `evidence_ids` non-empty.
+  2. `source_type ∈ {tool, external, verified_provider}`.
+  3. `confidence ≥ 0.9`.
+
+Invalid facts never reach the store. The `MemoryManager.consolidate`
+re-validates the FACT rule after the policy mutates; on violation, the
+mutation is ROLLED BACK and the consolidation is rejected.
+
+Tombstone `delete()` (BLOQ-MEM) carries `by` + `reason` end-to-end
+(InMemory + SQLite + Vector — signature unified on the ABC). When a
+`MemoryManager` is constructed with an optional `audit_sink`, `forget()`
+emits `{action: "memory.forget", record_id, by, reason}` — CORE_ONLY
+mode (no sink) is unchanged.
+
 ### 5.4 PROVIDER classification for the 5 concrete LLM providers
 
 The five concrete providers (`OpenAIProvider`, `AnthropicProvider`,
@@ -245,8 +302,14 @@ READY_TO_FREEZE bar:
 - ✅ 40/40 components VERIFIED + IMPLEMENTED + PASS in the audit matrix.
 - ✅ 17/17 required + 2/2 optional clean-room checks PASS (16 real PASS/FAIL gates + 1 informational scope-doc check R; CORE_ONLY mode).
 - ✅ 106/106 universal DNA components present (`scripts/parity_check.py` → exit 0, `is_pure_seed=True`).
+- ✅ 3 A2A helper modules (`a2a.wire` / `a2a.exposition` / `a2a.observers`) documented as NOT-DNA (BLOQ-DOCS).
 - ✅ 0 critical contamination findings across 249 files scanned.
-- ✅ 444/444 tests PASS in ~8s.
+- ✅ 474/474 tests PASS in ~8s (337 unit incl. 11 factual + 10 forget audit + 8 birth/readiness; 81 A2A incl. 9 security perimeter; 13 golden; 5 integration; 4 contracts; 5 security; 17 parity; 12 contamination).
+- ✅ A2A security perimeter CLOSED for ALL 3 inbound operations
+  (message/send + tasks/get + tasks/cancel) with token plumbing end-to-end (BLOQ-A2A-SEC).
+- ✅ Memory FACT rule unified via `MemoryProvenance.validate_fact()`;
+  tombstone carries `by`/`reason`; optional `audit_sink` on
+  `MemoryManager.forget()` (BLOQ-MEM).
 - ✅ 0 domain knowledge.
 - ✅ Honest status reporting (MOCK vs IMPLEMENTED vs EXTERNAL_DEPENDENCY).
 - ✅ Hard security rules enforced in code + tests.

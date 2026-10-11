@@ -109,17 +109,17 @@ and were produced by running `python -m pytest <dir>/ --collect-only -q`.
 
 | Suite                | Test files | Tests | Status                          |
 | -------------------- | ---------- | ----- | ------------------------------- |
-| Unit (incl. birth/readiness) | 33   | 316   | ALL PASS                        |
-| A2A (4 files: main + wire + routes + interop) | 4 | 72 | ALL PASS (wire-format + JSON-RPC routes + external interop via `httpx.ASGITransport`) |
+| Unit (incl. birth/readiness + memory factual + forget audit) | 36 | 337 | ALL PASS (316 base + 11 factual integrity BLOQ-MEM + 10 forget/audit BLOQ-MEM) |
+| A2A (5 files: main + wire + routes + interop + security perimeter) | 5 | 81 | ALL PASS (wire-format + JSON-RPC routes + external interop via `httpx.ASGITransport` + 9-test security-perimeter suite BLOQ-A2A-SEC) |
 | Golden flows        | 1          | 13    | ALL PASS (end-to-end scenarios) |
 | Integration          | 1          | 5     | ALL PASS (multi-subsystem)      |
 | Contracts            | 1          | 4     | ALL PASS (interface compliance) |
 | Security             | 1          | 5     | ALL PASS (secrets / firewall / tamper / UNKNOWN) |
 | Genetic parity       | 1          | 17    | ALL PASS (106 DNA entries verified) |
 | Genetic contamination | 1         | 12    | ALL PASS (249 files scanned, 0 critical) |
-| **Total**            | **45**     | **444** | **ALL PASS in ~8.08s**           |
+| **Total**            | **~48**     | **474** | **ALL PASS in ~8s**           |
 
-A2A breakdown (72 tests total):
+A2A breakdown (81 tests total):
 
 - `tests/a2a/test_a2a.py` — 28 tests (card mapping, translation, lifecycle, security, tracing, transport, error handling, idempotency, artifacts, registry).
 - `tests/a2a/test_a2a_wire.py` — 16 tests (A2A 1.0 wire-format serialization + real HTTP transport via `httpx.MockTransport`).
@@ -129,10 +129,25 @@ A2A breakdown (72 tests total):
   real HTTP over `httpx.ASGITransport`; covers discovery, send, get_status,
   cancel in BOTH directions + ALBRA↔ALBRA end-to-end + security propagation
   + missing-httpx fallback).
+- `tests/a2a/test_a2a_security_perimeter.py` — 9 tests (BLOQ-A2A-SEC; A2A
+  security perimeter CLOSED for ALL 3 inbound operations
+  `message/send` + `tasks/get` + `tasks/cancel`; token plumbing
+  end-to-end; token NEVER in logs/evidence/audit/metadata).
+
+Memory test suite now includes:
+
+- `tests/unit/test_memory.py` — 9 tests (existing, updated for signature
+  changes).
+- `tests/unit/test_memory_factual_integrity.py` — 11 tests (BLOQ-MEM;
+  FACT rule unified via `MemoryProvenance.validate_fact()`, single source
+  of truth; the duplicated `requires_evidence_for_fact` was removed).
+- `tests/unit/test_memory_forget_audit.py` — 10 tests (BLOQ-MEM; tombstone
+  `delete()` carries `by`/`reason` end-to-end; `MemoryManager.forget()`
+  accepts optional `audit_sink` emitting `memory.forget` events).
 
 Key results:
 
-- 444/444 tests pass.
+- 474/474 tests pass.
 - All 13 golden flows from spec §57 implemented end-to-end with Mock
   provider + in-memory stores; NO external credentials required.
 - All 5 security tests verify: secrets never logged, kill switch global
@@ -166,7 +181,7 @@ The 16 real PASS/FAIL checks cover:
 2. INSTALL-LIKE (required deps)
 3. CONFIG-FROM-SCRATCH (CORE_ONLY)
 4. INIT-FROM-SCRATCH (startup + readiness)
-5. TEST-RUN (444 passed, 0 failed)
+5. TEST-RUN (474 passed, 0 failed)
 6. BUILD-CHECK (`__seed_version__` = `ALBRA_SEED_V1.0`)
 7. STARTUP-CHECK (`Agent.run("hello")` returns a response)
 8. HEALTH-CHECK (`runtime.health()` has `status`)
@@ -338,14 +353,14 @@ python scripts/clean_room_verify.py     # 17/17 required + 2/2 optional PASS
 python scripts/audit_matrix.py          # 40/40 VERIFIED
 python scripts/parity_check.py          # exit 0, 106/106 DNA
 python scripts/contamination_scan.py    # exit 0, is_clean=True
-python -m pytest tests/ -q              # 444 passed
+python -m pytest tests/ -q              # 474 passed
 ```
 
 Expected:
 
 - `CLEAN-ROOM: PASS` (17/17 required = 16 real PASS/FAIL gates + 1 informational scope-doc check R; 2/2 optional).
 - 40 components all VERIFIED + IMPLEMENTED + PASS in `docs/AUDIT_MATRIX.md`.
-- `444 passed in ~8s`.
+- `474 passed in ~8s`.
 - `is_pure_seed=True`, `is_clean=True`.
 
 ---
@@ -392,7 +407,8 @@ To build the first specialized agent (e.g., AGENTE-LEGAL):
 
 Built by the ALBRA AGENT SEED V1.0 builder swarm (agents F1, F2-A through
 F2-I, F3-B, F3-C, F3-D2, GAP-1 through GAP-7, A2A-IMPL, A2A-INFRA,
-A2A-DOCS, A2A-GAP-A, A2A-GAP-B, CERT-DOCS). All work logged in
+A2A-DOCS, A2A-GAP-A, A2A-GAP-B, CERT-DOCS, CERT-CLEAN-ROOM,
+CERT-PATHS, BLOQ-A2A-SEC, BLOQ-MEM, BLOQ-DOCS). All work logged in
 `/home/z/my-project/worklog.md` and `/home/z/my-project/agent-ctx/`.
 
 ---

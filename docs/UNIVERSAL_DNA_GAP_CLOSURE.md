@@ -1,8 +1,12 @@
 # ALBRA AGENT SEED V1.0 — Universal DNA Gap Closure Report
 
 > **Document ID:** `UNIVERSAL_DNA_GAP_CLOSURE.md`
-> **Generated:** 2026-10-11 by Task ID `GAP-DOCS`
-> **Scope:** Closure of the 7 audit gaps identified against the ALBRA SEED V1.0 universal DNA.
+> **Generated:** 2026-10-11 by Task ID `GAP-DOCS`; updated 2026-10-12
+> by Task ID `BLOQ-DOCS` to record BLOQ 1–8 closures.
+> **Scope:** Closure of the 7 audit gaps identified against the ALBRA SEED V1.0 universal DNA
+> + the BLOQ 1–8 closure round (A2A security perimeter, memory factual
+> integrity, memory forget/audit, certification docs, clean-room honest
+> scope, requirements fix, DNA parity review).
 > **Authority:** This report is the single canonical record of the gap-closure effort. All claims
 > here are reproducible by running `python scripts/audit_matrix.py`, `python scripts/parity_check.py`,
 > `python scripts/contamination_scan.py`, and `python -m pytest tests/ -q` against
@@ -13,22 +17,30 @@
 ## Executive Summary
 
 This report documents the closure of **7 gaps** identified in the audit of the
-ALBRA AGENT SEED V1.0 universal DNA. **All gaps were closed by COMPOSING with
-existing components, NOT by duplicating or replacing them.**
+ALBRA AGENT SEED V1.0 universal DNA, plus the **BLOQ 1–8 closure round**
+that tightened the A2A security perimeter, unified the Memory FACT rule,
+restored tombstone `by`/`reason` propagation, refreshed the certification
+docs to match the new reality, fixed `requirements.txt`, and decided the
+architectural status of the A2A helper modules. **All gaps were closed by
+COMPOSING with existing components, NOT by duplicating or replacing them.**
 
 > **Canonical numbers live in [`docs/CERTIFICATION.md`](CERTIFICATION.md).**
-> The counts below are mirrored from that file (verified 2026-10-11).
+> The counts below are mirrored from that file (verified 2026-10-12).
 
 **Final Status:** `READY_TO_FREEZE / UNIVERSAL DNA COMPLETE`
 
 | Gate                          | Result                                                      |
 |---|---|
-| Tests                         | **444 PASS** (was 280 baseline; +164 across gap closures + A2A; 0 regressions) |
+| Tests                         | **474 PASS** (was 280 baseline; was 444 after GAP-1..7 + A2A; now 474 after BLOQ-A2A-SEC + BLOQ-MEM; 0 regressions) |
 | Clean-room                    | **PASS** (17/17 required + 2/2 optional; 16 real PASS/FAIL gates + 1 informational scope-doc check R) |
 | Genetic Parity                | **PASS** (106/106 DNA components, `is_pure_seed=True`)        |
 | Genetic Contamination         | **PASS** (0 critical findings in 249 files, `is_clean=True`) |
 | Audit Matrix                  | **40/40 VERIFIED** (33 original + 7 gap-closure probes)     |
 | CORE_ONLY birth              | **PASS** (Mock provider auto-registered at birth)           |
+| A2A security perimeter        | **PASS** (all 3 inbound ops through filter; 9 tests, BLOQ-A2A-SEC) |
+| Memory FACT rule              | **PASS** (unified via `validate_fact`; 11 tests, BLOQ-MEM) |
+| Memory forget / audit         | **PASS** (tombstone by/reason + audit_sink; 10 tests, BLOQ-MEM) |
+| pyproject.toml parses         | **PASS** (8 optional-dependencies: openai/anthropic/groq/vector/api/otel/dev/all) |
 
 ---
 
@@ -320,6 +332,184 @@ existing components, NOT by duplicating or replacing them.**
    "no domain here" are listed in `ALLOWED_PATHS` (not modified) per the
    task's explicit rule: "fix the keyword list or allowed paths, NOT
    the existing Seed code".
+
+---
+
+## BLOQ 1–8 Closure Round (2026-10-12)
+
+The BLOQ round closed 8 follow-on gaps discovered after the initial
+GAP-1..7 + A2A-IMPL/A2A-INFRA/A2A-GAP-A/A2A-GAP-B work landed. The
+round was staffed by 4 subagents:
+
+- **BLOQ-A2A-SEC** — A2A security perimeter closer (closed BLOQ 1, 2, 3).
+- **BLOQ-MEM** — memory factual integrity + forget/audit closer (closed BLOQ 4, 5).
+- **CERT-CLEAN-ROOM** — clean-room honest-scope doc (BLOQ 7).
+- **CERT-PATHS** — contamination allowed-paths verifier (related to BLOQ 7).
+- **BLOQ-DOCS** — certification docs refresh, requirements fix, DNA
+  parity review, GitHub workflow (closed BLOQ 6, 7, 8 + DNA review).
+
+### BLOQ 1, 2, 3 — A2A security perimeter (BLOQ-A2A-SEC)
+
+1. **GAP**: The A2A inbound security pipeline ran ONLY for
+   `message/send`. The two other inbound operations — `tasks/get` and
+   `tasks/cancel` — bypassed `A2ASecurityFilter.evaluate()`. They were
+   open read / destroy paths.
+2. **SOLUTION**: Extended `A2ASecurityFilter` with `evaluate_action(...)`
+   (and a shared `_evaluate_common` helper). `A2AServer.get_status()` and
+   `A2AServer.cancel()` now call `evaluate_action` with the matching
+   action name (`a2a.task.get` / `a2a.task.cancel`). The FastAPI routes
+   pass the `Authorization: Bearer <token>` header end-to-end.
+3. **FILES MODIFIED**: `src/albra_seed/a2a/{client,security,server,transport,observers}.py`,
+   `src/albra_seed/api/routes/a2a.py`, `src/albra_seed/core/base.py`
+   (signatures only). All new `token` params optional with default `None`.
+4. **TESTS**: 9 new tests in `tests/a2a/test_a2a_security_perimeter.py`.
+5. **RESULT**: **PASS** — same AUTHENTICATE → FIREWALL → POLICY pipeline
+   runs for every inbound operation; same token flows through every
+   layer (route → server → filter → authenticator); token NEVER appears
+   in logs / evidence / audit / task metadata.
+
+### BLOQ 4, 5 — Memory factual integrity + forget/audit (BLOQ-MEM)
+
+1. **GAP**: The FACT rule was duplicated (one check in
+   `MemoryProvenance.requires_evidence_for_fact`, another inline in
+   `MemoryManager.remember`). Tombstone `delete()` hardcoded `by=None`
+   + `reason=None` (the by/reason arguments were dropped silently).
+2. **SOLUTION**:
+   - Added `MemoryProvenance.FactRule` + `MemoryProvenance.fact_rule()`
+     (single source of truth) + `MemoryProvenance.validate_fact(record)`
+     (single entry point). Removed the duplicated
+     `requires_evidence_for_fact`.
+   - `MemoryManager.remember()` now builds the record FIRST, then
+     delegates to `validate_fact`.
+   - `MemoryManager.consolidate()` re-validates the FACT rule after the
+     policy mutates; on violation, ROLLS BACK the mutation.
+   - Tombstone `delete()` signature unified on the `MemoryStore` ABC:
+     `*, by: str | None = None, reason: str | None = None`. All 3
+     concrete subclasses (InMemory, SQLite, Vector) match. SQLite now
+     binds `by` + `reason` to the INSERT (was hardcoded `None`).
+   - `MemoryManager.__init__` accepts optional `audit_sink` (sync OR
+     async); `forget()` emits `{action: "memory.forget", record_id,
+     by, reason}` when a sink is configured. CORE_ONLY mode (no sink)
+     unchanged.
+3. **TESTS**: 11 new tests in `tests/unit/test_memory_factual_integrity.py`
+   + 10 new tests in `tests/unit/test_memory_forget_audit.py`. 3
+   existing tests minimally updated for signature compatibility.
+4. **RESULT**: **PASS** — FACT rule is unified and enforced end-to-end;
+   tombstone by/reason propagation is restored; forget audit event
+   fires when configured.
+
+### BLOQ 6 — Certification docs refresh (BLOQ-DOCS)
+
+1. **GAP**: `docs/CERTIFICATION.md` referenced commit `8af913e` (the
+   older A2A gap closure commit), but the audited commit was
+   `1d84d8f`. Test counts were stale (444 vs the actual 474). A2A
+   section did not mention the security perimeter closure. Memory
+   section did not mention the FACT rule unification.
+2. **SOLUTION**:
+   - Replaced the hard-coded commit hash with `<TBD-final>` + a note
+     explaining the hash will be updated to the final SHA after this
+     gap-closure round is committed. (Working reference: `1d84d8f`.)
+   - Updated test counts: 474 total (was 444); 81 A2A (was 72); 337
+     unit (was 316); added Memory factual integrity (11) + forget/audit
+     (10) + A2A security perimeter (9) rows.
+   - Updated A2A section: perimeter CLOSED for ALL 3 inbound ops;
+     token plumbing end-to-end; token NEVER in logs/evidence/audit/
+     metadata.
+   - Updated Memory row: FACT rule unified via
+     `MemoryProvenance.validate_fact()`; tombstone carries by/reason;
+     optional `audit_sink` on `MemoryManager.forget()`.
+   - Updated Gate Results table with new gates (A2A security
+     perimeter, Memory FACT rule, Memory forget/audit, pyproject
+     parses).
+   - Updated "Last verified" date to 2026-10-12.
+   - Added a new "A2A Helper Modules" section explaining the
+     architectural decision (see BLOQ 8 / DNA review below).
+3. **RESULT**: **PASS** — `docs/CERTIFICATION.md` is the single source
+   of truth again, with a TBD commit placeholder that will be filled
+   in after the round is committed.
+
+### BLOQ 7 — Clean-room honest scope (CERT-CLEAN-ROOM + BLOQ-DOCS)
+
+1. **GAP**: `scripts/clean_room_verify.py` reported `17/17 required +
+   2/2 optional PASS` but the report did not document what the script
+   verifies vs what it does NOT verify. The scope was not honest.
+2. **SOLUTION** (CERT-CLEAN-ROOM):
+   - Added `check_reproducibility_notes(rep)` to
+     `scripts/clean_room_verify.py` — an INFORMATIONAL check
+     (`required=True` but always passes) that prints inline what the
+     script verifies (17 items: clone-like, install-like, config,
+     startup, tests, build, agent run, health, readiness, golden,
+     API, CLI, memory, audit, firewall, doctor, A2A) vs what it does
+     NOT verify (fresh venv, fresh clone, `pip install -e .` from
+     scratch, multiple Python versions, real network A2A interop,
+     external providers).
+   - Updated `docs/CLEANROOM.md` with §10 "Honest Scope" — LOCAL
+     VERIFIED vs CI REQUIRED clearly separated; §10.4 step-by-step
+     manual procedure for a full external CI verification.
+3. **SOLUTION** (BLOQ-DOCS):
+   - Verified `check_reproducibility_notes` is present and lists both
+     LOCAL VERIFIED and CI REQUIRED items. PASS.
+   - Verified `docs/CLEANROOM.md` §10 has LOCAL VERIFIED vs CI REQUIRED
+     clearly separated. PASS.
+   - Added OPTIONAL GitHub Actions workflow at
+     `.github/workflows/clean-room.yml` that runs the clean-room
+     verification on a FRESH checkout + FRESH virtualenv + MULTIPLE
+     Python versions (3.10, 3.11, 3.12). The seed does NOT depend on
+     this workflow — `scripts/clean_room_verify.py` is the canonical
+     in-tree gate.
+4. **RESULT**: **PASS** — clean-room report is honest; CI workflow is
+   optional but available.
+
+### BLOQ 8 — Requirements.txt + DNA parity review (BLOQ-DOCS)
+
+1. **GAP**: `requirements.txt` referenced a non-existent
+   `requirements-all.txt`. The DNA catalog did not document the
+   architectural status of the 3 A2A helper modules
+   (`a2a.wire` / `a2a.exposition` / `a2a.observers`) — were they
+   universal DNA, or helpers?
+2. **SOLUTION — requirements.txt (Option C)**: Rewrote
+   `requirements.txt` as a convenience mirror of
+   `pyproject.toml [project.dependencies]`. The file now points users
+   at `pip install -e .` / `pip install -e ".[dev]"` /
+   `pip install -e ".[all]"` etc. instead of the missing
+   `requirements-all.txt`. `pyproject.toml` is the SINGLE canonical
+   source of truth.
+3. **SOLUTION — DNA parity review**:
+   - Read each of the 3 A2A helper modules and applied the rule:
+     "Universal DNA component = a capability that EVERY ALBRA agent
+     inherits and uses; Helper = an implementation detail that
+     another implementation could replace without changing the
+     contract."
+   - **`a2a.wire`**: HELPER. The universal contract is "speak A2A 1.0"
+     (carried by `a2a.transport` / `a2a.server` / `a2a.client`).
+     `wire.py` is ONE binding of that contract — a different binding
+     (e.g. protobuf) could replace it without changing the universal
+     DNA.
+   - **`a2a.exposition`**: HELPER. `build_a2a_server()` is a
+     convenience wrapper. Callers may construct an `A2AServer` directly
+     — the wrapper just composes `A2AServer` + `HandoffManager` into a
+     single call.
+   - **`a2a.observers`**: HELPER. The universal infrastructure
+     (`audit.*`, `provenance.*`, `evidence.*`) is already in
+     `UNIVERSAL_DNA_COMPONENTS`. `observers.py` is the A2A-specific
+     binding that wires those universal components into the A2A
+     receive / dispatch lifecycle.
+   - Documented the decision in 3 places:
+     1. `src/albra_seed/parity/dna.py` module docstring (extended) +
+        comment block above `UNIVERSAL_DNA_COMPONENTS`.
+     2. `docs/CERTIFICATION.md` new "A2A Helper Modules" section with
+           a table + the architectural rule applied.
+     3. `scripts/audit_matrix.py` `probe_a2a` notes (mentions the 3
+           helpers as NOT-DNA).
+4. **TESTS**: No new tests — the 3 helpers are exercised transitively
+   via the `a2a` audit-matrix probe (which imports `albra_seed.a2a`)
+   and the 81 A2A tests across 5 files. The parity check
+   (`scripts/parity_check.py`) does NOT enumerate them, so removing
+   one does NOT flip `is_pure_seed` — but removing any of the 8
+   universal A2A DNA modules DOES fail parity.
+5. **RESULT**: **PASS** — `requirements.txt` no longer references a
+   non-existent file; the A2A helper status is documented in 3
+   places; parity check unchanged; all gates still PASS.
 
 ---
 

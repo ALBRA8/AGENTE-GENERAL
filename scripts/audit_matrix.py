@@ -236,7 +236,15 @@ def probe_memory() -> Row:
         dependency="none (sqlite via stdlib for SQLiteStore)",
         risk="MEDIUM",
         evidence=_evidence_for("unit/test_memory.py"),
-        notes="InMemory + SQLite + Vector (chromadb optional) + isolator + provenance",
+        notes=(
+            "InMemory + SQLite + Vector (chromadb optional) + isolator + "
+            "provenance + DECISION type (GAP-3); FACT rule UNIFIED via "
+            "MemoryProvenance.validate_fact() (BLOQ-MEM) — single source of "
+            "truth, no duplicate checks; tombstone carries by/reason on "
+            "delete() (InMemory + SQLite); MemoryManager.forget() emits "
+            "memory.forget audit event when audit_sink configured "
+            "(optional, CORE_ONLY-safe)"
+        ),
     )
 
 
@@ -1040,7 +1048,14 @@ def probe_a2a() -> Row:
         evidence=_evidence_for("a2a/test_a2a.py"),
         notes=(
             "A2A adapter layer on Handoff; AgentCard derived from Manifest; "
-            "InProcessTransport always available; HTTPTransport lazy httpx"
+            "InProcessTransport always available; HTTPTransport lazy httpx; "
+            "security perimeter CLOSED for ALL 3 inbound ops "
+            "(message/send + tasks/get + tasks/cancel) with token "
+            "plumbing end-to-end (BLOQ-A2A-SEC); 81 tests across 5 files "
+            "(28 main + 16 wire + 10 routes + 18 interop + 9 security "
+            "perimeter); 3 helper modules (a2a.wire / a2a.exposition / "
+            "a2a.observers) NOT in UNIVERSAL_DNA_COMPONENTS — see "
+            "docs/CERTIFICATION.md 'A2A Helper Modules' (BLOQ-DOCS)"
             if ok else err
         ),
     )

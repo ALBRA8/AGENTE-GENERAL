@@ -155,7 +155,13 @@ class SQLiteMemoryStore(MemoryStore):
             rows = cur.fetchall()
         return [self._deserialize(r) for r in rows]
 
-    async def delete(self, record_id: str) -> bool:
+    async def delete(
+        self,
+        record_id: str,
+        *,
+        by: str | None = None,
+        reason: str | None = None,
+    ) -> bool:
         with self._lock:
             assert self._conn is not None
             cur = self._conn.execute(
@@ -168,9 +174,9 @@ class SQLiteMemoryStore(MemoryStore):
                 "DELETE FROM memory_records WHERE record_id = ?", (record_id,)
             )
             self._conn.execute(
-                "INSERT OR REPLACE INTO memory_tombstones (record_id, deleted_at, by, reason) "
-                "VALUES (?,?,?,?)",
-                (record_id, utc_now().isoformat(), None, None),
+                "INSERT OR REPLACE INTO memory_tombstones "
+                "(record_id, deleted_at, by, reason) VALUES (?,?,?,?)",
+                (record_id, utc_now().isoformat(), by, reason),
             )
             self._conn.commit()
         return True

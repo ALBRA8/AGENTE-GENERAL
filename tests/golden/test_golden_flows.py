@@ -445,6 +445,8 @@ async def test_golden_memory_write_with_provenance() -> None:
         evidence_ids=["ev_001", "ev_002"],
         execution_id="exec-1",
         correlation_id="corr-1",
+        source="tool",
+        source_type="tool",
         is_fact=True,
     )
     record, prov = provenance_builder.attach(record)
@@ -454,8 +456,11 @@ async def test_golden_memory_write_with_provenance() -> None:
     assert record.provenance_id == prov.provenance_id
     assert prov.evidence_ids == ["ev_001", "ev_002"]
     assert prov.execution_id == "exec-1"
-    # Factual memory requires at least one evidence id.
-    assert MemoryProvenance.requires_evidence_for_fact(record) is True
+    # Factual memory must satisfy the UNIVERSAL FACT rule (single source of
+    # truth in MemoryProvenance.validate_fact): evidence, source_type, and
+    # confidence are all required.
+    is_valid, why = MemoryProvenance.validate_fact(record)
+    assert is_valid is True, why
     # Read back.
     fetched = await store.read(record_id)
     assert fetched is not None

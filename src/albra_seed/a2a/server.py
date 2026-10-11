@@ -34,7 +34,11 @@ from albra_seed.a2a.observers import (
     track_input_provenance,
     track_output_provenance,
 )
-from albra_seed.a2a.security import A2ASecurityFilter
+from albra_seed.a2a.security import (
+    A2A_CANCEL_ACTION,
+    A2A_GET_STATUS_ACTION,
+    A2ASecurityFilter,
+)
 from albra_seed.core.identity import AgentIdentity, AgentManifest
 from albra_seed.core.types import utc_now
 from albra_seed.handoff.contract import HandoffRequest, HandoffResponse
@@ -187,8 +191,49 @@ class A2AServer:
         await track_output_provenance(self._runtime, updated, response)
         return updated
 
-    async def get_status(self, task_id: str) -> A2ATaskStatus | None:
-        """Return a status snapshot for a previously-submitted task."""
+    async def get_status(
+        self,
+        task_id: str,
+        *,
+        token: str | None = None,
+    ) -> A2ATaskStatus | None:
+        """Return a status snapshot for a previously-submitted task.
+
+        Security: runs the full filter pipeline (auth → firewall →
+        policy) on the ``a2a.tasks.get`` action. Denials return ``None``
+        and are recorded in the audit log so operators can see who
+        probed a task they were not authorised to read.
+
+        The token is NEVER stored on the returned status, NEVER logged,
+        and NEVER surfaced in metadata — only the principal's identity
+        is recorded in the audit entry (via ``record_audit``).
+        """
+        # Security filter — short-circuits on authentication failure,
+        # firewall deny, or policy deny. REQUIRE_HITL is treated as a
+        # deny for read operations (no task body to approve).
+        decision = await self._security.evaluate_action(
+            A2A_GET_STATUS_ACTION,
+            task_id=task_id,
+            token=token,
+            target=self._identity.agent_id,
+        )
+        if not decision.allowed:
+            # Audit the denial. We do NOT have a task body, so we synthesize
+            # a minimal record from the task_id (only the id + a marker).
+            stub = A2ATask(
+                task_id=task_id,
+                state=TaskState.SUBMITTED,
+                requester=getattr(decision.principal, "identity", "anonymous")
+                if decision.principal is not None
+                else "anonymous",
+                target=self._identity.agent_id,
+                metadata={"security_reason": decision.reason, "denied_action": A2A_GET_STATUS_ACTION},
+            )
+            await record_audit(
+                self._runtime, stub, result="denied", error=decision.reason,
+                action=A2A_GET_STATUS_ACTION,
+            )
+            return None
         task = self._tasks.get(task_id)
         if task is None:
             return None
@@ -200,12 +245,43 @@ class A2AServer:
             updated_at=utc_now(),
         )
 
-    async def cancel(self, task_id: str) -> A2ATask | None:
+    async def cancel(
+        self,
+        task_id: str,
+        *,
+        token: str | None = None,
+    ) -> A2ATask | None:
         """Cancel a previously-submitted task.
 
         Returns the updated task (state=CANCELED) or None if not found.
         Already-terminal tasks are returned unchanged.
+
+        Security: same pipeline as ``get_status`` but using the
+        ``a2a.tasks.cancel`` action. Denials return ``None`` and are
+        recorded in the audit log. The token is NEVER logged.
         """
+        # Security filter — short-circuits on auth/firewall/policy deny.
+        decision = await self._security.evaluate_action(
+            A2A_CANCEL_ACTION,
+            task_id=task_id,
+            token=token,
+            target=self._identity.agent_id,
+        )
+        if not decision.allowed:
+            stub = A2ATask(
+                task_id=task_id,
+                state=TaskState.SUBMITTED,
+                requester=getattr(decision.principal, "identity", "anonymous")
+                if decision.principal is not None
+                else "anonymous",
+                target=self._identity.agent_id,
+                metadata={"security_reason": decision.reason, "denied_action": A2A_CANCEL_ACTION},
+            )
+            await record_audit(
+                self._runtime, stub, result="denied", error=decision.reason,
+                action=A2A_CANCEL_ACTION,
+            )
+            return None
         task = self._tasks.get(task_id)
         if task is None:
             return None

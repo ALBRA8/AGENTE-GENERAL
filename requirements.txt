@@ -1,6 +1,16 @@
-# Core dependencies — minimum to run the seed offline
+# Core dependencies — minimum to run the seed offline.
+# Canonical source: pyproject.toml [project.dependencies]
+# Install: pip install -e .            (core only)
+# Install: pip install -e ".[dev]"     (core + dev/test deps)
+# Install: pip install -e ".[all]"     (core + all optional providers/integrations)
+# Install: pip install -e ".[api]"     (core + FastAPI REST API)
+# Install: pip install -e ".[openai]"  (core + OpenAI provider)
+# etc. — see pyproject.toml [project.optional-dependencies]
+#
+# This requirements.txt is a convenience mirror for `pip install -r`
+# workflows. The canonical, machine-readable source of truth is
+# pyproject.toml — when in doubt, prefer `pip install -e .` over
+# `pip install -r requirements.txt`.
 pydantic>=2.5.0
 python-dotenv>=1.0.0
 structlog>=23.2.0
-
-# Optional: pip install -r requirements-all.txt for full stack

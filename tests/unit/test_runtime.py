@@ -113,7 +113,13 @@ class InMemoryMemoryStore(MemoryStore):
     async def query(self, **kwargs) -> list[MemoryRecord]:
         return list(self._records.values())
 
-    async def delete(self, record_id: str) -> bool:
+    async def delete(
+        self,
+        record_id: str,
+        *,
+        by: str | None = None,
+        reason: str | None = None,
+    ) -> bool:
         return self._records.pop(record_id, None) is not None
 
     async def count(self, *, agent_id: str, domain: str = "default") -> int:

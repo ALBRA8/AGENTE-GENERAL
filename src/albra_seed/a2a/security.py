@@ -19,6 +19,24 @@ step, the step is SKIPPED (CORE_ONLY mode). This means:
 
 The filter produces an `A2ASecurityDecision` summarising the outcome.
 It does NOT itself execute the task — that is the A2AServer's job.
+
+Two public methods are provided:
+
+  * ``evaluate(task, *, token)`` — full pipeline for the
+    ``message/send`` path. Includes the HITL/approval flow (because the
+    task carries enough context to request an approval).
+  * ``evaluate_action(action, *, task_id=None, token=None, target=None)``
+    — the same AUTHENTICATE → FIREWALL → POLICY pipeline for the
+    ``tasks/get`` and ``tasks/cancel`` paths. These are read/state-mutating
+    operations on a previously-submitted task; they do NOT request HITL
+    approvals (a deny is a deny — there is no task body to approve).
+
+Both methods share ``_evaluate_common`` so the security logic is defined
+in exactly one place.
+
+The token is NEVER logged, stored in metadata, or surfaced in evidence /
+audit records. Only the resolved ``principal`` (its ``identity`` /
+``principal_id``) reaches the audit log via ``record_audit``.
 """
 
 from __future__ import annotations
@@ -44,6 +62,12 @@ from albra_seed.runtime.runtime import (
 from albra_seed.security.auth import AuthPrincipal, NoopAuthenticator
 
 
+# Canonical action names used for firewall / policy evaluations.
+A2A_RECEIVE_ACTION = "a2a.task.receive"
+A2A_GET_STATUS_ACTION = "a2a.tasks.get"
+A2A_CANCEL_ACTION = "a2a.tasks.cancel"
+
+
 class A2ASecurityDecision(BaseModel):
     """Outcome of an A2A security evaluation."""
 
@@ -53,10 +77,6 @@ class A2ASecurityDecision(BaseModel):
     approval_id: str | None = None
     principal: AuthPrincipal | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-# Canonical action name used for firewall / policy evaluations.
-A2A_RECEIVE_ACTION = "a2a.task.receive"
 
 
 class A2ASecurityFilter:
@@ -80,8 +100,14 @@ class A2ASecurityFilter:
         *,
         token: str | None = None,
     ) -> A2ASecurityDecision:
-        """Run the full security pipeline on an inbound A2A task."""
-        # ---- 1. AUTHENTICATE ---------------------------------------
+        """Run the full security pipeline on an inbound A2A ``message/send``.
+
+        Adds the HITL/approval flow on top of ``_evaluate_common``: when
+        the policy engine returns ``REQUIRE_HITL`` the filter tries to
+        create an approval request via the (lazy) approval engine and
+        surfaces the approval_id on the decision.
+        """
+        # 1. AUTHENTICATE
         principal = await self._authenticate(token)
         if principal is None:
             return A2ASecurityDecision(
@@ -90,20 +116,103 @@ class A2ASecurityFilter:
                 principal=None,
             )
 
-        # ---- 2. AUTHORIZE (no separate RBAC step yet; the firewall +
-        # policy engine compose authorization). The principal's roles
-        # are surfaced to the policy engine below. -------------------
-
-        # Build the RunContext ONCE so both firewall and policy engine
+        # 2. Build the RunContext ONCE so both firewall and policy engine
         # see the same risk / autonomy classification.
         ctx = self._build_run_context(task, principal)
 
-        # ---- 3. FIREWALL (lazy) ------------------------------------
+        # 3. FIREWALL + POLICY (shared with evaluate_action).
+        decision = await self._evaluate_common(
+            action=A2A_RECEIVE_ACTION,
+            principal=principal,
+            ctx=ctx,
+        )
+
+        # 4. If the policy required HITL, request an approval using the
+        # task body (the approval engine needs a requester / context).
+        if (
+            not decision.allowed
+            and decision.reason == "require_hitl"
+            and decision.policy_decision == PolicyDecision.REQUIRE_HITL
+        ):
+            approval_id = await self._request_approval(task, ctx)
+            decision.approval_id = approval_id
+        return decision
+
+    async def evaluate_action(
+        self,
+        action: str,
+        *,
+        task_id: str | None = None,
+        token: str | None = None,
+        target: str | None = None,
+    ) -> A2ASecurityDecision:
+        """Run the security pipeline for a non-``message/send`` A2A operation.
+
+        Used by ``A2AServer.get_status`` and ``A2AServer.cancel``. These
+        operations do NOT carry a full task body — they reference a
+        previously-submitted task by id. The filter therefore builds a
+        minimal RunContext from ``(task_id, target)`` and runs the same
+        AUTHENTICATE → FIREWALL → POLICY pipeline.
+
+        HITL approvals are NOT requested for these operations: a
+        ``REQUIRE_HITL`` verdict is treated as a deny (there is no task
+        body to approve). Callers receive the decision and may audit the
+        outcome (the reason string carries the verdict).
+        """
+        # 1. AUTHENTICATE
+        principal = await self._authenticate(token)
+        if principal is None:
+            return A2ASecurityDecision(
+                allowed=False,
+                reason="authentication_failed",
+                principal=None,
+            )
+
+        # 2. Minimal RunContext (no task body to inspect for risk/autonomy).
+        ctx = self._build_action_context(
+            task_id=task_id, target=target, principal=principal
+        )
+
+        # 3. FIREWALL + POLICY (shared with evaluate).
+        return await self._evaluate_common(
+            action=action,
+            principal=principal,
+            ctx=ctx,
+        )
+
+    # -----------------------------------------------------------------
+    # Shared pipeline (firewall + policy). Both evaluate() and
+    # evaluate_action() call this so the security logic exists once.
+    # -----------------------------------------------------------------
+    async def _evaluate_common(
+        self,
+        *,
+        action: str,
+        principal: AuthPrincipal,
+        ctx: RunContext,
+    ) -> A2ASecurityDecision:
+        """AUTHENTICATE'd pipeline: FIREWALL → POLICY.
+
+        Returns an ``A2ASecurityDecision`` with ``reason`` set to one of:
+          * ``allowed``                  — all checks passed
+          * ``firewall_error:<exc>``      — firewall raised
+          * ``firewall_denied:<reason>``  — firewall verdict denied
+          * ``policy_error:<exc>``        — policy engine raised
+          * ``policy_denied``             — policy returned DENY
+          * ``require_hitl``              — policy returned REQUIRE_HITL
+                                           (caller decides whether to
+                                           request an approval)
+
+        The token is NEVER included in the decision or its metadata —
+        only the resolved principal (``principal.identity`` /
+        ``principal.principal_id``) is surfaced.
+        """
+        # ---- FIREWALL (lazy) ---------------------------------------
         firewall = self._runtime.get_component(COMPONENT_FIREWALL)
         if firewall is not None:
             try:
                 verdict = await firewall.verdict(
-                    A2A_RECEIVE_ACTION,
+                    action,
                     actor=principal,
                     context=ctx,
                 )
@@ -124,12 +233,12 @@ class A2ASecurityFilter:
                     principal=principal,
                 )
 
-        # ---- 4. POLICY (lazy) --------------------------------------
+        # ---- POLICY (lazy) -----------------------------------------
         policy_engine = self._runtime.get_component(COMPONENT_POLICY_ENGINE)
         if policy_engine is not None:
             try:
                 verdict = await policy_engine.evaluate(
-                    A2A_RECEIVE_ACTION,
+                    action,
                     context=ctx,
                     actor_roles=list(principal.roles),
                     actor_id=principal.identity,
@@ -149,23 +258,20 @@ class A2ASecurityFilter:
                     principal=principal,
                 )
             if decision == PolicyDecision.REQUIRE_HITL:
-                # Request HITL approval via the approval engine (if any).
-                approval_id = await self._request_approval(task, ctx)
+                # NOTE: the caller (evaluate) may attach an approval_id
+                # if it has a task body to submit for approval. For
+                # evaluate_action (read/state-mutating ops on a stored
+                # task) we surface REQUIRE_HITL as a deny — there is no
+                # task body to approve.
                 return A2ASecurityDecision(
                     allowed=False,
                     reason="require_hitl",
                     policy_decision=decision,
-                    approval_id=approval_id,
                     principal=principal,
                 )
             # ALLOW / DRY_RUN / UNKNOWN → proceed.
 
-        # ---- 5. AUTONOMY (lazy, via policy_engine.autonomy_manager) -
-        # The autonomy check is already composed inside the policy
-        # engine. If the policy engine is absent, we cannot check
-        # autonomy here either (CORE_ONLY mode). No extra step needed.
-
-        # ---- 6. ALL CHECKS PASSED ----------------------------------
+        # ---- ALL CHECKS PASSED -------------------------------------
         return A2ASecurityDecision(
             allowed=True,
             reason="allowed",
@@ -181,6 +287,10 @@ class A2ASecurityFilter:
         Default authenticator is NoopAuthenticator (anonymous principal
         returned for any token). When a real Authenticator is registered
         and `verify` returns None, the principal is None → denied.
+
+        The token is passed ONLY to the authenticator's ``verify`` method.
+        It is NEVER logged here, NEVER stored on the principal, and NEVER
+        returned to the caller.
         """
         authenticator = self._runtime.get_component("authenticator")
         if authenticator is None:
@@ -213,6 +323,32 @@ class A2ASecurityFilter:
             risk_level=risk,
         )
 
+    def _build_action_context(
+        self,
+        *,
+        task_id: str | None,
+        target: str | None,
+        principal: AuthPrincipal,
+    ) -> RunContext:
+        """Build a minimal RunContext for a ``tasks/get`` / ``tasks/cancel``
+        security check.
+
+        There is no task body to inspect for risk / autonomy metadata, so
+        we use ``RiskLevel.UNKNOWN`` and ``AutonomyLevel.L0_OBSERVE`` —
+        the same defaults ``_build_run_context`` uses when a task has no
+        metadata. The ``execution_id`` is set to the queried ``task_id``
+        (or a fresh id if absent) so audit / provenance chains stay
+        correlatable.
+        """
+        return RunContext(
+            execution_id=task_id or new_id("exec"),
+            correlation_id=new_id("corr"),
+            agent_id=target or "a2a-server",
+            task="(a2a action query)",
+            autonomy_level=AutonomyLevel.L0_OBSERVE,
+            risk_level=RiskLevel.UNKNOWN,
+        )
+
     async def _request_approval(self, task: A2ATask, ctx: RunContext) -> str | None:
         """Create a PENDING approval request and return its id.
 
@@ -234,4 +370,10 @@ class A2ASecurityFilter:
             return None
 
 
-__all__ = ["A2ASecurityFilter", "A2ASecurityDecision", "A2A_RECEIVE_ACTION"]
+__all__ = [
+    "A2ASecurityFilter",
+    "A2ASecurityDecision",
+    "A2A_RECEIVE_ACTION",
+    "A2A_GET_STATUS_ACTION",
+    "A2A_CANCEL_ACTION",
+]

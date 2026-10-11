@@ -178,10 +178,12 @@ def test_memory_provenance_attached():
     assert prov.modified_at is None
     assert record.modified_at is not None
 
-    # fact requires evidence gate
-    assert MemoryProvenance.requires_evidence_for_fact(record) is True
+    # fact requires evidence gate — unified via MemoryProvenance.validate_fact
+    assert MemoryProvenance.validate_fact(record) == (True, None)
     record_no_ev = record.model_copy(update={"is_fact": True, "evidence_ids": []})
-    assert MemoryProvenance.requires_evidence_for_fact(record_no_ev) is False
+    is_valid, why = MemoryProvenance.validate_fact(record_no_ev)
+    assert is_valid is False
+    assert why is not None and "evidence" in why
 
 
 def test_memory_manager_remember_and_recall():

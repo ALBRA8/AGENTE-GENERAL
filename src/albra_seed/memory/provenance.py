@@ -3,14 +3,37 @@
 Every memory record MUST carry provenance. This module builds a `Provenance`
 model from a memory write and links it back to its evidence chain. Factual
 memory (is_fact=True) requires at least one evidence_id.
+
+This module is the SINGLE SOURCE OF TRUTH for the FACT rule. Use
+`MemoryProvenance.fact_rule()` to obtain the canonical rule and
+`MemoryProvenance.validate_fact(record)` to apply it. No other module should
+re-implement FACT validation logic.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from pydantic import BaseModel, Field
+
 from albra_seed.core.base import MemoryRecord
 from albra_seed.core.types import Provenance, new_id, utc_now
+
+
+class FactRule(BaseModel):
+    """The UNIVERSAL FACT rule. Single source of truth for is_fact validation.
+
+    A `MemoryRecord` with `is_fact=True` MUST satisfy:
+        - require_evidence: at least one evidence_id backing the fact
+        - source_type in allowed_source_types: only trustworthy sources
+        - confidence >= min_confidence: high confidence required for facts
+    """
+
+    require_evidence: bool = Field(default=True)
+    allowed_source_types: frozenset[str] = Field(
+        default_factory=lambda: frozenset({"tool", "external", "verified_provider"})
+    )
+    min_confidence: float = Field(default=0.9, ge=0.0, le=1.0)
 
 
 class MemoryProvenance:
@@ -76,11 +99,53 @@ class MemoryProvenance:
         return record, provenance
 
     @staticmethod
-    def requires_evidence_for_fact(record: MemoryRecord) -> bool:
-        """Factual memory (is_fact=True) must reference at least one evidence id."""
-        if record.is_fact:
-            return bool(record.evidence_ids)
-        return True
+    def fact_rule() -> FactRule:
+        """The UNIVERSAL fact rule. Single source of truth.
+
+        A MemoryRecord with is_fact=True MUST satisfy:
+            - evidence_ids non-empty (at least one evidence backing the fact)
+            - source_type in {"tool", "external", "verified_provider"}
+              (only trustworthy sources)
+            - confidence >= 0.9 (high confidence required for facts)
+
+        Returns a FactRule instance.
+        """
+        return FactRule(
+            require_evidence=True,
+            allowed_source_types=frozenset({"tool", "external", "verified_provider"}),
+            min_confidence=0.9,
+        )
+
+    @staticmethod
+    def validate_fact(record: MemoryRecord) -> tuple[bool, str | None]:
+        """Validate a MemoryRecord against the UNIVERSAL FACT rule.
+
+        Returns ``(is_valid, reason_if_invalid)``. A non-fact record
+        (``is_fact=False``) always passes; the rule applies only when
+        ``is_fact=True``.
+
+        This is the SINGLE entry point for FACT validation. All call sites
+        (``MemoryManager.remember``, consolidation gates, future API
+        surfaces) MUST delegate here rather than re-implementing checks.
+        """
+        if not record.is_fact:
+            return True, None  # non-fact records skip the rule
+        rule = MemoryProvenance.fact_rule()
+        if rule.require_evidence and not record.evidence_ids:
+            return False, "is_fact=True requires at least one evidence_id"
+        if record.source_type not in rule.allowed_source_types:
+            return (
+                False,
+                f"is_fact=True requires source_type in "
+                f"{sorted(rule.allowed_source_types)} (got {record.source_type!r})",
+            )
+        if record.confidence < rule.min_confidence:
+            return (
+                False,
+                f"is_fact=True requires confidence >= {rule.min_confidence} "
+                f"(got {record.confidence})",
+            )
+        return True, None
 
     @staticmethod
     def to_dict(provenance: Provenance) -> dict[str, Any]:

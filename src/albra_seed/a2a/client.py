@@ -63,16 +63,40 @@ class A2AClient:
         )
 
     async def get_status(
-        self, target_url: str, task_id: str
+        self,
+        target_url: str,
+        task_id: str,
+        *,
+        token: str | None = None,
     ) -> A2ATaskStatus | None:
-        """Query the status of a previously-submitted task."""
-        return await self._transport.get_status(target_url, task_id)
+        """Query the status of a previously-submitted task.
+
+        ``token`` overrides the client-level default (``self._token``)
+        when provided. The token travels in the ``Authorization`` header
+        over HTTP; in-process it is passed directly to the server's
+        security filter.
+        """
+        effective_token = token if token is not None else self._token
+        return await self._transport.get_status(
+            target_url, task_id, token=effective_token
+        )
 
     async def cancel(
-        self, target_url: str, task_id: str
+        self,
+        target_url: str,
+        task_id: str,
+        *,
+        token: str | None = None,
     ) -> A2ATask | None:
-        """Cancel a previously-submitted task."""
-        return await self._transport.cancel(target_url, task_id)
+        """Cancel a previously-submitted task.
+
+        ``token`` overrides the client-level default (``self._token``)
+        when provided.
+        """
+        effective_token = token if token is not None else self._token
+        return await self._transport.cancel(
+            target_url, task_id, token=effective_token
+        )
 
     async def send_with_timeout(
         self,

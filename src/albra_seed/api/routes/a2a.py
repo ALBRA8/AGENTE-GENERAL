@@ -116,7 +116,7 @@ def build_public_a2a_router(ctx: RequestContext) -> Any:
                     error={"code": _ERR_INVALID_PARAMS, "message": "missing 'id'"},
                     request_id=req_id,
                 )
-            status = await a2a_server.get_status(str(task_id))
+            status = await a2a_server.get_status(str(task_id), token=token)
             if status is None:
                 return make_jsonrpc_response(
                     error={"code": _ERR_INVALID_PARAMS,
@@ -134,7 +134,7 @@ def build_public_a2a_router(ctx: RequestContext) -> Any:
                     error={"code": _ERR_INVALID_PARAMS, "message": "missing 'id'"},
                     request_id=req_id,
                 )
-            cancelled = await a2a_server.cancel(str(task_id))
+            cancelled = await a2a_server.cancel(str(task_id), token=token)
             if cancelled is None:
                 return make_jsonrpc_response(
                     error={"code": _ERR_INVALID_PARAMS,

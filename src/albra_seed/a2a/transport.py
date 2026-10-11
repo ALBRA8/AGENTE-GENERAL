@@ -45,17 +45,33 @@ class A2ATransport(ABC):
 
     @abstractmethod
     async def get_status(
-        self, target_url: str, task_id: str
+        self,
+        target_url: str,
+        task_id: str,
+        *,
+        token: str | None = None,
     ) -> A2ATaskStatus | None:
-        """Query the status of a previously-submitted task."""
+        """Query the status of a previously-submitted task.
+
+        ``token`` is forwarded to the receiving server's security filter
+        (in-process) or sent in the ``Authorization`` header (HTTP).
+        """
         raise NotImplementedError
 
     @abstractmethod
     async def cancel(
-        self, target_url: str, task_id: str
+        self,
+        target_url: str,
+        task_id: str,
+        *,
+        token: str | None = None,
     ) -> A2ATask | None:
         """Cancel a previously-submitted task. Returns the final task
-        state (CANCELED) or None if not found."""
+        state (CANCELED) or None if not found.
+
+        ``token`` is forwarded to the receiving server's security filter
+        (in-process) or sent in the ``Authorization`` header (HTTP).
+        """
         raise NotImplementedError
 
     async def health(self, target_url: str) -> bool:  # pragma: no cover
@@ -108,20 +124,28 @@ class InProcessTransport(A2ATransport):
         return await server.receive(task, token=token)
 
     async def get_status(
-        self, target_url: str, task_id: str
+        self,
+        target_url: str,
+        task_id: str,
+        *,
+        token: str | None = None,
     ) -> A2ATaskStatus | None:
         server = self._servers.get(target_url)
         if server is None:
             return None
-        return await server.get_status(task_id)
+        return await server.get_status(task_id, token=token)
 
     async def cancel(
-        self, target_url: str, task_id: str
+        self,
+        target_url: str,
+        task_id: str,
+        *,
+        token: str | None = None,
     ) -> A2ATask | None:
         server = self._servers.get(target_url)
         if server is None:
             return None
-        return await server.cancel(task_id)
+        return await server.cancel(task_id, token=token)
 
     async def health(self, target_url: str) -> bool:
         return target_url in self._servers

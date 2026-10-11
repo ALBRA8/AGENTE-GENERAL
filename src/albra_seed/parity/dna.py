@@ -26,11 +26,43 @@ A2A (Agent2Agent): the universal interoperability layer was added on
 2026-10-12 by GAP-A2A-IMPL. The 8 A2A modules (``a2a.card``,
 ``a2a.contract``, ``a2a.adapter``, ``a2a.security``, ``a2a.transport``,
 ``a2a.server``, ``a2a.client``, ``a2a.registry``) are now part of the
-universal DNA. ``a2a.observers`` is an internal helper module and is
-not enumerated separately (it is exercised via the ``a2a.server`` probe
-and the ``tests/a2a/test_a2a.py`` evidence chain). A2A is a pure
-translation layer over Handoff — no new business logic, no parallel
-identity store.
+universal DNA. A2A is a pure translation layer over Handoff — no new
+business logic, no parallel identity store.
+
+A2A helper modules — NOT in UNIVERSAL_DNA_COMPONENTS (BLOQ-DOCS):
+  The following modules live under ``albra_seed.a2a`` but are NOT
+  enumerated in ``UNIVERSAL_DNA_COMPONENTS``. They are implementation
+  details of the universal A2A contract (the 8 modules above), NOT
+  universal capabilities themselves. They are exercised transitively
+  via the ``a2a`` audit-matrix probe and the ``tests/a2a/`` evidence
+  chain. A specialization may replace any of them as long as the
+  universal contract (the 8 modules above) is preserved.
+
+  - ``a2a.wire``       — A2A 1.0 wire-format serialization helpers
+                         (``agent_card_to_wire``, ``task_to_wire``,
+                         JSON-RPC envelope builders). The universal
+                         contract is "speak A2A 1.0" (carried by
+                         ``a2a.transport`` / ``a2a.server`` /
+                         ``a2a.client``); ``wire.py`` is one binding
+                         of that contract. A different binding (e.g.
+                         protobuf) could replace it without changing
+                         the universal DNA.
+  - ``a2a.exposition`` — ``build_a2a_server()`` convenience wrapper
+                         that composes ``A2AServer`` +
+                         ``HandoffManager`` into a single call. Pure
+                         composition helper; callers may construct an
+                         ``A2AServer`` directly.
+  - ``a2a.observers``  — Audit / provenance / evidence hooks called by
+                         ``a2a.server``. The universal infrastructure
+                         (``audit.*``, ``provenance.*``,
+                         ``evidence.*``) is already in
+                         ``UNIVERSAL_DNA_COMPONENTS``;
+                         ``observers.py`` is the A2A-specific binding
+                         that wires those universal components into the
+                         A2A receive / dispatch lifecycle.
+
+  See ``docs/CERTIFICATION.md`` § "A2A Helper Modules" for the
+  architectural rationale.
 """
 
 from __future__ import annotations
@@ -39,6 +71,17 @@ from __future__ import annotations
 # UNIVERSAL DNA — must be present in EVERY ALBRA agent.
 # Each entry corresponds to an importable module: ``albra_seed.<entry>``.
 # A specialization MAY add modules but MUST NOT remove any of these.
+#
+# A2A helper modules NOT enumerated here (BLOQ-DOCS decision):
+#   - a2a.wire       (A2A 1.0 wire-format serialization helpers)
+#   - a2a.exposition (build_a2a_server() convenience wrapper)
+#   - a2a.observers  (audit/provenance/evidence A2A binding)
+# These are implementation details of the universal 8-module A2A contract
+# below. The universal contract (the 8 modules enumerated as `a2a.card`,
+# `a2a.contract`, `a2a.adapter`, `a2a.security`, `a2a.transport`,
+# `a2a.server`, `a2a.client`, `a2a.registry`) IS the DNA; the helpers
+# may be replaced without breaking that contract. See module docstring
+# above and `docs/CERTIFICATION.md` § "A2A Helper Modules".
 # ---------------------------------------------------------------------------
 
 UNIVERSAL_DNA_COMPONENTS: list[str] = [

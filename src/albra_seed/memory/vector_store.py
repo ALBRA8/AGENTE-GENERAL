@@ -92,7 +92,13 @@ class VectorMemoryStore(MemoryStore):
         ids = res.get("ids", []) if isinstance(res, dict) else []
         return [self._records[i] for i in ids if i in self._records]
 
-    async def delete(self, record_id: str) -> bool:
+    async def delete(
+        self,
+        record_id: str,
+        *,
+        by: str | None = None,
+        reason: str | None = None,
+    ) -> bool:
         if record_id not in self._records:
             return False
         self._collection.delete(ids=[record_id])

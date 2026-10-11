@@ -7,8 +7,10 @@
 > copy of the numbers. When any number here changes, all referencing docs are
 > out of date until refreshed from this file.
 
-**Last verified:** 2026-10-11
-**Commit:** `8af913e0f6b84a8d159e49e992870f1bacfede90`
+**Last verified:** 2026-10-12
+**Commit:** `<TBD-final>` — commit hash will be updated to the final
+commit SHA after this gap-closure round (BLOQ 1–8) is committed.
+Until then, the latest hash on `main` is the working reference: `1d84d8f`.
 **Status:** `READY_TO_FREEZE`
 
 ---
@@ -21,23 +23,27 @@ script or by counting actual files. None are invented.
 | Metric                       | Value | Source                                                                  |
 | ---------------------------- | ----- | ----------------------------------------------------------------------- |
 | Universal DNA components     | 106   | `src/albra_seed/parity/dna.py` `UNIVERSAL_DNA_COMPONENTS`               |
+| A2A helper modules (NOT DNA)| 3   | `a2a.wire`, `a2a.exposition`, `a2a.observers` — see § "A2A Helper Modules" |
 | Allowed specializations      | 8     | `src/albra_seed/parity/dna.py` `ALLOWED_SPECIALIZATIONS`                |
 | Audit matrix probes          | 40    | `scripts/audit_matrix.py` `PROBES` list (33 original + 7 gap closures)  |
-| Total tests                   | 444   | `python -m pytest tests/ --collect-only -q`                             |
-| A2A tests                    | 72    | `python -m pytest tests/a2a/ --collect-only -q` (28 wire + 16 wire + 10 routes + 18 external interop) |
+| Total tests                   | 474   | `python -m pytest tests/ --collect-only -q`                             |
+| A2A tests                    | 81    | `python -m pytest tests/a2a/ --collect-only -q` (28 main + 16 wire + 10 routes + 18 external interop + 9 security perimeter) |
 | A2A tests — main             | 28    | `tests/a2a/test_a2a.py`                                                 |
 | A2A tests — wire format      | 16    | `tests/a2a/test_a2a_wire.py`                                             |
 | A2A tests — routes           | 10    | `tests/a2a/test_a2a_routes.py`                                           |
 | A2A tests — external interop | 18    | `tests/a2a/test_external_interop.py`                                    |
+| A2A tests — security perimeter | 9   | `tests/a2a/test_a2a_security_perimeter.py` (BLOQ-A2A-SEC)               |
 | Golden flows                 | 13    | `tests/golden/test_golden_flows.py`                                     |
 | Integration tests            | 5     | `tests/integration/test_runtime_integration.py`                         |
 | Contract tests               | 4     | `tests/contracts/test_contracts.py`                                     |
 | Security tests               | 5     | `tests/security/test_security.py`                                       |
 | Genetic parity tests         | 17    | `tests/genetic/test_parity.py`                                          |
 | Genetic contamination tests  | 12    | `tests/contamination/test_contamination.py`                             |
+| Memory factual integrity     | 11    | `tests/unit/test_memory_factual_integrity.py` (BLOQ-MEM)                |
+| Memory forget / audit        | 10    | `tests/unit/test_memory_forget_audit.py` (BLOQ-MEM)                     |
 | Birth / readiness tests      | 8     | `tests/unit/test_birth_readiness.py`                                    |
-| Unit tests (total)           | 316   | `python -m pytest tests/unit/ --collect-only -q`                        |
-| Unit tests (excl. birth/readiness) | ~308 | 316 − 8                                                               |
+| Unit tests (total)           | 337   | `python -m pytest tests/unit/ --collect-only -q` (316 + 11 factual + 10 forget audit) |
+| Unit tests (excl. birth/readiness) | ~329 | 337 − 8                                                               |
 
 ### Allowed specializations (8)
 
@@ -71,11 +77,11 @@ the clean-room script.)
 
 ---
 
-## Gate Results (verified 2026-10-11)
+## Gate Results (verified 2026-10-12)
 
 | Gate                       | Result | Evidence                                                                              |
 | -------------------------- | ------ | ------------------------------------------------------------------------------------- |
-| Tests                       | PASS   | `python -m pytest tests/ -q` → **444 passed in 8.08s**                                |
+| Tests                       | PASS   | `python -m pytest tests/ -q` → **474 passed in ~8s**                                  |
 | Audit Matrix               | PASS   | `python scripts/audit_matrix.py` → **40/40 VERIFIED**                                 |
 | Genetic Parity             | PASS   | `python scripts/parity_check.py` → exit 0, `is_pure_seed=True`, 106/106 DNA present   |
 | Genetic Contamination      | PASS   | `python scripts/contamination_scan.py` → exit 0, `is_clean=True`, 0 critical, 0 warnings, 249 files scanned |
@@ -84,7 +90,11 @@ the clean-room script.)
 | A2A wire format             | PASS   | `pytest tests/a2a/test_a2a_wire.py` → **16 passed**                                   |
 | A2A routes                  | PASS   | `pytest tests/a2a/test_a2a_routes.py` → **10 passed**                                 |
 | A2A external interop        | PASS   | `pytest tests/a2a/test_external_interop.py` → **18 passed** via `httpx.ASGITransport` |
-| A2A full suite              | PASS   | `pytest tests/a2a/ -q` → **72 passed in 0.85s**                                       |
+| A2A security perimeter      | PASS   | `pytest tests/a2a/test_a2a_security_perimeter.py` → **9 passed** (BLOQ-A2A-SEC; all 3 ops through filter, token plumbing end-to-end) |
+| A2A full suite              | PASS   | `pytest tests/a2a/ -q` → **81 passed in ~2s**                                          |
+| Memory FACT rule            | PASS   | `pytest tests/unit/test_memory_factual_integrity.py` → **11 passed** (BLOQ-MEM; unified via `MemoryProvenance.validate_fact`) |
+| Memory forget / audit       | PASS   | `pytest tests/unit/test_memory_forget_audit.py` → **10 passed** (BLOQ-MEM; tombstone by/reason + audit_sink) |
+| pyproject.toml parses       | PASS   | `python -c "import tomllib; tomllib.load(open('pyproject.toml','rb'))"` (8 optional-dependencies: openai/anthropic/groq/vector/api/otel/dev/all) |
 
 ---
 
@@ -102,7 +112,7 @@ the script is the authoritative source.
 | 2  | `runtime`          | VERIFIED | IMPLEMENTED     | PASS | HIGH     | `tests/unit/test_runtime.py`             | Lifecycle + loop + state + agent + bootstrap of `provider_router` (GAP-5)                                                        |
 | 3  | `reasoning`        | VERIFIED | IMPLEMENTED     | PASS | MEDIUM   | `tests/unit/test_reasoning.py`           | Planner + engine + prompt templates (`$var` substitution)                                                                       |
 | 4  | `providers`        | VERIFIED | IMPLEMENTED     | PASS | MEDIUM   | `tests/unit/test_providers.py`            | Mock always available; OpenAI/Anthropic/Groq/Ollama/ZAI = NOT_INSTALLED (optional, lazy)                                         |
-| 5  | `memory`           | VERIFIED | IMPLEMENTED     | PASS | MEDIUM   | `tests/unit/test_memory.py`              | InMemory + SQLite + Vector (chromadb optional) + isolator + provenance + DECISION type (GAP-3)                                  |
+| 5  | `memory`           | VERIFIED | IMPLEMENTED     | PASS | MEDIUM   | `tests/unit/test_memory.py` + `tests/unit/test_memory_factual_integrity.py` + `tests/unit/test_memory_forget_audit.py`              | InMemory + SQLite + Vector (chromadb optional) + isolator + provenance + DECISION type (GAP-3); FACT rule unified via `MemoryProvenance.validate_fact()` (BLOQ-MEM); tombstone carries `by` + `reason` on `delete()`; optional `audit_sink` on `MemoryManager.forget()` (BLOQ-MEM)                                  |
 | 6  | `security`         | VERIFIED | IMPLEMENTED     | PASS | HIGH     | `tests/unit/test_security.py`            | Vault backend = EXTERNAL_DEPENDENCY (hvac not installed)                                                                         |
 | 7  | `firewall`         | VERIFIED | IMPLEMENTED     | PASS | CRITICAL | `tests/unit/test_firewall.py`            | default-deny + kill switch + cooldown + rate limit                                                                              |
 | 8  | `policy`           | VERIFIED | IMPLEMENTED     | PASS | HIGH     | `tests/unit/test_policy.py`              | Policy engine + evaluator + rules                                                                                               |
@@ -137,7 +147,7 @@ the script is the authoritative source.
 | 37 | `skill_evolution`  | VERIFIED | IMPLEMENTED     | PASS | MEDIUM   | `tests/unit/test_skill_evolution.py`     | SkillMetrics + ImprovementProposal + SkillEvolutionManager; extends existing SkillRegistry                                      |
 | 38 | `parity`           | VERIFIED | IMPLEMENTED     | PASS | LOW      | `tests/genetic/test_parity.py`           | ParityChecker + UNIVERSAL_DNA_COMPONENTS (106 entries) + ParityReport                                                            |
 | 39 | `contamination`    | VERIFIED | IMPLEMENTED     | PASS | LOW      | `tests/contamination/test_contamination.py` | ContaminationScanner + 24 forbidden domain keywords + 4 code patterns                                                          |
-| 40 | `a2a`              | VERIFIED | IMPLEMENTED     | PASS | MEDIUM   | `tests/a2a/test_a2a.py` (+ 3 sibling files) | A2A adapter layer on Handoff; AgentCard derived from Manifest; InProcessTransport always available; HTTPTransport lazy httpx   |
+| 40 | `a2a`              | VERIFIED | IMPLEMENTED     | PASS | MEDIUM   | `tests/a2a/test_a2a.py` (+ 4 sibling files: wire, routes, interop, security perimeter) | A2A adapter layer on Handoff; AgentCard derived from Manifest; InProcessTransport always available; HTTPTransport lazy httpx; security perimeter CLOSED for ALL 3 inbound ops (`message/send` + `tasks/get` + `tasks/cancel`) with token plumbing end-to-end (BLOQ-A2A-SEC)   |
 
 Status distribution: `{VERIFIED: 40}`. No PARTIAL / MOCK / PLACEHOLDER /
 EXTERNAL_DEPENDENCY / NOT_CONFIGURED / NOT_VERIFIED / MISSING rows.
@@ -164,8 +174,18 @@ specific role and a specific contract:
   (ALBRA or non-ALBRA). A2A is a pure translation layer over Handoff:
   `AgentCard` is DERIVED from `AgentManifest` (single source of truth);
   `A2ATask` is TRANSLATED into a `HandoffRequest`. Implementation:
-  `src/albra_seed/a2a/` (8 modules: `card`, `contract`, `adapter`,
-  `security`, `transport`, `server`, `client`, `registry`).
+  `src/albra_seed/a2a/` (8 universal DNA modules: `card`, `contract`,
+  `adapter`, `security`, `transport`, `server`, `client`, `registry`
+  + 3 helper modules: `wire`, `exposition`, `observers` — see §
+  "A2A Helper Modules" below).
+  The A2A security perimeter is CLOSED for ALL 3 inbound operations:
+  `message/send`, `tasks/get`, `tasks/cancel`. The same
+  AUTHENTICATE → FIREWALL → POLICY pipeline runs for every operation;
+  the same token flows through every layer (route → server → filter →
+  authenticator). The token NEVER appears in logs, evidence, audit
+  entries, or task metadata — only the resolved principal's identity
+  is recorded (BLOQ-A2A-SEC; 9 tests in
+  `tests/a2a/test_a2a_security_perimeter.py`).
 - **Execution / Evidence / Provenance / Audit** = shared transversal
   infrastructure. ALL three integration channels (MCP, Handoff, A2A) feed
   into the same execution runner, evidence manager, provenance tracker,
@@ -173,6 +193,42 @@ specific role and a specific contract:
 
 The separation is enforced by the parity check (`scripts/parity_check.py`)
 and by the contamination check (`scripts/contamination_scan.py`).
+
+---
+
+## A2A Helper Modules — NOT in UNIVERSAL_DNA_COMPONENTS
+
+**Decision (BLOQ-DOCS, 2026-10-12):** the three A2A-adjacent modules
+listed below are NOT in `UNIVERSAL_DNA_COMPONENTS` (in
+`src/albra_seed/parity/dna.py`). They are implementation details of
+the universal 8-module A2A contract (which IS in the DNA), NOT
+universal capabilities themselves. A specialization MAY replace any
+of them as long as the universal contract (`a2a.card`,
+`a2a.contract`, `a2a.adapter`, `a2a.security`, `a2a.transport`,
+`a2a.server`, `a2a.client`, `a2a.registry`) is preserved.
+
+| Module           | Role                                                            | Why HELPER, not DNA                                                                                                                          |
+| ---------------- | --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `a2a.wire`       | A2A 1.0 wire-format serialization helpers                       | The universal contract is "speak A2A 1.0" (carried by `a2a.transport` / `a2a.server` / `a2a.client`). `wire.py` is ONE binding of that contract. A different binding (e.g. protobuf, CBOR) could replace it without changing the universal DNA. |
+| `a2a.exposition` | `build_a2a_server()` convenience wrapper                        | Pure composition helper. Callers may construct an `A2AServer` directly — the wrapper just composes `A2AServer` + `HandoffManager` into a single call. |
+| `a2a.observers`  | Audit / provenance / evidence hooks called by `a2a.server`     | The universal infrastructure (`audit.*`, `provenance.*`, `evidence.*`) is already in `UNIVERSAL_DNA_COMPONENTS`. `observers.py` is the A2A-specific binding that wires those universal components into the A2A receive / dispatch lifecycle. |
+
+### Architectural rule applied
+
+- **Universal DNA component**: a capability that EVERY ALBRA agent
+  inherits and uses. If you remove it, the agent can't do its job.
+- **Helper**: an implementation detail. Other implementations could
+  replace it without changing the contract.
+
+All three modules above are exercised transitively by the `a2a`
+audit-matrix probe and by the `tests/a2a/` evidence chain (81 tests
+across 5 files, including the 9-test security perimeter suite in
+`tests/a2a/test_a2a_security_perimeter.py`). The parity check
+(`scripts/parity_check.py`) does NOT enumerate them, so removing one
+does NOT flip `is_pure_seed` — but removing any of the 8 universal
+A2A DNA modules DOES fail parity. The distinction is documented
+inline in `src/albra_seed/parity/dna.py` (module docstring + comment
+block above `UNIVERSAL_DNA_COMPONENTS`).
 
 ---
 
@@ -208,7 +264,7 @@ This breaks down as:
 2. Required deps (`pydantic`, `structlog`, `dotenv`) are importable.
 3. `SeedConfig.from_env()` → CORE_ONLY.
 4. `Runtime.startup()` + `readiness() == True`.
-5. `pytest tests/` passes (444 tests).
+5. `pytest tests/` passes (474 tests).
 6. `__seed_version__ == "ALBRA_SEED_V1.0"`.
 7. `Agent.run("hello")` returns `AgentResponse`.
 8. `runtime.health()` returns dict with `status` key.
@@ -303,7 +359,7 @@ python scripts/clean_room_verify.py    # 17/17 required + 2/2 optional PASS
 python scripts/audit_matrix.py         # 40/40 VERIFIED (writes docs/AUDIT_MATRIX.md)
 python scripts/parity_check.py         # exit 0, is_pure_seed=True, 106/106 DNA
 python scripts/contamination_scan.py   # exit 0, is_clean=True, 0 critical
-python -m pytest tests/ -q             # 444 passed
+python -m pytest tests/ -q             # 474 passed
 ```
 
 All gates must PASS. If any gate fails, the seed is NOT ready to freeze;

@@ -21,7 +21,8 @@ channels feeding into the same shared execution / evidence / provenance /
 audit spine:
 
 > **Canonical certification record:** [`docs/CERTIFICATION.md`](CERTIFICATION.md).
-> A2A test counts (72 across 4 files) and overall counts (444) are mirrored
+> A2A test counts (81 across 5 files: 28 main + 16 wire + 10 routes + 18 interop
+> + 9 security perimeter BLOQ-A2A-SEC) and overall counts (474) are mirrored
 > from that file.
 
 ```
@@ -212,6 +213,19 @@ The A2A path **never bypasses** the existing security stack. Every
 inbound task walks the same pipeline as a local handoff — A2A simply
 adds the auth extraction step at the front and reuses everything else.
 
+> **Closed perimeter (BLOQ-A2A-SEC, 2026-10-12):** the security
+> pipeline now runs for **ALL 3 inbound operations** — `message/send`,
+> `tasks/get`, and `tasks/cancel`. Before BLOQ-A2A-SEC, only
+> `message/send` was filtered; `tasks/get` and `tasks/cancel` were open
+> read / destroy paths that bypassed `A2ASecurityFilter.evaluate()`.
+> All three now run through the same `evaluate_action(...)` call with
+> the matching action name (`a2a.task.receive` /
+> `a2a.task.get` / `a2a.task.cancel`). The same `token` flows
+> through every layer (route → server → filter → authenticator).
+> Token NEVER appears in logs / evidence / audit / task metadata.
+> 9 tests in `tests/a2a/test_a2a_security_perimeter.py` cover the
+> perimeter.
+
 ```
    A2A request (A2ATask + optional token)
         │
@@ -222,7 +236,8 @@ adds the auth extraction step at the front and reuses everything else.
    2. AUTHORIZE         ── (composed by firewall + policy; principal.roles surfaced)
         │
         ▼
-   3. FIREWALL          ── ActionFirewall.verdict("a2a.task.receive", actor, ctx)
+   3. FIREWALL          ── ActionFirewall.verdict(action, actor, ctx)
+        │                  action ∈ {a2a.task.receive, a2a.task.get, a2a.task.cancel}
         │                  DEFAULT-DENY → unknown actions blocked
         │                  Lazy: skipped if no firewall registered (CORE_ONLY)
         ▼
@@ -238,7 +253,8 @@ adds the auth extraction step at the front and reuses everything else.
         │                  Returns approval_id; task parked until approval granted
         ▼
    7. HANDOFF DISPATCH  ── A2AAdapter.task_to_handoff_request → HandoffManager.receive
-        │
+        │                  (only for message/send; tasks/get + tasks/cancel return
+        │                   the matching task status / cancel confirmation directly)
         ▼
    8. AUDIT + EVIDENCE + PROVENANCE  ── always recorded, even on denial
 ```
@@ -246,13 +262,29 @@ adds the auth extraction step at the front and reuses everything else.
 ### Key invariants
 
 - **Never bypassed.** Even fully in-process A2A requests go through the
-  same `A2ASecurityFilter.evaluate()` call.
+  same `A2ASecurityFilter.evaluate()` (for `message/send`) or
+  `A2ASecurityFilter.evaluate_action()` (for `tasks/get` /
+  `tasks/cancel`) call.
+- **Perimeter is uniform.** All 3 inbound operations walk the same
+  AUTHENTICATE → FIREWALL → POLICY pipeline; only the `action` name
+  (`a2a.task.receive` / `a2a.task.get` / `a2a.task.cancel`) differs.
+  The filter was EXTENDED with `evaluate_action(...)` + a shared
+  `_evaluate_common` helper (not replaced — existing `evaluate(...)`
+  tests still pass unchanged).
+- **Token plumbing end-to-end.** The same `token` extracted by the
+  FastAPI route from the `Authorization: Bearer <token>` header
+  flows: route → `A2AServer.receive/get_status/cancel(token=...)` →
+  `A2ASecurityFilter.evaluate_action(token=token)` →
+  `Authenticator.authenticate(token)`. Token NEVER appears in logs,
+  evidence, audit entries, or task metadata — only the resolved
+  principal's identity is recorded.
 - **Lazy components.** If `firewall` / `policy_engine` / `approval_engine`
   are not registered (CORE_ONLY), the corresponding step is *skipped* —
   the filter never raises for a missing component.
 - **Default-deny firewall.** When an `ActionFirewall` IS registered,
-  the canonical action `a2a.task.receive` must be explicitly allowed
-  or the task is denied.
+  the canonical actions `a2a.task.receive`, `a2a.task.get`, and
+  `a2a.task.cancel` must each be explicitly allowed or the
+  corresponding operation is denied.
 - **Audit on every outcome.** Denied, failed, and succeeded tasks all
   produce an audit entry; provenance and evidence are tracked for every
   received task (input provenance runs *before* the security check).
@@ -348,7 +380,7 @@ round-trip works on a fresh clone with zero optional deps.
 | Idempotency (terminal task resubmit)       | **IMPLEMENTED**   | `A2AServer.receive` returns stored result on resubmit |
 | Deadline enforcement                       | **IMPLEMENTED**   | `A2AServer.receive` checks `task.deadline`           |
 | Malformed-task rejection                    | **IMPLEMENTED**   | `A2AServer.receive` checks `message is None`         |
-| Security pipeline (auth → firewall → policy → HITL) | **IMPLEMENTED** | `A2ASecurityFilter.evaluate`                  |
+| Security pipeline (auth → firewall → policy → HITL) | **IMPLEMENTED** | `A2ASecurityFilter.evaluate` (for `message/send`) + `A2ASecurityFilter.evaluate_action` (for `tasks/get` + `tasks/cancel`) — BLOQ-A2A-SEC, all 3 ops through filter |
 | Audit / Evidence / Provenance propagation  | **IMPLEMENTED**   | `a2a.observers` (lazy, no-op if absent)              |
 | InProcessTransport                         | **IMPLEMENTED**   | `InProcessTransport`                                 |
 | `send_with_timeout` convenience            | **IMPLEMENTED**   | `A2AClient.send_with_timeout(url, message, timeout)` |
@@ -400,7 +432,7 @@ returns a task with `state=COMPLETED`.
 
 ## 12. Testing
 
-**72 A2A tests** across **4 files**. All pass in <1s with no external
+**81 A2A tests** across **5 files**. All pass in <2s with no external
 network (real HTTP is exercised via `httpx.MockTransport` and
 `httpx.ASGITransport`). Counts reproduced from
 [`docs/CERTIFICATION.md`](CERTIFICATION.md).
@@ -411,7 +443,8 @@ network (real HTTP is exercised via `httpx.MockTransport` and
 | `tests/a2a/test_a2a_wire.py`           | 16    | A2A 1.0 wire-format serialization (`agent_card_to_wire`, `task_to_wire`, JSON-RPC envelopes) + real HTTP transport via `httpx.MockTransport` |
 | `tests/a2a/test_a2a_routes.py`         | 10    | FastAPI routes via `TestClient`: `/.well-known/agent-card.json` + `/a2a/v1/` JSON-RPC dispatch (message/send, tasks/get, tasks/cancel, unknown method -32601, malformed body, Authorization header propagation, no-server 404) |
 | `tests/a2a/test_external_interop.py`   | 18    | ALBRA ↔ non-ALBRA reference agent (standalone FastAPI fixture with ZERO `albra_seed` imports) via real HTTP over `httpx.ASGITransport`. Covers discovery, send, get_status, cancel in BOTH directions + ALBRA↔ALBRA end-to-end + security propagation + missing-httpx fallback |
-| **Total A2A**                          | **72** |                                                                          |
+| `tests/a2a/test_a2a_security_perimeter.py` | 9  | BLOQ-A2A-SEC — security perimeter CLOSED for ALL 3 inbound ops (`message/send` + `tasks/get` + `tasks/cancel`); token plumbing end-to-end; token NEVER in logs / evidence / audit / task metadata |
+| **Total A2A**                          | **81** |                                                                          |
 
 Per-category breakdown of `tests/a2a/test_a2a.py` (28 tests):
 
@@ -428,8 +461,9 @@ Per-category breakdown of `tests/a2a/test_a2a.py` (28 tests):
 | Artifacts                | 1             | `test_artifacts_propagation`                                            |
 | Registry                 | 1             | `test_a2a_registry_register_and_lookup`                                 |
 
-**Full-suite impact:** **444 total tests pass** (was 372 after GAP-1..7
-+ 28 A2A-IMPL + 26 A2A-GAP-A + 18 A2A-GAP-B = 444; 0 regressions).
+**Full-suite impact:** **474 total tests pass** (was 444 before
+BLOQ-A2A-SEC + BLOQ-MEM; +9 A2A security-perimeter + 11 memory
+factual-integrity + 10 memory forget/audit; 0 regressions).
 
 ---
 
