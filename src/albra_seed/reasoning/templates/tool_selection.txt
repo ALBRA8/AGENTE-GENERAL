@@ -1,0 +1,18 @@
+Given the current task and a set of available tools, select the tools
+(if any) that should be invoked. The selection must respect the
+agent's permissions and risk level. If no tool is appropriate, return
+an empty list.
+
+Task: $task
+Available tools (name | description | risk_level):
+$tools
+
+Permissions: $permissions
+Risk budget: $risk_level
+
+Return strict JSON:
+{
+  "selected": [
+    {"tool": "...", "arguments": {}, "reason": "..."}
+  ]
+}

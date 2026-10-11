@@ -1,0 +1,75 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "albra-seed"
+version = "1.0.0"
+description = "ALBRA AGENT SEED V1.0 — Universal DNA for the ALBRA agent ecosystem"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [{name = "ALBRA"}]
+requires-python = ">=3.10"
+keywords = ["albra", "agent", "seed", "llm", "framework", "ai"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "pydantic>=2.5.0",
+    "python-dotenv>=1.0.0",
+    "structlog>=23.2.0",
+]
+
+[project.optional-dependencies]
+openai = ["openai>=1.10.0"]
+anthropic = ["anthropic>=0.18.0"]
+groq = ["groq>=0.5.0"]
+vector = ["chromadb>=0.4.22", "sentence-transformers>=2.3.0"]
+api = ["fastapi>=0.110.0", "uvicorn>=0.27.0"]
+otel = ["opentelemetry-sdk>=1.22.0", "opentelemetry-exporter-otlp>=1.22.0"]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.1.0",
+    "mypy>=1.7.0",
+]
+all = [
+    "albra-seed[openai,anthropic,groq,vector,api,otel,dev]",
+]
+
+[project.urls]
+Homepage = "https://github.com/ALBRA8/AGENTE-GENERAL"
+Repository = "https://github.com/ALBRA8/AGENTE-GENERAL"
+Documentation = "https://github.com/ALBRA8/AGENTE-GENERAL/blob/main/docs/ARCHITECTURE.md"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["albra_seed*"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true

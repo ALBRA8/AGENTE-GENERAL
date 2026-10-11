@@ -1,0 +1,222 @@
+"""Unit tests for the api subpackage (F2-I)."""
+
+from __future__ import annotations
+
+import asyncio
+import os
+from typing import Any
+
+import pytest
+
+pytest.importorskip("fastapi")
+from fastapi.testclient import TestClient  # type: ignore[import-untyped]
+
+from albra_seed.api.app import create_app
+from albra_seed.core.config import SeedConfig
+from albra_seed.core.identity import AgentIdentity
+from albra_seed.runtime.agent import Agent
+from albra_seed.runtime.runtime import Runtime
+
+
+# =====================================================================
+# Fixtures
+# =====================================================================
+
+
+@pytest.fixture
+def runtime() -> Runtime:
+    """A Runtime with a fresh config (no env vars leaking in)."""
+    cfg = SeedConfig()
+    rt = Runtime(config=cfg)
+    return rt
+
+
+@pytest.fixture
+def app(runtime: Runtime) -> Any:
+    return create_app(runtime)
+
+
+@pytest.fixture
+def client(app: Any) -> TestClient:
+    with TestClient(app) as c:
+        yield c
+
+
+# =====================================================================
+# create_app returns a FastAPI instance
+# =====================================================================
+
+
+def test_create_app_returns_fastapi(runtime: Runtime) -> None:
+    """create_app() returns a fastapi.FastAPI instance wired to the runtime."""
+    from fastapi import FastAPI  # type: ignore[import-untyped]
+    app = create_app(runtime)
+    assert isinstance(app, FastAPI)
+    # The app exposes a root index, /api/v1/health, /api/v1/readiness,
+    # /api/v1/agent/info, /api/v1/agent/capabilities, /api/v1/execution,
+    # /internal/diagnostics.
+    routes = {r.path for r in app.routes}
+    assert "/api/v1/health" in routes
+    assert "/api/v1/readiness" in routes
+    assert "/api/v1/agent/info" in routes
+    assert "/api/v1/agent/capabilities" in routes
+    assert "/api/v1/execution" in routes
+    assert "/internal/diagnostics" in routes
+
+
+# =====================================================================
+# Health endpoint returns a dict
+# =====================================================================
+
+
+def test_health_endpoint_returns_dict(client: TestClient) -> None:
+    """GET /api/v1/health returns the runtime's health snapshot."""
+    r = client.get("/api/v1/health")
+    assert r.status_code == 200
+    body = r.json()
+    assert isinstance(body, dict)
+    assert "status" in body
+    assert "phase" in body
+    assert "core_only" in body
+    assert "components" in body
+    assert "sessions" in body
+    assert "uptime_seconds" in body
+
+
+# =====================================================================
+# Readiness endpoint returns a bool
+# =====================================================================
+
+
+def test_readiness_endpoint_returns_bool(client: TestClient) -> None:
+    """GET /api/v1/readiness returns a `ready` boolean."""
+    r = client.get("/api/v1/readiness")
+    assert r.status_code == 200
+    body = r.json()
+    assert "ready" in body
+    assert isinstance(body["ready"], bool)
+    assert isinstance(body["phase"], str)
+
+
+# =====================================================================
+# Agent info endpoint returns the manifest
+# =====================================================================
+
+
+def test_agent_info_endpoint_returns_manifest(runtime: Runtime) -> None:
+    """GET /api/v1/agent/info returns the agent manifest when an agent is
+    registered; otherwise returns a minimal seed identity."""
+    # Without an agent registered.
+    app = create_app(runtime)
+    with TestClient(app) as client:
+        r = client.get("/api/v1/agent/info")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["agent_id"] == "seed"
+        assert body["name"] == "albra-seed"
+        assert body["seed_version"] == runtime.config.seed_version
+
+    # With an agent registered.
+    identity = AgentIdentity(name="test-agent")
+    agent = Agent(identity=identity, runtime=runtime)
+    app = create_app(runtime, agents={identity.agent_id: agent})
+    with TestClient(app) as client:
+        r = client.get("/api/v1/agent/info")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["agent_id"] == identity.agent_id
+        assert body["name"] == "test-agent"
+        assert body["version"] == identity.version
+
+
+# =====================================================================
+# Secrets are redacted in the diagnostics endpoint output
+# =====================================================================
+
+
+def test_secrets_are_redacted_in_config_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The diagnostics endpoint never leaks secrets; execution metadata is
+    also redacted before returning."""
+    # Set a real-looking API key in env.
+    for k in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GROQ_API_KEY",
+              "ZAI_API_KEY", "ALBRA_VAULT_TOKEN"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-leak-attempt-12345678901234567890")
+
+    rt = Runtime()
+    app = create_app(rt)
+    with TestClient(app) as client:
+        # The diagnostics endpoint runs the Doctor and returns its report;
+        # it should never echo secret values.
+        r = client.get("/internal/diagnostics")
+        assert r.status_code == 200
+        text = r.text
+        assert "sk-leak-attempt" not in text
+
+
+# =====================================================================
+# Execution endpoint round-trip (uses Mock provider fallback)
+# =====================================================================
+
+
+def test_execution_endpoint_runs_agent_and_returns_trace(runtime: Runtime) -> None:
+    """POST /api/v1/execution runs the agent; GET /api/v1/execution/{id}
+    returns the cached trace."""
+    from albra_seed.providers.mock import MockProvider
+    runtime.register_provider(MockProvider())
+
+    identity = AgentIdentity(name="exec-agent", providers=["mock"])
+    agent = Agent(identity=identity, runtime=runtime)
+    app = create_app(runtime, agents={identity.agent_id: agent})
+
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/v1/execution",
+            json={"input": "hello"},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["execution_id"]
+        assert body["correlation_id"]
+        # Mock provider echoes the input back.
+        assert "hello" in body["content"].lower()
+
+        # Trace lookup
+        r2 = client.get(f"/api/v1/execution/{body['execution_id']}")
+        assert r2.status_code == 200
+        body2 = r2.json()
+        assert body2["execution_id"] == body["execution_id"]
+        assert body2["found"] is True
+        assert isinstance(body2["trace"], list)
+
+
+# =====================================================================
+# Internal diagnostics endpoint returns a DiagnosticReport
+# =====================================================================
+
+
+def test_internal_diagnostics_endpoint_returns_report(client: TestClient) -> None:
+    """GET /internal/diagnostics runs the Doctor and returns the report."""
+    r = client.get("/internal/diagnostics")
+    assert r.status_code == 200
+    body = r.json()
+    assert "generated_at" in body
+    assert "overall_status" in body
+    assert "summary" in body
+    assert "components" in body
+    assert isinstance(body["components"], list)
+
+
+# =====================================================================
+# Root index
+# =====================================================================
+
+
+def test_root_endpoint_returns_metadata(client: TestClient) -> None:
+    """GET / returns API metadata and the route prefixes."""
+    r = client.get("/")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["name"] == "albra-seed-api"
+    assert body["public_prefix"] == "/api/v1"
+    assert body["internal_prefix"] == "/internal"

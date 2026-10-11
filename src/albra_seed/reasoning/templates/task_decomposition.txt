@@ -1,0 +1,14 @@
+Decompose the following task into a small ordered list of independent
+or sequentially-dependent steps. Each step must be described by a
+short title and a one-sentence description. Do not add domain-specific
+content — keep the decomposition generic so it can be specialised
+later.
+
+Task: $task
+
+Return strict JSON of the form:
+{
+  "steps": [
+    {"id": "s1", "title": "...", "description": "...", "depends_on": []}
+  ]
+}
