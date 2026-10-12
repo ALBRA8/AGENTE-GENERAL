@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -41,6 +41,12 @@ from albra_seed.runtime.lifecycle import (
 from albra_seed.runtime.loop import EventHook
 from albra_seed.runtime.state import AgentState
 
+if TYPE_CHECKING:  # pragma: no cover
+    # Imported only for type hints; MemoryManager is constructed lazily inside
+    # `birth()` to avoid importing the memory subpackage at module load time
+    # (keeps the seed decoupled in CORE_ONLY mode).
+    from albra_seed.memory.manager import MemoryManager
+
 log = structlog.get_logger("albra.runtime")
 
 
@@ -53,6 +59,11 @@ COMPONENT_APPROVAL_ENGINE = "approval_engine"
 COMPONENT_PROVIDER_ROUTER = "provider_router"
 COMPONENT_TOOL_REGISTRY = "tool_registry"
 COMPONENT_MEMORY_STORE = "memory_store"
+# MEM-WRITE: high-level orchestrator over the default MemoryStore. Auto-
+# provisioned by `birth()` so the RECORD phase can write structured memories
+# with full provenance + lifecycle + isolation dimensions, while preserving
+# CORE_ONLY safety (the agent loop falls back to the raw store if absent).
+COMPONENT_MEMORY_MANAGER = "memory_manager"
 COMPONENT_EVIDENCE_COLLECTOR = "evidence_collector"
 COMPONENT_AUDIT_LOGGER = "audit_logger"
 
@@ -309,6 +320,31 @@ class Runtime:
             self.register_memory_store("default", memory_store)
             self.register(COMPONENT_MEMORY_STORE, memory_store)
 
+        # MEM-WRITE: wrap the (caller-or-auto-provisioned) default store in a
+        # MemoryManager so the RECORD phase can write structured memories with
+        # full provenance + lifecycle + isolation dimensions. If the caller has
+        # already registered a "memory_manager" component, leave it alone —
+        # caller wins. We use the SAME store that was just resolved above so
+        # writes are visible to anyone reading through `get_memory_store`.
+        if "memory_manager" not in self._components:
+            try:
+                from albra_seed.memory.manager import MemoryManager
+
+                mgr = MemoryManager(store=memory_store)
+                self.register(COMPONENT_MEMORY_MANAGER, mgr)
+                log.info(
+                    "runtime.bootstrap.memory_manager",
+                    source="auto",
+                    store=type(memory_store).__name__,
+                )
+            except Exception as exc:  # noqa: BLE001
+                # CORE_ONLY safety: never let MemoryManager bootstrap failure
+                # crash birth(). The agent loop falls back to the raw store.
+                log.warning(
+                    "runtime.bootstrap.memory_manager_failed",
+                    error=str(exc),
+                )
+
         # Same for the audit logger.
         audit_logger = self.get_component(COMPONENT_AUDIT_LOGGER)
         if audit_logger is None:
@@ -452,6 +488,18 @@ class Runtime:
     def get_memory_store(self, domain: str = "default") -> MemoryStore | None:
         return self._memory_stores.get(domain)
 
+    def get_memory_manager(self) -> MemoryManager | None:
+        """Return the MemoryManager instance if registered, else None.
+
+        MEM-WRITE: the agent loop's RECORD phase uses this to write structured
+        memories with provenance + isolation dimensions. `birth()` auto-
+        provisions one over the default store; callers may register their own
+        via `register(COMPONENT_MEMORY_MANAGER, mgr)` to override. Returns
+        ``None`` when no manager is registered — callers MUST fall back to the
+        raw store (CORE_ONLY safety).
+        """
+        return self.get_component(COMPONENT_MEMORY_MANAGER)
+
     def register_skill(self, skill: Skill) -> None:
         self._skills[skill.name] = skill
 
@@ -525,6 +573,7 @@ __all__ = [
     "COMPONENT_PROVIDER_ROUTER",
     "COMPONENT_TOOL_REGISTRY",
     "COMPONENT_MEMORY_STORE",
+    "COMPONENT_MEMORY_MANAGER",
     "COMPONENT_EVIDENCE_COLLECTOR",
     "COMPONENT_AUDIT_LOGGER",
     "REQUIRED_FOR_READINESS",

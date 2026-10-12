@@ -204,6 +204,54 @@ class MemoryManager:
             self.lifecycle.record_modified(record_id, by=by, reason=result.reason)
         return result
 
+    async def cleanup_working(
+        self,
+        *,
+        agent_id: str,
+        domain: str = "default",
+        user_id: str | None = None,
+        context_id: str | None = None,
+        execution_id: str | None = None,
+    ) -> int:
+        """Delete all WORKING memories matching the isolation dimensions.
+
+        Used by the agent loop at the end of execution (success, error, or
+        cancel) to garbage-collect transient working memory.
+
+        Isolation is enforced by the underlying store's ``query()`` against
+        the composite key ``(agent_id, domain, user_id, context_id)``. When
+        ``execution_id`` is provided, only WORKING records whose
+        ``execution_id`` matches are deleted — so a long-lived context can
+        carry WORKING memory from unrelated past executions and those stay
+        untouched.
+
+        Delegates to ``store.delete()`` which writes a tombstone on SQLite
+        (consistent with ``forget()``) — never a physical wipe. Lifecycle
+        events are recorded so retrieval (``MemoryRetriever``) and audit
+        can replay the history.
+
+        Returns the number of records deleted.
+        """
+        records = await self.store.query(
+            agent_id=agent_id,
+            domain=domain,
+            user_id=user_id,
+            context_id=context_id,
+            memory_type=MemoryType.WORKING,
+            limit=1000,
+        )
+        if execution_id:
+            records = [r for r in records if r.execution_id == execution_id]
+        deleted = 0
+        for r in records:
+            ok = await self.store.delete(
+                r.record_id, reason="working_cleanup"
+            )
+            if ok:
+                deleted += 1
+                self.lifecycle.record_deleted(r.record_id, reason="working_cleanup")
+        return deleted
+
     async def get(self, record_id: str) -> MemoryRecord | None:
         record = await self.store.read(record_id)
         if record is not None:

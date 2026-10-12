@@ -82,7 +82,13 @@ from albra_seed.core.base import (
     Plugin,
     Capability,
 )
-from albra_seed.memory import DecisionMemory, DecisionRecord
+from albra_seed.memory import (
+    DecisionMemory,
+    DecisionRecord,
+    MemoryRetriever,
+    RetrievalConfig,
+    RetrievedMemory,
+)
 from albra_seed.feedback import (
     FeedbackManager,
     FeedbackRecord,
@@ -208,6 +214,10 @@ __all__ = [
     "Capability",
     "DecisionRecord",
     "DecisionMemory",
+    # MEM-READ: deterministic memory retrieval (lexical + structural).
+    "MemoryRetriever",
+    "RetrievalConfig",
+    "RetrievedMemory",
     "FeedbackManager",
     "FeedbackRecord",
     "FeedbackStore",

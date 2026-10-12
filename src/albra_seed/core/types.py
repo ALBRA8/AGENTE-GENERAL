@@ -265,6 +265,21 @@ class RunContext(BaseModel):
     started_at: datetime = Field(default_factory=utc_now)
     finished_at: datetime | None = None
     status: ExecutionStatus = ExecutionStatus.PENDING
+    # Isolation dimensions (MEM-WRITE). These mirror the Session fields of
+    # the same name and are propagated from `session` by `Agent.run()` so the
+    # agent loop (RECORD phase in particular) can write memory into the
+    # correct (agent_id, domain, user_id, context_id) isolation bucket without
+    # re-fetching the Session. Defaults keep existing call sites working — a
+    # RunContext constructed without a Session stays in the "default" domain
+    # with no user/context, exactly as before.
+    user_id: str | None = None
+    context_id: str | None = None
+    domain: str = "default"
+    # Free-form metadata (MEM-READ). Cross-cutting per-run data lives here so
+    # phases can record auxiliary provenance (e.g. ``retrieved_memory_ids``)
+    # without needing bespoke RunContext fields for every signal. Default
+    # empty dict keeps existing call sites working unchanged.
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class Evidence(BaseModel):

@@ -19,6 +19,9 @@ Public API:
         MemoryLifecycle,
         DecisionRecord,
         DecisionMemory,
+        MemoryRetriever,
+        RetrievalConfig,
+        RetrievedMemory,
     )
 """
 
@@ -30,6 +33,11 @@ from albra_seed.memory.isolator import MemoryIsolator
 from albra_seed.memory.lifecycle import MemoryLifecycle, MemoryLifecycleState
 from albra_seed.memory.manager import MemoryManager
 from albra_seed.memory.provenance import FactRule, MemoryProvenance
+from albra_seed.memory.retriever import (
+    MemoryRetriever,
+    RetrievalConfig,
+    RetrievedMemory,
+)
 from albra_seed.memory.sqlite_store import SQLiteMemoryStore
 
 __all__ = [
@@ -44,4 +52,8 @@ __all__ = [
     "MemoryLifecycleState",
     "DecisionRecord",
     "DecisionMemory",
+    # MEM-READ: deterministic memory retrieval (lexical + structural).
+    "MemoryRetriever",
+    "RetrievalConfig",
+    "RetrievedMemory",
 ]
