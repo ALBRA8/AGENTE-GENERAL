@@ -126,28 +126,38 @@ class Agent:
         timeout_seconds : float | None
             Per-phase timeout override.
         """
-        # 0. Bootstrap session + context.
-        if session is None:
-            session = Session(agent_id=self.identity.agent_id)
-        await self.runtime.register_session(session)
-
-        # 0a. Coherence check — if BOTH a pre-built RunContext and a Session
-        # were supplied, refuse to run with a split source-of-truth. This is
-        # the P0-A fix: previously, when `context` was provided, lines below
-        # were skipped and `user_id` / `context_id` / `domain` were taken
-        # from the context object — NEVER reconciled with the session. That
-        # allowed a caller to pass RunContext(user_id="alice") +
-        # Session(user_id="bob") and silently route memory operations to
-        # "alice" while session.messages.append attributed to "bob".
+        # 0. Coherence check — VALIDATE BEFORE any side effect.
+        #
+        # Phase 2.1 fix: previously, a default Session was created (with
+        # domain="default", user_id=None, context_id=None) BEFORE the
+        # coherence check ran. When a caller passed a `context` with a
+        # non-default domain (e.g. "finance") and no `session`, the
+        # auto-created session's domain="default" would MISMATCH the
+        # context's domain="finance" — a false-positive rejection.
+        #
+        # Phase 2.1 fix #2: `runtime.register_session(session)` was called
+        # BEFORE the coherence check, leaking a session into the runtime
+        # even when the run was about to be rejected.
+        #
+        # NEW ORDER:
+        #   1. Determine whether the caller provided a session.
+        #   2. If `context` is provided, validate its isolation dims
+        #      against the caller-provided session (if any). When the
+        #      caller did NOT provide a session, the context's dims are
+        #      the source of truth — no comparison needed.
+        #   3. Only AFTER validation passes, create the default session
+        #      (if none was provided) and register it.
         #
         # Policy (see docstring):
         #   - agent_id ALWAYS matches self.identity.agent_id (cannot be
-        #     overridden). Enforced unconditionally.
-        #   - user_id / context_id / domain: if BOTH session and context
-        #     provide them, they must match. If only one provides a value,
-        #     that one wins (None on the other side is treated as
-        #     "unspecified" — not a mismatch).
-        if context is not None:
+        #     overridden). Enforced unconditionally when context is given.
+        #   - user_id / context_id / domain: if the caller provided BOTH
+        #     a session and a context, their values for these three dims
+        #     MUST match (non-None collision). If only one is provided,
+        #     that one wins.
+        caller_provided_session = session is not None
+
+        if context is not None and caller_provided_session:
             mismatches: list[str] = []
             if context.agent_id != self.identity.agent_id:
                 mismatches.append(
@@ -187,6 +197,36 @@ class Agent:
                     "refusing to run with split source-of-truth: "
                     + "; ".join(mismatches)
                 )
+
+        # When `context` is provided WITHOUT a caller session, the context's
+        # agent_id is still validated against the Agent's identity (defensive
+        # — prevents attributing this Agent's memory writes to a different
+        # agent). The other dims (user_id/context_id/domain) are taken as
+        # the source of truth from the context.
+        if context is not None and not caller_provided_session:
+            if context.agent_id != self.identity.agent_id:
+                raise ValueError(
+                    f"agent_id: context={context.agent_id!r} vs "
+                    f"agent={self.identity.agent_id!r} — agent_id cannot "
+                    f"be overridden by a RunContext."
+                )
+
+        # 0a. Now that validation has passed, create the default session
+        # (if the caller did not provide one) and register it. The default
+        # session inherits the context's isolation dims so memory ops route
+        # to the correct bucket.
+        if session is None:
+            # Use the context's dims if available, else defaults.
+            if context is not None:
+                session = Session(
+                    agent_id=self.identity.agent_id,
+                    user_id=context.user_id,
+                    context_id=context.context_id,
+                    domain=context.domain,
+                )
+            else:
+                session = Session(agent_id=self.identity.agent_id)
+        await self.runtime.register_session(session)
 
         if context is None:
             context = RunContext(
