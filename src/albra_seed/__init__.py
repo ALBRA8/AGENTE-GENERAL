@@ -46,48 +46,41 @@ Layers (each in its own subpackage):
     config          — centralized configuration
 """
 
+from albra_seed.core.base import (
+    Capability,
+    Guardrail,
+    LLMProvider,
+    MemoryStore,
+    Plugin,
+    Skill,
+    Tool,
+    Workflow,
+)
+from albra_seed.core.config import AgentConfig, SeedConfig
+from albra_seed.core.identity import AgentIdentity, AgentManifest
 from albra_seed.core.types import (
-    Message,
-    Role,
-    ToolCall,
-    ToolResult,
     AgentResponse,
+    ApprovalStatus,
+    AutonomyLevel,
+    CommunicationChannel,
+    ComponentStatus,
+    Evidence,
+    EvidenceType,
+    ExecutionStatus,
+    HealthState,
+    KnowledgeType,
+    MemoryType,
+    Message,
+    ModalityType,
+    PolicyDecision,
+    Provenance,
+    RiskLevel,
+    Role,
+    RunContext,
     Session,
     Severity,
-    RiskLevel,
-    AutonomyLevel,
-    ExecutionStatus,
-    EvidenceType,
-    MemoryType,
-    KnowledgeType,
-    ComponentStatus,
-    PolicyDecision,
-    Evidence,
-    Provenance,
-    RunContext,
-    ApprovalStatus,
-    HealthState,
-    CommunicationChannel,
-    ModalityType,
-)
-from albra_seed.core.identity import AgentIdentity, AgentManifest
-from albra_seed.core.config import SeedConfig, AgentConfig
-from albra_seed.core.base import (
-    Tool,
-    MemoryStore,
-    LLMProvider,
-    Guardrail,
-    Skill,
-    Workflow,
-    Plugin,
-    Capability,
-)
-from albra_seed.memory import (
-    DecisionMemory,
-    DecisionRecord,
-    MemoryRetriever,
-    RetrievalConfig,
-    RetrievedMemory,
+    ToolCall,
+    ToolResult,
 )
 from albra_seed.feedback import (
     FeedbackManager,
@@ -103,14 +96,22 @@ from albra_seed.learning import (
     ProposalGenerator,
     ProposalStatus,
 )
+from albra_seed.memory import (
+    DecisionMemory,
+    DecisionRecord,
+    MemoryRetriever,
+    RetrievalConfig,
+    RetrievedMemory,
+)
+from albra_seed.runtime.agent import Agent
+from albra_seed.runtime.runtime import Runtime
+from albra_seed.security.identity_resolver import IdentityResolver
 from albra_seed.skills import (
     ImprovementProposal,
     SkillEvolutionError,
     SkillEvolutionManager,
     SkillMetrics,
 )
-from albra_seed.runtime.agent import Agent
-from albra_seed.runtime.runtime import Runtime
 
 
 def __getattr__(name: str):  # pragma: no cover - lazy public API
@@ -232,6 +233,8 @@ __all__ = [
     "ImprovementProposal",
     "SkillEvolutionManager",
     "SkillEvolutionError",
+    # SEC-PERIMETER: identity resolver for the unified security perimeter.
+    "IdentityResolver",
     # Lazy exports (resolved on first access via __getattr__):
     "create_app",
     "main",

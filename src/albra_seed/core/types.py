@@ -279,7 +279,21 @@ class RunContext(BaseModel):
     # phases can record auxiliary provenance (e.g. ``retrieved_memory_ids``)
     # without needing bespoke RunContext fields for every signal. Default
     # empty dict keeps existing call sites working unchanged.
+    #
+    # SECURITY NOTE (SEC-PERIMETER): ``metadata`` is PUBLIC and WRITABLE by
+    # callers. It MUST NEVER be consulted for authorization decisions
+    # (callers could otherwise forge ``actor_roles`` / ``actor_id`` by
+    # stuffing values into metadata). Identity/role signals travel through
+    # the dedicated ``verified_principal`` field below, which only the
+    # IdentityResolver populates after authentication.
     metadata: dict[str, Any] = Field(default_factory=dict)
+    # Verified principal — set ONLY by the IdentityResolver after the
+    # Authenticator verifies the caller. Callers CANNOT set this via
+    # ``metadata`` (which is public/writable). This is the secure channel
+    # for passing identity to the PolicyEngine. Typed as ``Any`` to avoid a
+    # circular import (AuthPrincipal lives in ``albra_seed.security.auth``,
+    # which itself imports from ``albra_seed.core.types``).
+    verified_principal: Any = None  # AuthPrincipal | None
 
 
 class Evidence(BaseModel):

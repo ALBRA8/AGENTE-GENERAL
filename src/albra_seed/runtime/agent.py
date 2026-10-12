@@ -53,6 +53,11 @@ from albra_seed.runtime.runtime import (
 )
 from albra_seed.runtime.state import AgentState
 
+# SEC-PERIMETER: IdentityResolver attaches the verified AuthPrincipal to
+# the RunContext so the PolicyEngine can consult the principal's roles
+# without callers being able to forge them via metadata.
+from albra_seed.security.identity_resolver import IdentityResolver
+
 if TYPE_CHECKING:  # pragma: no cover
     # Imported only for type hints; concrete classes are provided by other
     # subagents at runtime via the registry.
@@ -508,6 +513,23 @@ class Agent:
         When a Tool call is in the plan, the absence of a security perimeter
         (firewall AND policy engine BOTH missing) MUST yield DENY — never ALLOW.
         CORE_ONLY without tools is unaffected (no plan -> no decision needed).
+
+        SEC-PERIMETER (Hallazgo 2, 3, 4):
+          * The verified ``AuthPrincipal`` is resolved ONCE at the start of
+            this phase via the runtime's ``Authenticator`` (if registered).
+            The principal is attached to ``RunContext.verified_principal`` —
+            a private field that callers CANNOT forge via ``metadata``.
+          * ``actor_roles`` / ``actor_id`` passed to ``policy.evaluate``
+            come from the verified principal, NEVER from ``run_ctx.metadata``
+            (which is public/writable).
+          * If no Authenticator is registered, the resolver returns an
+            anonymous principal with empty roles. The PolicyEngine will
+            DENY any protected action (``required_permission`` set).
+          * Firewall precedence: the firewall can only DOWNGRADE
+            (allow→deny); it CANNOT upgrade a policy DENY to ALLOW.
+            When policy is absent, the firewall is the sole gate.
+          * All gate invocations are wrapped in try/except so an
+            exception inside the perimeter fails CLOSED (deny).
         """
         plan: list[ToolCall] = ctx["PLAN"]["tool_calls"]
         run_ctx: RunContext = ctx["context"]
@@ -516,6 +538,23 @@ class Agent:
         firewall = self.runtime.get_component(COMPONENT_FIREWALL)
         policy = self.runtime.get_component(COMPONENT_POLICY_ENGINE)
         approval = self.runtime.get_component(COMPONENT_APPROVAL_ENGINE)
+
+        # Resolve identity from a TRUSTED source (Authenticator). The token
+        # is NOT taken from ``run_ctx.metadata`` (which is public/writable
+        # — callers could otherwise forge actor_roles). In CORE_ONLY mode
+        # there is no session-bound token, so we pass None and rely on the
+        # Authenticator's verify(None) contract: an anonymous principal
+        # (NoopAuthenticator) or None (a real Authenticator that refuses
+        # unauthenticated callers).
+        auth = self.runtime.get_component("authenticator")
+        resolver = IdentityResolver(auth)
+        principal = await resolver.resolve_and_attach(run_ctx, token=None)
+        actor_roles: list[str] | None = (
+            list(principal.roles) if principal is not None else None
+        )
+        actor_id: str | None = (
+            principal.identity if principal is not None else None
+        )
 
         for call in plan:
             # DEFAULT-DENY: a Tool call requires AT LEAST ONE active gate
@@ -541,27 +580,71 @@ class Agent:
             require_hitl = False
 
             # Policy engine: explicit allow / deny / require_hitl.
+            # Pass actor_roles + actor_id from the VERIFIED principal so the
+            # engine can run RBAC checks. Wrapped in try/except so a policy
+            # exception fails CLOSED (deny).
             if policy is not None and hasattr(policy, "evaluate"):
-                verdict = await policy.evaluate(call, context=run_ctx)
-                v = getattr(verdict, "decision", None)
-                if v == "deny":
+                try:
+                    verdict = await policy.evaluate(
+                        call,
+                        context=run_ctx,
+                        actor_roles=actor_roles,
+                        actor_id=actor_id,
+                    )
+                except Exception:  # noqa: BLE001
                     decision = "deny"
-                elif v == "require_hitl":
+                    decisions.append({
+                        "tool": call.tool_name,
+                        "decision": decision,
+                        "reason": "policy_exception",
+                    })
+                    run_ctx.warnings.append(
+                        f"tool call denied (policy exception): {call.tool_name}"
+                    )
+                    continue
+                v = getattr(verdict, "decision", None)
+                v_value = v.value if hasattr(v, "value") else v
+                if v_value == "deny" or v == "deny":
+                    decision = "deny"
+                elif v_value == "require_hitl" or v == "require_hitl":
                     require_hitl = True
-                elif v == "allow":
+                elif v_value == "allow" or v == "allow":
                     decision = "allow"
                 # If policy returns unknown/None, decision stays "deny"
 
-            # Firewall: can only upgrade deny→allow (when policy didn't deny)
-            # or downgrade allow→deny (when firewall denies).
+            # Firewall: can only DOWNGRADE (allow→deny), NEVER UPGRADE
+            # (deny→allow). When policy is absent, the firewall is the
+            # sole gate and MAY allow. When policy said DENY, the firewall
+            # cannot override that. Wrapped in try/except so a firewall
+            # exception fails CLOSED (deny).
             if firewall is not None and hasattr(firewall, "check"):
-                fw_decision = await firewall.check(call, context=run_ctx)
-                if getattr(fw_decision, "allowed", True) is False:
+                try:
+                    fw_decision = await firewall.check(call, context=run_ctx)
+                except Exception:  # noqa: BLE001
                     decision = "deny"
-                    require_hitl = False  # deny wins over hitl
-                elif decision == "deny" and getattr(fw_decision, "allowed", False) is True:
-                    # Firewall explicitly allows (policy was None or didn't say allow)
+                    decisions.append({
+                        "tool": call.tool_name,
+                        "decision": decision,
+                        "reason": "firewall_exception",
+                    })
+                    run_ctx.warnings.append(
+                        f"tool call denied (firewall exception): {call.tool_name}"
+                    )
+                    continue
+                fw_allowed = getattr(fw_decision, "allowed", False)
+                if fw_allowed is False:
+                    # Firewall denies → DOWNGRADE allow→deny. deny wins
+                    # over require_hitl too (deny is the strongest verdict).
+                    decision = "deny"
+                    require_hitl = False
+                elif policy is None and fw_allowed is True:
+                    # Firewall is the ONLY gate (policy not configured) →
+                    # its explicit ALLOW is sufficient.
                     decision = "allow"
+                # ELIMINATED (Hallazgo 3): the previous branch
+                #   `elif decision == "deny" and fw_allowed: decision = "allow"`
+                # UPGRADED a policy DENY to ALLOW when the firewall allowed.
+                # The firewall CANNOT upgrade a policy DENY to ALLOW.
 
             if require_hitl:
                 decision = "require_hitl"
@@ -590,7 +673,17 @@ class Agent:
         return {"decisions": decisions, "aborted": ctx.get("abort", False)}
 
     async def _phase_execute(self, agent: Agent, ctx: dict[str, Any]) -> dict[str, Any]:
-        """Execute allowed tool calls. Honors cancellation."""
+        """Execute allowed tool calls. Honors cancellation.
+
+        SEC-PERIMETER (Hallazgo 5): defense-in-depth re-check of the kill
+        switch + cooldown at the EXECUTION point. Between CHECK_PERMISSIONS
+        and EXECUTE, the kill switch might have been activated, permissions
+        might have been revoked, or a cooldown might have triggered. We
+        re-validate every gate BEFORE invoking ``tool.execute()`` so a
+        state change in the window between the two phases NEVER opens the
+        gate. Failures here produce a failed ``ToolResult`` (NOT an
+        exception) so the agent loop continues processing remaining calls.
+        """
         cancel_event: asyncio.Event = ctx["cancel_event"]
         if cancel_event.is_set():
             ctx["abort"] = True
@@ -601,6 +694,14 @@ class Agent:
         run_ctx: RunContext = ctx["context"]
         results: list[ToolResult] = []
 
+        # Re-fetch the firewall (which owns the kill switch + cooldown) so
+        # we can re-check at the execution point. If the firewall was
+        # de-registered between CHECK_PERMISSIONS and EXECUTE, we treat
+        # that as a fail-closed signal for any tool whose allow decision
+        # came from the firewall (extremely unlikely; the policy would
+        # still need to have said ALLOW for the call to reach this point).
+        firewall = self.runtime.get_component(COMPONENT_FIREWALL)
+
         for call, decision in zip(plan, decisions):
             if decision["decision"] != "allow":
                 results.append(ToolResult(
@@ -608,6 +709,47 @@ class Agent:
                     error=f"blocked: {decision['decision']}",
                 ))
                 continue
+
+            # DEFENSE-IN-DEPTH (Hallazgo 5): re-check kill switch at the
+            # execution point. Between CHECK_PERMISSIONS and EXECUTE, the
+            # kill switch might have been activated.
+            kill_switch = None
+            if firewall is not None:
+                kill_switch = getattr(firewall, "kill_switch", None)
+            if (
+                kill_switch is not None
+                and hasattr(kill_switch, "is_active")
+                and kill_switch.is_active()
+            ):
+                results.append(ToolResult(
+                    call_id=call.id, success=False,
+                    error="blocked: kill_switch_active (re-checked at execute time)",
+                ))
+                run_ctx.warnings.append(
+                    f"tool blocked by kill switch (re-checked): {call.tool_name}"
+                )
+                continue
+
+            # Re-check cooldown (defense-in-depth). A rule with
+            # ``cooldown_seconds > 0`` may have triggered a cooldown during
+            # CHECK_PERMISSIONS for this same call (e.g. because an
+            # earlier sibling call matched the rule).
+            if firewall is not None:
+                cooldown = getattr(firewall, "cooldown", None)
+                if (
+                    cooldown is not None
+                    and hasattr(cooldown, "is_cooling_down")
+                    and cooldown.is_cooling_down(call.tool_name)
+                ):
+                    results.append(ToolResult(
+                        call_id=call.id, success=False,
+                        error="blocked: cooldown_active (re-checked at execute time)",
+                    ))
+                    run_ctx.warnings.append(
+                        f"tool blocked by cooldown (re-checked): {call.tool_name}"
+                    )
+                    continue
+
             tool = self.runtime.get_tool(call.tool_name)
             if tool is None:
                 results.append(ToolResult(

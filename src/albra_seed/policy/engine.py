@@ -26,6 +26,7 @@ seed's in-memory implementations are synchronous underneath.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 import structlog
@@ -46,7 +47,6 @@ from albra_seed.policy.evaluator import (
     PolicyEvaluator,
 )
 from albra_seed.policy.rules import PolicyRule, PolicyRuleSet
-from datetime import datetime
 
 log = structlog.get_logger("albra.policy")
 
@@ -130,26 +130,43 @@ class PolicyEngine:
             f"agent:{context.agent_id}" if context is not None else "anonymous"
         )
 
-        # Pre-check permission (DEFAULT-DENY when permission is required
-        # and missing). Without a registry, we treat as "no permission check"
-        # — i.e. `has_permission=True` — and rely on rules for the deny.
-        # If actor_roles is explicitly a list (even empty), we check it.
-        # If actor_roles is None (not provided), no check is performed.
+        # Pre-check permission (DEFAULT-DENY when permission is required).
+        #
+        # DEFAULT-DENY semantics (SEC-PERIMETER, Hallazgo 1):
+        #   * If a matched rule has NO ``required_permission`` (i.e. it
+        #     governs a public action), no permission gate applies and
+        #     ``has_permission`` stays True. The rule's own ``decision``
+        #     is the final verdict (ALLOW / DENY / REQUIRE_HITL).
+        #   * If a matched rule REQUIRES a permission, the actor MUST
+        #     prove they have it. ``has_permission`` is False until the
+        #     permission registry explicitly grants it. If either:
+        #       - ``self.permission_registry is None`` (no registry
+        #         configured → cannot prove anything), OR
+        #       - ``actor_roles is None`` (identity not verified by an
+        #         Authenticator / IdentityResolver),
+        #     the action is DENIED (fail-closed).
+        #   * The registry call is wrapped in try/except so a broken
+        #     registry (DB outage, etc.) NEVER opens the gate — it
+        #     always closes it (``has_permission = False``).
         has_permission = True
         matched_rule = self.rule_set.first_match(
             action_name=action_name,
             actor_id=actor,
             risk=risk if risk is not None else RiskLevel.UNKNOWN,
         )
-        if (
-            matched_rule is not None
-            and matched_rule.required_permission
-            and self.permission_registry is not None
-            and actor_roles is not None
-        ):
-            has_permission = self.permission_registry.has_any(
-                actor_roles, matched_rule.required_permission
-            )
+        if matched_rule is not None and matched_rule.required_permission:
+            # DEFAULT-DENY for protected actions: starts False, only True
+            # if the registry explicitly grants it.
+            if self.permission_registry is None or actor_roles is None:
+                # No registry or no verified roles → DENY (fail-closed).
+                has_permission = False
+            else:
+                try:
+                    has_permission = self.permission_registry.has_any(
+                        actor_roles, matched_rule.required_permission
+                    )
+                except Exception:  # noqa: BLE001
+                    has_permission = False  # fail-closed
 
         # Pre-check autonomy (DEFAULT-DENY when required autonomy not met).
         autonomy_ok = True

@@ -16,13 +16,14 @@ CRITICAL RULES enforced in this subpackage:
     the firewall + policy engine answer WHAT they may do.
 """
 
-from albra_seed.security.audit_acl import ACLEntry, AccessControlList
+from albra_seed.security.audit_acl import AccessControlList, ACLEntry
 from albra_seed.security.auth import (
-    AuthPrincipal,
     AuthenticationError,
     Authenticator,
+    AuthPrincipal,
     NoopAuthenticator,
 )
+from albra_seed.security.identity_resolver import IdentityResolver
 from albra_seed.security.permissions import Permission, PermissionRegistry
 from albra_seed.security.roles import Role, RoleRegistry
 from albra_seed.security.secrets import (
@@ -37,6 +38,7 @@ __all__ = [
     "AuthPrincipal",
     "AuthenticationError",
     "NoopAuthenticator",
+    "IdentityResolver",
     "Role",
     "RoleRegistry",
     "Permission",
