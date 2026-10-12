@@ -61,11 +61,22 @@ class RetrievalConfig(BaseModel):
     of ~100 records: top-5 fits in ~2 KB of context, the recency half-life
     is 1 week (recent memories dominate without erasing long-term ones),
     and the min-score cutoff excludes near-zero matches.
+
+    ``candidate_limit`` bounds the candidate pool pulled from the store
+    before ranking. The retriever calls ``manager.recall(limit=...)``
+    with this value. A bounded-but-generous default (1000) ensures an
+    OLD-but-relevant memory is NOT silently excluded by the candidate
+    window when the store contains >100 records, while still capping the
+    scan cost on very large stores. Callers that need a larger pool
+    (e.g. stores with >1000 records where old relevant memories matter)
+    simply raise this value via the ``RetrievalConfig`` constructor or
+    pass an explicit ``limit=`` to ``retrieve()``.
     """
 
     top_k: int = 5
     max_context_chars: int = 2000
     min_score: float = 0.05  # below this, exclude
+    candidate_limit: int = 1000  # candidate pool size before ranking
     recency_half_life_hours: float = 168.0  # 1 week
     type_weights: dict[MemoryType, float] = Field(
         default_factory=lambda: {
@@ -154,13 +165,23 @@ class MemoryRetriever:
             7. Return ``list[RetrievedMemory]``.
         """
         # 1. Pull candidate records through the isolation-aware recall API.
+        #    Use the configured ``candidate_limit`` as the default pool size
+        #    (10x the previous hardcoded 100). A caller-supplied ``limit``
+        #    still wins — backwards-compatible. The larger default ensures
+        #    an OLD-but-relevant memory is not excluded from the candidate
+        #    window when the store has >100 records. The ranking step
+        #    (top_k + min_score + max_context_chars) is what actually bounds
+        #    the result size; this limit only bounds the scan cost.
         try:
+            candidate_limit = (
+                limit if limit is not None else self._config.candidate_limit
+            )
             candidates = await self._manager.recall(
                 agent_id=agent_id,
                 domain=domain,
                 user_id=user_id,
                 context_id=context_id,
-                limit=limit or 100,  # generous pool before ranking
+                limit=candidate_limit,
             )
         except Exception:  # noqa: BLE001
             # CORE_ONLY safety: a store error must NOT crash the reasoning

@@ -132,6 +132,7 @@ class SQLiteMemoryStore(MemoryStore):
         user_id: str | None = None,
         context_id: str | None = None,
         memory_type: MemoryType | None = None,
+        execution_id: str | None = None,
         limit: int = 50,
     ) -> list[MemoryRecord]:
         sql = (
@@ -147,6 +148,14 @@ class SQLiteMemoryStore(MemoryStore):
         if memory_type is not None:
             sql += " AND memory_type = ?"
             params.append(memory_type.value)
+        # execution_id filter — applied at the SQL level so cleanup_working
+        # and recall can target a specific execution's records without
+        # post-filtering in Python (which would miss records beyond the
+        # LIMIT when the target execution's records are the oldest in the
+        # store). None means "no filter" — additive to existing behaviour.
+        if execution_id is not None:
+            sql += " AND execution_id = ?"
+            params.append(execution_id)
         sql += " ORDER BY created_at DESC LIMIT ?"
         params.append(int(limit))
         with self._lock:

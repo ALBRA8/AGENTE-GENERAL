@@ -242,6 +242,7 @@ class MemoryStore(ABC):
         user_id: str | None = None,
         context_id: str | None = None,
         memory_type: MemoryType | None = None,
+        execution_id: str | None = None,
         limit: int = 50,
     ) -> list[MemoryRecord]:
         raise NotImplementedError

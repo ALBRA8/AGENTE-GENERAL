@@ -111,6 +111,7 @@ class MemoryManager:
         user_id: str | None = None,
         context_id: str | None = None,
         memory_type: MemoryType | None = None,
+        execution_id: str | None = None,
         limit: int = 50,
     ) -> list[MemoryRecord]:
         records = await self.store.query(
@@ -119,6 +120,7 @@ class MemoryManager:
             user_id=user_id,
             context_id=context_id,
             memory_type=memory_type,
+            execution_id=execution_id,
             limit=limit,
         )
         for r in records:
@@ -225,6 +227,16 @@ class MemoryManager:
         carry WORKING memory from unrelated past executions and those stay
         untouched.
 
+        The ``execution_id`` filter is applied AT THE STORE LEVEL (in the
+        SQL query / in-memory scan), NOT as a Python post-filter on the
+        returned records. This matters at scale: if a single execution has
+        >1000 WORKING records, OR if 1500 WORKING records exist across
+        executions and the target execution's records are the OLDEST (sorted
+        last by ``created_at DESC``), a Python post-filter on a
+        ``limit=1000`` query would MISS the target records entirely. By
+        filtering at the store level we ensure all matching records are
+        returned regardless of how the store orders them.
+
         Delegates to ``store.delete()`` which writes a tombstone on SQLite
         (consistent with ``forget()``) — never a physical wipe. Lifecycle
         events are recorded so retrieval (``MemoryRetriever``) and audit
@@ -232,16 +244,21 @@ class MemoryManager:
 
         Returns the number of records deleted.
         """
+        # Use execution_id filter at the store level — no Python post-filtering.
+        # limit is a generous upper bound so we don't silently truncate a
+        # large execution's WORKING set. If a future caller exceeds this
+        # bound, the query simply returns the first 10_000; pagination can
+        # be added at that point. None execution_id → no filter (returns
+        # all matching WORKING records up to limit).
         records = await self.store.query(
             agent_id=agent_id,
             domain=domain,
             user_id=user_id,
             context_id=context_id,
             memory_type=MemoryType.WORKING,
-            limit=1000,
+            execution_id=execution_id,
+            limit=10000,
         )
-        if execution_id:
-            records = [r for r in records if r.execution_id == execution_id]
         deleted = 0
         for r in records:
             ok = await self.store.delete(

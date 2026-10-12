@@ -93,6 +93,26 @@ class Agent:
     ) -> AgentResponse:
         """Execute the universal agent loop and return an AgentResponse.
 
+        Isolation dimensions (agent_id, domain, user_id, context_id)
+        source-of-truth policy:
+
+        - ``agent_id``: ALWAYS from ``self.identity.agent_id`` — it cannot be
+          overridden by either ``session`` or ``context``. A mismatch raises
+          ``ValueError`` (defensive — prevents a caller from accidentally
+          attributing this Agent's memory writes to a different agent).
+        - If ``context`` is provided: it is the source-of-truth for
+          ``user_id`` / ``context_id`` / ``domain``. If ``session`` is also
+          provided, their values for these three dims MUST match (else
+          ``ValueError``) — we refuse to run with a split source-of-truth.
+        - If only ``session`` is provided: ``session.user_id`` /
+          ``session.context_id`` / ``session.domain`` propagate to a freshly
+          constructed ``RunContext``.
+        - If neither is provided: defaults are applied (``user_id=None``,
+          ``context_id=None``, ``domain="default"``).
+
+        This policy prevents silent source-of-truth splits where memory
+        operations could read/write to the wrong isolation bucket.
+
         Parameters
         ----------
         input : str | Message
@@ -101,7 +121,8 @@ class Agent:
             Optional conversation session. A new one is created if absent.
         context : RunContext | None
             Optional pre-built RunContext (e.g. for replay). A fresh one is
-            constructed if absent.
+            constructed if absent. When provided alongside a ``session``,
+            their isolation dimensions MUST agree (see policy above).
         timeout_seconds : float | None
             Per-phase timeout override.
         """
@@ -109,6 +130,63 @@ class Agent:
         if session is None:
             session = Session(agent_id=self.identity.agent_id)
         await self.runtime.register_session(session)
+
+        # 0a. Coherence check — if BOTH a pre-built RunContext and a Session
+        # were supplied, refuse to run with a split source-of-truth. This is
+        # the P0-A fix: previously, when `context` was provided, lines below
+        # were skipped and `user_id` / `context_id` / `domain` were taken
+        # from the context object — NEVER reconciled with the session. That
+        # allowed a caller to pass RunContext(user_id="alice") +
+        # Session(user_id="bob") and silently route memory operations to
+        # "alice" while session.messages.append attributed to "bob".
+        #
+        # Policy (see docstring):
+        #   - agent_id ALWAYS matches self.identity.agent_id (cannot be
+        #     overridden). Enforced unconditionally.
+        #   - user_id / context_id / domain: if BOTH session and context
+        #     provide them, they must match. If only one provides a value,
+        #     that one wins (None on the other side is treated as
+        #     "unspecified" — not a mismatch).
+        if context is not None:
+            mismatches: list[str] = []
+            if context.agent_id != self.identity.agent_id:
+                mismatches.append(
+                    f"agent_id: context={context.agent_id!r} vs "
+                    f"agent={self.identity.agent_id!r}"
+                )
+            # For user_id / context_id, a value of None on either side is
+            # treated as "unspecified" — only a non-None collision counts.
+            if (
+                session.user_id is not None
+                and context.user_id is not None
+                and session.user_id != context.user_id
+            ):
+                mismatches.append(
+                    f"user_id: session={session.user_id!r} vs "
+                    f"context={context.user_id!r}"
+                )
+            if (
+                session.context_id is not None
+                and context.context_id is not None
+                and session.context_id != context.context_id
+            ):
+                mismatches.append(
+                    f"context_id: session={session.context_id!r} vs "
+                    f"context={context.context_id!r}"
+                )
+            # domain is mandatory on both sides (defaults to "default") — a
+            # direct mismatch is always a real conflict.
+            if session.domain != context.domain:
+                mismatches.append(
+                    f"domain: session={session.domain!r} vs "
+                    f"context={context.domain!r}"
+                )
+            if mismatches:
+                raise ValueError(
+                    "RunContext/Session isolation dimension mismatch — "
+                    "refusing to run with split source-of-truth: "
+                    + "; ".join(mismatches)
+                )
 
         if context is None:
             context = RunContext(
