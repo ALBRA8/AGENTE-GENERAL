@@ -491,6 +491,11 @@ async def test_max_tool_calls_limit() -> None:
 
     With ``max_tool_calls=20`` and 5 calls per iteration, the loop runs
     4 iterations (5*4=20) then terminates with the max_tool_calls warning.
+
+    H-07 NOTE: the test deliberately raises ``max_calls_per_tool`` above
+    the total ``max_tool_calls`` so the per-tool cap does NOT bind —
+    this test exercises the TOTAL cap only. The per-tool cap is
+    exercised by ``test_per_tool_call_limit`` below.
     """
     counter = _CounterTool(name="counter")
     provider = _AlwaysNewToolCallsProvider(tool_name="counter", per_call=5)
@@ -498,7 +503,11 @@ async def test_max_tool_calls_limit() -> None:
         provider=provider,
         tools=[counter],
         # Give plenty of iterations so max_tool_calls is the binding limit.
-        cognitive_config=CognitiveLoopConfig(max_iterations=100, max_tool_calls=20),
+        # H-07: raise the per-tool cap so it doesn't bind before the
+        # total cap (each iteration emits 5 calls to the SAME tool name).
+        cognitive_config=CognitiveLoopConfig(
+            max_iterations=100, max_tool_calls=20, max_calls_per_tool=100,
+        ),
     )
     await _run_with_startup(runtime, agent, "loop")
     ctx = _ctx(agent)

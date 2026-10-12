@@ -84,6 +84,14 @@ class CognitiveLoopConfig(BaseModel):
     max_tool_calls: int = 20  # max total tool calls per run
     max_time_seconds: float = 120.0  # wall-clock limit
     max_context_messages: int = 50  # max messages accumulated in context
+    # H-07: per-tool cap. A single tool name cannot be invoked more than
+    # this many times across ALL cognitive-loop iterations. Exceeding it
+    # produces a ``per_tool_call_limit_exceeded`` ToolResult and skips
+    # the call (the loop continues with the next call). Default of 5 is
+    # generous enough for normal multi-step workflows but tight enough
+    # to prevent a misbehaving provider from spamming a single tool
+    # (e.g. a "send_email" tool called 100 times in a row).
+    max_calls_per_tool: int = 5
 
 
 class PhaseStatus(str, Enum):

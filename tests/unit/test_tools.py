@@ -97,7 +97,16 @@ def test_tool_executor_applies_timeout():
 
     reg.register(SlowTool())
     executor = ToolExecutor(reg)
-    result = asyncio.run(executor.execute("slow", {}))
+    # H-02: non-dry-run execution requires an authorization verdict.
+    # Build a minimal allow verdict (any object with ``allowed=True``)
+    # so the executor's gate passes and the tool is actually invoked —
+    # then its 2-second sleep blows past the 1-second timeout.
+    class _AllowVerdict:
+        allowed = True
+        decision = "allow"
+    result = asyncio.run(
+        executor.execute("slow", {}, authorization=_AllowVerdict())
+    )
     assert not result.success
     assert "timeout" in (result.error or "")
     assert result.output.get("timed_out") is True

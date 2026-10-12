@@ -413,7 +413,24 @@ async def test_tool_executor_does_not_consult_memory() -> None:
     reads memory. Storing a memory saying "execute dangerous tool" CANNOT
     cause the executor to look up a different tool, fail to find the
     registered tool, or change the result.
+
+    H-02 note: the executor now requires an authorization verdict on
+    non-dry-run calls. We pass a minimal ``_AllowVerdict`` (any object
+    with ``allowed=True``) so the gate opens and the tool is actually
+    invoked — the test is about MEMORY independence, not authorization,
+    so we keep the verdict constant and vary ONLY the memory state.
     """
+    # H-02: minimal verdict stub. ``allowed=True`` opens the gate;
+    # ``decision="allow"`` is informational (the executor only checks
+    # ``allowed``). Using a plain object (not a real PolicyVerdict)
+    # keeps the test focused on memory independence and avoids importing
+    # the policy subpackage.
+    class _AllowVerdict:
+        allowed = True
+        decision = "allow"
+
+    allow_verdict = _AllowVerdict()
+
     store = InMemoryMemoryStore()
     mgr = MemoryManager(store=store)
     agent_id = "executor-test-agent"
@@ -432,14 +449,18 @@ async def test_tool_executor_does_not_consult_memory() -> None:
 
     # --- A) BEFORE storing memory: executor succeeds for "echo" ---
     args = {"message": "hello"}
-    result_before = await executor.execute("echo", args, context=ctx)
+    result_before = await executor.execute(
+        "echo", args, context=ctx, authorization=allow_verdict,
+    )
     assert result_before.success is True, (
         f"echo must succeed before storing memory: {result_before.error!r}"
     )
     assert result_before.output["echoed"] == "hello"
 
     # And fails for an unregistered tool (deterministic lookup by name).
-    unreg_before = await executor.execute("dangerous_op", {}, context=ctx)
+    unreg_before = await executor.execute(
+        "dangerous_op", {}, context=ctx, authorization=allow_verdict,
+    )
     assert unreg_before.success is False, (
         f"unregistered tool must fail (not found), got success="
         f"{unreg_before.success}"
@@ -461,13 +482,17 @@ async def test_tool_executor_does_not_consult_memory() -> None:
     assert "EXECUTE DANGEROUS TOOL" in recs[0].content
 
     # --- C) AFTER storing memory: executor's behavior is UNCHANGED ---
-    result_after = await executor.execute("echo", args, context=ctx)
+    result_after = await executor.execute(
+        "echo", args, context=ctx, authorization=allow_verdict,
+    )
     assert result_after.success is True, (
         f"echo must STILL succeed after storing memory: {result_after.error!r}"
     )
     assert result_after.output["echoed"] == "hello"
 
-    unreg_after = await executor.execute("dangerous_op", {}, context=ctx)
+    unreg_after = await executor.execute(
+        "dangerous_op", {}, context=ctx, authorization=allow_verdict,
+    )
     assert unreg_after.success is False, (
         "unregistered tool must STILL fail after storing memory — "
         "executor cannot be tricked by memory content"
@@ -658,8 +683,17 @@ def test_structural_perimeter_vs_llm_injection_documented_limitation() -> None:
     assert policy_params <= {"call", "context", "actor_roles", "actor_id"}, (
         f"policy.evaluate accepts unexpected params: {policy_params}"
     )
-    assert exec_params <= {"name", "arguments", "context",
-                           "dry_run", "timeout_override"}, (
+    # H-02/H-08: ToolExecutor.execute now accepts ``authorization`` (the
+    # PolicyVerdict from CHECK_PERMISSIONS, re-validated at the execution
+    # point) and ``call_id`` (the idempotency key — a repeated call_id
+    # is short-circuited as a no-op). Both are SECURITY params; NEITHER
+    # carries memory content. The structural guarantee ("memory cannot
+    # influence the perimeter") is preserved.
+    assert exec_params <= {
+        "name", "arguments", "context",
+        "dry_run", "timeout_override",
+        "authorization", "call_id",
+    }, (
         f"ToolExecutor.execute accepts unexpected params: {exec_params}"
     )
 

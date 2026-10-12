@@ -2,6 +2,18 @@
 
 Wraps every tool invocation in:
   - JSON-schema input validation (via `ContractValidator`)
+  - **Authorization gate** (H-02): non-dry-run execution REQUIRES an
+    explicit ``authorization`` verdict (typically a ``PolicyVerdict``).
+    When absent or ``allowed is False`` the executor refuses to run the
+    tool — the call is returned as a failed ``ToolResult`` with
+    ``output={"not_authorized": True}``. This is the defense-in-depth
+    companion to the CHECK_PERMISSIONS phase: the executor is the LAST
+    gate before the tool runs, so it must NEVER silently bypass it.
+  - **Idempotency** (H-08): when a ``call_id`` is supplied, the executor
+    remembers the call_id of every successful execution. A second call
+    with the same ``call_id`` returns a successful no-op result with
+    ``output={"idempotent_skip": True}`` instead of re-invoking the
+    tool — preventing duplicate side-effects on retries / replays.
   - timeout enforcement (asyncio.wait_for)
   - retry policy (max attempts + backoff from `ToolContract.retry_policy`)
   - evidence-capture hook (optional async callback)
@@ -69,7 +81,26 @@ class ToolTimeoutError(ToolExecutorError):
 
 
 class ToolExecutor:
-    """Executes tools by name with timeout, retry, evidence + trace."""
+    """Executes tools by name with timeout, retry, evidence + trace.
+
+    SECURITY (H-02): every non-dry-run ``execute()`` invocation MUST
+    carry an ``authorization`` verdict (any object exposing an
+    ``allowed`` attribute — typically a ``PolicyVerdict`` from the
+    CHECK_PERMISSIONS phase). Without it the executor refuses to run
+    the tool, returning a failed ``ToolResult`` with
+    ``output={"not_authorized": True}``. This makes the executor a
+    true defense-in-depth gate — bypassing CHECK_PERMISSIONS does not
+    bypass enforcement because the executor re-validates the verdict at
+    the last possible instant.
+
+    IDEMPOTENCY (H-08): when a ``call_id`` is supplied, the executor
+    records successful executions. A subsequent ``execute()`` call
+    with the same ``call_id`` returns a no-op success
+    (``output={"idempotent_skip": True}``) — protecting against
+    retries / replays that would otherwise double-apply side effects.
+    The idempotency set lives for the lifetime of the executor
+    instance (per-runtime / per-test).
+    """
 
     def __init__(
         self,
@@ -83,6 +114,11 @@ class ToolExecutor:
         self._validator = validator or ContractValidator()
         self._evidence_sink = evidence_sink
         self.default_timeout = default_timeout
+        # IDEMPOTENCY (H-08): records call_ids of completed (successful
+        # OR failed-but-attempted) executions so a retry with the same
+        # call_id is a no-op. Lives for the lifetime of this executor
+        # instance — typically one per Runtime.
+        self._executed_calls: set[str] = set()
 
     # ------------------------------------------------------------------
     async def execute(
@@ -91,14 +127,99 @@ class ToolExecutor:
         arguments: dict[str, Any],
         *,
         context: RunContext | None = None,
+        authorization: Any = None,  # PolicyVerdict | None
         dry_run: bool = False,
         timeout_override: int | None = None,
+        call_id: str | None = None,
     ) -> ToolResult:
+        """Execute a tool by name with authorization, idempotency, timeout.
+
+        Parameters
+        ----------
+        name:
+            Tool name (looked up in the registry).
+        arguments:
+            Tool input arguments (validated against the contract's
+            ``input_schema``).
+        context:
+            Optional ``RunContext`` for trace + tools_used bookkeeping.
+        authorization:
+            Verdict produced by the security perimeter (typically a
+            ``PolicyVerdict`` from CHECK_PERMISSIONS). REQUIRED for
+            non-dry-run execution; absence yields a failed result with
+            ``output={"not_authorized": True}``. Dry-run execution
+            bypasses the gate (it does not invoke the tool's side
+            effects).
+        dry_run:
+            When True, the tool is invoked in dry-run mode (no side
+            effects) and the authorization gate is skipped.
+        timeout_override:
+            Per-call timeout override (seconds). Falls back to the
+            contract's ``timeout_seconds`` or the executor's
+            ``default_timeout``.
+        call_id:
+            Optional idempotency key. When the same ``call_id`` has
+            already been executed by this executor, the call is
+            short-circuited with a no-op success result.
+        """
+        # ----- IDEMPOTENCY GATE (H-08) ---------------------------------
+        # A repeated call_id (across retries / replays / cognitive-loop
+        # iterations) is short-circuited. We check this BEFORE the
+        # authorization gate so a duplicate attempt cannot even reach
+        # the verdict check — duplicate calls are, by definition,
+        # already authorized-by-virtue-of-having-run-once. The set is
+        # populated AFTER the first execution completes (success OR
+        # failure-but-attempted) below.
+        if call_id is not None and call_id in self._executed_calls:
+            return ToolResult(
+                call_id=call_id,
+                success=True,
+                output={"idempotent_skip": True},
+            )
+
+        # ----- AUTHORIZATION GATE (H-02) — MANDATORY -------------------
+        # Non-dry-run execution requires an explicit authorization
+        # verdict whose ``allowed`` attribute is True. This is the
+        # defense-in-depth gate that ensures the executor cannot be
+        # used to bypass CHECK_PERMISSIONS — even if a caller obtained
+        # a ToolExecutor directly, every call without a valid verdict
+        # fails closed.
+        if not dry_run:
+            if authorization is None:
+                return ToolResult(
+                    call_id=call_id or new_id("tc"),
+                    success=False,
+                    error="not authorized: no authorization provided",
+                    output={"not_authorized": True},
+                )
+            allowed = getattr(authorization, "allowed", False)
+            if not allowed:
+                decision = getattr(authorization, "decision", "unknown")
+                return ToolResult(
+                    call_id=call_id or new_id("tc"),
+                    success=False,
+                    error=f"not authorized: {decision}",
+                    output={
+                        "not_authorized": True,
+                        "decision": str(decision),
+                    },
+                )
+
+        # ----- mark as executed (idempotency set) ----------------------
+        # We add to the set BEFORE invoking the tool so a duplicate
+        # concurrent / retried call with the same call_id is suppressed
+        # even if this call is still in flight. For executions with no
+        # call_id we skip idempotency (the legacy behavior — every call
+        # is fresh). The set is bounded by the lifetime of the executor
+        # instance, which is typically one per Runtime.
+        if call_id is not None:
+            self._executed_calls.add(call_id)
+
         try:
             tool = self.registry.get(name)
         except ToolNotFoundError as exc:
             return ToolResult(
-                call_id=new_id("tc"),
+                call_id=call_id or new_id("tc"),
                 success=False,
                 error=f"tool not found: {exc}",
                 output={"tool_name": name, "not_found": True},
@@ -119,7 +240,7 @@ class ToolExecutor:
                 trace.finished_at = utc_now().isoformat()
                 trace.duration_ms = (time.perf_counter() - t0) * 1000
                 return ToolResult(
-                    call_id=new_id("tc"),
+                    call_id=call_id or new_id("tc"),
                     success=False,
                     error=f"invalid input: {vres.errors}",
                     output={"_trace": trace.to_dict(), "invalid_input": True},
@@ -162,7 +283,7 @@ class ToolExecutor:
                 trace.timed_out = True
                 trace.errors.append(f"timeout after {timeout_s}s")
                 last_result = ToolResult(
-                    call_id=new_id("tc"),
+                    call_id=call_id or new_id("tc"),
                     success=False,
                     error=f"timeout after {timeout_s}s",
                     output={"_trace": trace.to_dict(), "timed_out": True},
@@ -171,7 +292,7 @@ class ToolExecutor:
             except Exception as exc:  # propagate as failed result, allow retry
                 trace.errors.append(f"attempt_{attempt}_error: {exc}")
                 last_result = ToolResult(
-                    call_id=new_id("tc"),
+                    call_id=call_id or new_id("tc"),
                     success=False,
                     error=str(exc),
                     output={"_trace": trace.to_dict()},
@@ -189,24 +310,49 @@ class ToolExecutor:
         # Stamp final trace info into output + duration on the result.
         if last_result is None:
             last_result = ToolResult(
-                call_id=new_id("tc"),
+                call_id=call_id or new_id("tc"),
                 success=False,
                 error="executor returned no result",
                 output={"_trace": trace.to_dict()},
             )
 
+        # Preserve the originating call_id on the result so the cognitive
+        # loop / OBSERVE phase can correlate observations back to the
+        # ToolCall that produced them. Only override when the tool did not
+        # already stamp a call_id (which would be the case for tools that
+        # propagate the caller-supplied id themselves).
+        if call_id is not None and not getattr(last_result, "call_id", None):
+            last_result = last_result.model_copy(update={"call_id": call_id})
+
         # Embed trace info into output without losing existing output.
+        #
+        # For dict outputs we merge ``_trace`` into the dict — the
+        # consumer sees their original keys PLUS a ``_trace`` key. This
+        # is non-destructive.
+        #
+        # For non-dict outputs (strings, lists, numbers, None) we
+        # PRESERVE the original output type. The previous behavior
+        # wrapped non-dict outputs as ``{"value": ..., "_trace": ...}``,
+        # which surprised consumers expecting the tool's natural type.
+        # The trace info is still recorded on ``duration_ms`` (set
+        # below) and — when a context is provided — on
+        # ``context.outputs["tool_traces"]``.
         existing_output = last_result.output
         if isinstance(existing_output, dict):
             merged_output = {**existing_output, "_trace": trace.to_dict()}
+            last_result = last_result.model_copy(
+                update={
+                    "duration_ms": trace.duration_ms,
+                    "output": merged_output,
+                }
+            )
         else:
-            merged_output = {"value": existing_output, "_trace": trace.to_dict()}
-        last_result = last_result.model_copy(
-            update={
-                "duration_ms": trace.duration_ms,
-                "output": merged_output,
-            }
-        )
+            # Non-dict output: preserve the type. Only stamp duration_ms.
+            last_result = last_result.model_copy(
+                update={
+                    "duration_ms": trace.duration_ms,
+                }
+            )
 
         if context is not None:
             context.tools_used.append(name)

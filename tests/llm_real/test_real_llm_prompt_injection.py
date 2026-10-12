@@ -755,7 +755,12 @@ async def test_real_llm_mixed_useful_and_malicious_memory() -> None:
             ToolCall(
                 id="tc-echo",
                 tool_name="echo",
-                arguments={"text": "hello"},
+                # H-02: real EchoTool contract requires ``message`` (and
+                # disallows additional properties). Pre-H-01 the agent
+                # bypassed the ToolExecutor so input validation never ran;
+                # now every call routes through the executor and the args
+                # MUST match the contract.
+                arguments={"message": "hello"},
             ),
             ToolCall(
                 id="tc-danger",

@@ -130,7 +130,7 @@ async def _setup_agent(  # noqa: ANN202
     await runtime.startup()
     runtime.register_provider(
         _ToolCallingProvider(
-            [ToolCall(id="tc1", tool_name="echo", arguments={"text": "hi"})]
+            [ToolCall(id="tc1", tool_name="echo", arguments={"message": "hi"})]
         )
     )
     runtime.register_tool(EchoTool())
@@ -558,7 +558,7 @@ class TestAgentSecurityPerimeter:
         await runtime.startup()
         runtime.register_provider(
             _ToolCallingProvider(
-                [ToolCall(id="tc1", tool_name="echo", arguments={"text": "hi"})]
+                [ToolCall(id="tc1", tool_name="echo", arguments={"message": "hi"})]
             )
         )
         runtime.register_tool(EchoTool())
@@ -662,7 +662,7 @@ class TestAgentSecurityPerimeter:
         await runtime.startup()
         runtime.register_provider(
             _ToolCallingProvider(
-                [ToolCall(id="tc1", tool_name="echo", arguments={"text": "hi"})]
+                [ToolCall(id="tc1", tool_name="echo", arguments={"message": "hi"})]
             )
         )
         runtime.register_tool(EchoTool())
@@ -698,7 +698,7 @@ class TestAgentSecurityPerimeter:
         await runtime.startup()
         runtime.register_provider(
             _ToolCallingProvider(
-                [ToolCall(id="tc1", tool_name="echo", arguments={"text": "hi"})]
+                [ToolCall(id="tc1", tool_name="echo", arguments={"message": "hi"})]
             )
         )
         runtime.register_tool(EchoTool())
@@ -741,7 +741,7 @@ class TestAgentSecurityPerimeter:
         await runtime.startup()
         runtime.register_provider(
             _ToolCallingProvider(
-                [ToolCall(id="tc1", tool_name="echo", arguments={"text": "hi"})]
+                [ToolCall(id="tc1", tool_name="echo", arguments={"message": "hi"})]
             )
         )
         runtime.register_tool(EchoTool())
@@ -817,7 +817,7 @@ class TestAgentSecurityPerimeter:
         await runtime.startup()
         runtime.register_provider(
             _ToolCallingProvider(
-                [ToolCall(id="tc1", tool_name="echo", arguments={"text": "hi"})]
+                [ToolCall(id="tc1", tool_name="echo", arguments={"message": "hi"})]
             )
         )
         runtime.register_tool(EchoTool())
@@ -885,7 +885,7 @@ class TestAgentSecurityPerimeter:
         await runtime.startup()
         runtime.register_provider(
             _ToolCallingProvider(
-                [ToolCall(id="tc1", tool_name="echo", arguments={"text": "hi"})]
+                [ToolCall(id="tc1", tool_name="echo", arguments={"message": "hi"})]
             )
         )
         runtime.register_tool(_SpyTool())
@@ -918,7 +918,7 @@ class TestAgentSecurityPerimeter:
         await runtime.startup()
         runtime.register_provider(
             _ToolCallingProvider(
-                [ToolCall(id="tc1", tool_name="echo", arguments={"text": "hi"})]
+                [ToolCall(id="tc1", tool_name="echo", arguments={"message": "hi"})]
             )
         )
         runtime.register_tool(EchoTool())
@@ -959,7 +959,7 @@ class TestAgentSecurityPerimeter:
         await runtime.startup()
         runtime.register_provider(
             _ToolCallingProvider(
-                [ToolCall(id="tc1", tool_name="echo", arguments={"text": "hi"})]
+                [ToolCall(id="tc1", tool_name="echo", arguments={"message": "hi"})]
             )
         )
         runtime.register_tool(EchoTool())
@@ -1057,7 +1057,7 @@ class TestAgentSecurityPerimeter:
         await runtime.startup()
         runtime.register_provider(
             _ToolCallingProvider(
-                [ToolCall(id="tc1", tool_name="echo", arguments={"text": "hi"})]
+                [ToolCall(id="tc1", tool_name="echo", arguments={"message": "hi"})]
             )
         )
         runtime.register_tool(EchoTool())
@@ -1131,7 +1131,7 @@ class TestDefenseInDepth:
         await runtime.startup()
         runtime.register_provider(
             _ToolCallingProvider(
-                [ToolCall(id="tc1", tool_name="echo", arguments={"text": "hi"})]
+                [ToolCall(id="tc1", tool_name="echo", arguments={"message": "hi"})]
             )
         )
         runtime.register_tool(_SpyTool())
@@ -1176,7 +1176,7 @@ class TestDefenseInDepth:
         await runtime.startup()
         runtime.register_provider(
             _ToolCallingProvider(
-                [ToolCall(id="tc1", tool_name="echo", arguments={"text": "hi"})]
+                [ToolCall(id="tc1", tool_name="echo", arguments={"message": "hi"})]
             )
         )
         runtime.register_tool(_SpyTool())
@@ -1251,7 +1251,7 @@ class TestDefenseInDepth:
         await runtime.startup()
         runtime.register_provider(
             _ToolCallingProvider(
-                [ToolCall(id="tc1", tool_name="echo", arguments={"text": "hi"})]
+                [ToolCall(id="tc1", tool_name="echo", arguments={"message": "hi"})]
             )
         )
         runtime.register_tool(_SpyTool())

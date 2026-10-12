@@ -53,7 +53,12 @@ class _ToolCallingProvider(MockProvider):
     def __init__(self, tool_name: str = "echo", arguments: dict | None = None):
         super().__init__()
         self._tool_name = tool_name
-        self._arguments = arguments or {"text": "hi"}
+        # H-02: the real EchoTool's input_schema requires ``message`` (and
+        # disallows additional properties). Pre-H-01 the agent bypassed the
+        # ToolExecutor so input validation never ran; now that every call
+        # routes through the executor, the default arguments MUST match
+        # the EchoTool contract or input validation will reject them.
+        self._arguments = arguments or {"message": "hi"}
 
     async def complete(self, messages, **kwargs):
         self._call_count += 1

@@ -147,11 +147,18 @@ class Agent:
         #
         # A caller can pass ``CognitiveLoopConfig()`` (with the spec
         # defaults max_iterations=5, max_tool_calls=20, max_time_seconds=
-        # 120.0, max_context_messages=50) to opt into the loop with sane
-        # non-zero limits. Passing a custom config (e.g.
-        # ``CognitiveLoopConfig(max_iterations=1)``) lets the caller
-        # tighten or relax the limits per-Agent.
+        # 120.0, max_context_messages=50, max_calls_per_tool=5) to opt
+        # into the loop with sane non-zero limits. Passing a custom
+        # config (e.g. ``CognitiveLoopConfig(max_iterations=1)``) lets
+        # the caller tighten or relax the limits per-Agent.
         self.cognitive_loop_config: CognitiveLoopConfig | None = cognitive_loop_config
+        # H-01/H-08: lazily-constructed ToolExecutor wrapping a
+        # ToolRegistry built from the runtime's registered tools. Cached
+        # on the Agent instance so its idempotency set (``_executed_calls``)
+        # persists across cognitive-loop iterations AND across multiple
+        # ``run()`` invocations — a retried call_id from a prior run is
+        # suppressed just like a retry within a single run.
+        self._tool_executor: Any = None  # ToolExecutor | None
 
     # =====================================================================
     # PUBLIC API
@@ -164,6 +171,8 @@ class Agent:
         session: Session | None = None,
         context: RunContext | None = None,
         timeout_seconds: float | None = None,
+        cognitive_loop_config: CognitiveLoopConfig | None = None,
+        token: str | None = None,
     ) -> AgentResponse:
         """Execute the universal agent loop and return an AgentResponse.
 
@@ -199,6 +208,21 @@ class Agent:
             their isolation dimensions MUST agree (see policy above).
         timeout_seconds : float | None
             Per-phase timeout override.
+        cognitive_loop_config : CognitiveLoopConfig | None
+            Optional per-call override of the cognitive-loop limits. When
+            ``None`` (the default), the Agent's ``cognitive_loop_config``
+            (set at construction) is used — itself ``None`` falls back to
+            the legacy linear loop. Passing a non-``None`` value here
+            activates the cognitive loop for THIS run only, overriding the
+            Agent's defaults.
+        token : str | None
+            Optional bearer token for the IdentityResolver. When provided,
+            the runtime's Authenticator (if registered) verifies the token
+            and attaches the resulting ``AuthPrincipal`` to the
+            RunContext. ``None`` (the default, used by CORE_ONLY mode and
+            by every existing test) resolves to an anonymous principal —
+            the security perimeter (firewall + policy) still DEFAULT-DENIES
+            any protected action.
         """
         # 0. Coherence check — VALIDATE BEFORE any side effect.
         #
@@ -333,6 +357,17 @@ class Agent:
         session.messages.append(message)
         session.touch()
 
+        # H-03: per-call cognitive-loop config override. When the caller
+        # passes a non-None ``cognitive_loop_config`` to ``run()``, it
+        # overrides the Agent's construction-time config for THIS run only.
+        # This lets callers opt into (or out of) the cognitive loop per-
+        # invocation without re-constructing the Agent.
+        effective_cognitive_config: CognitiveLoopConfig | None = (
+            cognitive_loop_config
+            if cognitive_loop_config is not None
+            else self.cognitive_loop_config
+        )
+
         # Build the loop and register Runtime-wide hooks.
         loop = AgentLoop(
             self, timeout_seconds=timeout_seconds or 60.0
@@ -348,6 +383,16 @@ class Agent:
             "input_message": message,
             "cancel_event": cancel_event,
             "identity": self.identity,
+            # H-03: thread the caller-supplied token through to the
+            # CHECK_PERMISSIONS phase, which passes it to
+            # IdentityResolver.resolve_and_attach(). Default ``None``
+            # preserves the pre-H-03 CORE_ONLY behavior.
+            "token": token,
+            # H-05/H-06/H-07: effective cognitive-loop config for THIS
+            # run. ``_run_cognitive_cycle`` reads it from here (rather
+            # than from ``self.cognitive_loop_config``) so the per-call
+            # override takes effect.
+            "cognitive_loop_config": effective_cognitive_config,
         }
 
         phase_fns = self._build_phase_fns()
@@ -458,7 +503,7 @@ class Agent:
             set in ``ctx_dict["executed_call_ids"]`` tracks which calls
             have already been dispatched.
 
-        LIMITS (from ``self.cognitive_loop_config``):
+        LIMITS (from the effective ``cognitive_loop_config``):
           * ``max_iterations`` — hard cap on reason→plan→execute→observe
             cycles. Hit this → ``cognitive_loop_limit_reached:max_iterations``.
           * ``max_tool_calls`` — hard cap on the TOTAL number of tool
@@ -466,10 +511,35 @@ class Agent:
           * ``max_time_seconds`` — wall-clock limit on the inner loop.
           * ``max_context_messages`` — cap on the accumulated observation
             count to bound memory growth.
+          * ``max_calls_per_tool`` (H-07) — per-tool cap; a single tool
+            name cannot be invoked more than this many times across all
+            iterations. Exceeding it produces a
+            ``per_tool_call_limit_exceeded`` ToolResult and skips the
+            call (the loop continues with the next call).
+
+        BUDGET PRE-CHECK (H-05): before the first iteration, we verify
+        the budget is non-zero. ``max_iterations <= 0`` short-circuits
+        straight to the post-loop phases (VALIDATE/RECORD/RESPOND) with
+        a ``cognitive_budget_exhausted`` warning — the agent responds
+        immediately without consuming any provider budget.
+
+        TIME BUDGET (H-06): the per-call ``remaining_time`` is computed
+        from ``max_time_seconds - elapsed`` and surfaced via
+        ``ctx_dict["cognitive_remaining_seconds"]`` so ``_phase_execute``
+        can refuse to dispatch a call whose wall-clock budget is already
+        exhausted (returning ``cognitive_time_budget_exhausted``).
 
         Returns the loop's trace (same shape as ``AgentLoop.run``).
         """
-        config = self.cognitive_loop_config
+        # H-05/H-06/H-07: read the effective config from ctx_dict (set by
+        # Agent.run() honoring the per-call override). Falls back to the
+        # Agent's construction-time config when the caller did not
+        # override (keeps existing behavior — Agent.run() always sets the
+        # key, but this defensive fallback preserves backward-compat for
+        # any direct caller of _run_cognitive_cycle).
+        config: CognitiveLoopConfig | None = ctx_dict.get(
+            "cognitive_loop_config", self.cognitive_loop_config
+        )
         run_ctx: RunContext = ctx_dict["context"]
 
         # Always initialize the cognitive-budget tracker on RunContext so
@@ -499,6 +569,27 @@ class Agent:
         run_ctx.cognitive_iterations = 0
         run_ctx.cognitive_tool_calls = 0
 
+        # H-05: BUDGET PRE-CHECK. If the caller passed a config with
+        # ``max_iterations <= 0``, the cognitive loop has NO budget — we
+        # skip straight to the post-loop phases so the agent responds
+        # immediately without consuming any provider / tool budget. The
+        # warning surfaces in audit/replay so a misconfiguration is
+        # visible (not silently swallowed).
+        if config.max_iterations <= 0:
+            run_ctx.warnings.append(
+                "cognitive_budget_exhausted: max_iterations=0 — "
+                "responding immediately without entering the cognitive loop"
+            )
+            # Run the post-loop phases (VALIDATE, RECORD, RESPOND) so the
+            # AgentResponse is still composed (the draft remains the
+            # initial RECEIVE content; the provider is NEVER called).
+            for name in ("VALIDATE", "RECORD", "RESPOND"):
+                fn = phase_fns.get(name)
+                if fn is None:
+                    continue
+                await loop.execute_phase(name, fn, ctx_dict)
+            return loop.trace
+
         # Accumulated observations list — appended to after every EXECUTE
         # phase. Read by ``_phase_reason`` on the NEXT iteration so the
         # provider sees prior tool outputs as SYSTEM (DATA) messages.
@@ -515,6 +606,24 @@ class Agent:
         # executed twice across iterations (e.g. if the provider re-emits
         # the same id). Read by ``_phase_execute``.
         ctx_dict["executed_call_ids"]: set[str] = set()
+
+        # H-07: per-tool call-count tracker. ``cognitive_tool_call_counts``
+        # on RunContext maps ``tool_name → count``. ``_phase_execute``
+        # increments it BEFORE each dispatch and refuses to run a tool
+        # whose count would exceed ``config.max_calls_per_tool``.
+        # Initialized here so a fresh run starts clean (a stale count
+        # from a prior run would falsely block legitimate calls).
+        run_ctx.cognitive_tool_call_counts = {}
+
+        # H-06: per-iteration remaining-time calculator. We compute the
+        # wall-clock elapsed since ``cognitive_started_at`` and store the
+        # remaining budget so ``_phase_execute`` can refuse a call whose
+        # budget is already exhausted (returning a
+        # ``cognitive_time_budget_exhausted`` ToolResult). The value is
+        # refreshed at the top of every iteration below.
+        ctx_dict["cognitive_remaining_seconds"]: float | None = (
+            config.max_time_seconds
+        )
 
         # ----- pre-loop phases: RECEIVE, UNDERSTAND ----------------------
         # These run exactly once. They normalize the input and classify
@@ -544,6 +653,23 @@ class Agent:
         # same tool_calls. The abort flag remains a marker on RunContext
         # (visible in audit/replay) without changing loop control flow.
         while True:
+            # H-06: refresh the per-iteration remaining-time budget so
+            # ``_phase_execute`` can refuse calls whose wall-clock budget
+            # is exhausted. Computed from the loop's start time so the
+            # budget is monotone-decreasing across iterations (a single
+            # iteration can never "reclaim" time).
+            if run_ctx.cognitive_started_at is not None:
+                elapsed = (
+                    utc_now() - run_ctx.cognitive_started_at
+                ).total_seconds()
+                ctx_dict["cognitive_remaining_seconds"] = (
+                    config.max_time_seconds - elapsed
+                )
+            else:
+                ctx_dict["cognitive_remaining_seconds"] = (
+                    config.max_time_seconds
+                )
+
             # Snapshot the executed-call-ids set BEFORE this iteration's
             # EXECUTE phase adds to it. The no-new-work detector (below)
             # compares the NEW plan's tool_call ids against THIS snapshot
@@ -921,6 +1047,20 @@ class Agent:
             When policy is absent, the firewall is the sole gate.
           * All gate invocations are wrapped in try/except so an
             exception inside the perimeter fails CLOSED (deny).
+
+        H-01: the final authorization verdict (a ``PolicyVerdict`` or
+        ``FirewallVerdict`` — both expose ``.allowed`` and ``.decision``)
+        is stored on each decision dict under the ``"authorization"`` key
+        so ``_phase_execute`` can pass it to ``ToolExecutor.execute(
+        authorization=...)``. The executor re-validates the verdict at
+        the execution point (H-02) — a call whose verdict has been
+        tampered with after CHECK_PERMISSIONS still fails closed.
+
+        H-03: the token supplied to ``Agent.run(token=...)`` is threaded
+        through ``ctx["token"]`` to ``IdentityResolver.resolve_and_attach
+        (run_ctx, token=token)``. CORE_ONLY mode (no token, default)
+        resolves to an anonymous principal — the firewall + policy
+        still DEFAULT-DENY protected actions.
         """
         plan: list[ToolCall] = ctx["PLAN"]["tool_calls"]
         run_ctx: RunContext = ctx["context"]
@@ -932,14 +1072,17 @@ class Agent:
 
         # Resolve identity from a TRUSTED source (Authenticator). The token
         # is NOT taken from ``run_ctx.metadata`` (which is public/writable
-        # — callers could otherwise forge actor_roles). In CORE_ONLY mode
-        # there is no session-bound token, so we pass None and rely on the
-        # Authenticator's verify(None) contract: an anonymous principal
-        # (NoopAuthenticator) or None (a real Authenticator that refuses
-        # unauthenticated callers).
+        # — callers could otherwise forge actor_roles). H-03: the token is
+        # threaded from ``Agent.run(token=...)`` via ``ctx["token"]``.
+        # In CORE_ONLY mode (no token supplied), ``ctx.get("token")``
+        # returns None — preserving the pre-H-03 anonymous-principal
+        # behavior. The Authenticator's verify(None) contract returns an
+        # anonymous principal (NoopAuthenticator) or None (a real
+        # Authenticator that refuses unauthenticated callers).
         auth = self.runtime.get_component("authenticator")
         resolver = IdentityResolver(auth)
-        principal = await resolver.resolve_and_attach(run_ctx, token=None)
+        token: str | None = ctx.get("token")
+        principal = await resolver.resolve_and_attach(run_ctx, token=token)
         actor_roles: list[str] | None = (
             list(principal.roles) if principal is not None else None
         )
@@ -958,6 +1101,10 @@ class Agent:
                     "tool": call.tool_name,
                     "decision": decision,
                     "reason": "no security perimeter configured (firewall + policy both absent)",
+                    # No verdict object — both gates absent. _phase_execute
+                    # will refuse to dispatch (decision != "allow") before
+                    # ever consulting ``authorization``.
+                    "authorization": None,
                 })
                 run_ctx.warnings.append(
                     f"tool call denied (no security perimeter): {call.tool_name}"
@@ -969,6 +1116,14 @@ class Agent:
             # Any active gate saying DENY wins (most restrictive).
             decision = "deny"
             require_hitl = False
+            # H-01: the final verdict that will be handed to ToolExecutor.
+            # Initialized to None; updated to whichever gate produced the
+            # binding decision. When policy is the sole decider, this is
+            # the PolicyVerdict. When the firewall is the sole gate (policy
+            # absent), this is the FirewallVerdict. When both gates are
+            # present and concur, policy's verdict wins (it is the more
+            # expressive gate — it carries RBAC + autonomy metadata).
+            authorization: Any = None
 
             # Policy engine: explicit allow / deny / require_hitl.
             # Pass actor_roles + actor_id from the VERIFIED principal so the
@@ -988,6 +1143,7 @@ class Agent:
                         "tool": call.tool_name,
                         "decision": decision,
                         "reason": "policy_exception",
+                        "authorization": None,
                     })
                     run_ctx.warnings.append(
                         f"tool call denied (policy exception): {call.tool_name}"
@@ -1002,6 +1158,11 @@ class Agent:
                 elif v_value == "allow" or v == "allow":
                     decision = "allow"
                 # If policy returns unknown/None, decision stays "deny"
+                # H-01: capture the policy verdict so _phase_execute can
+                # hand it to ToolExecutor. ``getattr(verdict, "allowed",
+                # False)`` gives a robust bool even if the verdict type
+                # varies across specialization layers.
+                authorization = verdict
 
             # Firewall: can only DOWNGRADE (allow→deny), NEVER UPGRADE
             # (deny→allow). When policy is absent, the firewall is the
@@ -1017,6 +1178,7 @@ class Agent:
                         "tool": call.tool_name,
                         "decision": decision,
                         "reason": "firewall_exception",
+                        "authorization": authorization,
                     })
                     run_ctx.warnings.append(
                         f"tool call denied (firewall exception): {call.tool_name}"
@@ -1028,10 +1190,18 @@ class Agent:
                     # over require_hitl too (deny is the strongest verdict).
                     decision = "deny"
                     require_hitl = False
+                    # H-01: the firewall verdict is now the binding one —
+                    # it overrode the policy's allow. _phase_execute will
+                    # refuse to dispatch (decision != "allow") before
+                    # consulting authorization, but we still record the
+                    # verdict for auditability.
+                    authorization = fw_decision
                 elif policy is None and fw_allowed is True:
                     # Firewall is the ONLY gate (policy not configured) →
                     # its explicit ALLOW is sufficient.
                     decision = "allow"
+                    # H-01: the firewall verdict is the sole authorization.
+                    authorization = fw_decision
                 # ELIMINATED (Hallazgo 3): the previous branch
                 #   `elif decision == "deny" and fw_allowed: decision = "allow"`
                 # UPGRADED a policy DENY to ALLOW when the firewall allowed.
@@ -1050,7 +1220,39 @@ class Agent:
                     run_ctx.approvals.append(
                         getattr(approval_result, "approval_id", "unknown")
                     )
-            decisions.append({"tool": call.tool_name, "decision": decision})
+                    # H-01: the approval engine UPGRADED the verdict from
+                    # ``require_hitl`` (allowed=False) to ``allow``
+                    # (allowed=True). The original ``authorization``
+                    # verdict object (a PolicyVerdict with
+                    # decision=require_hitl) still carries ``allowed=False``
+                    # — handing it to ToolExecutor would cause the executor
+                    # to refuse the call (H-02 gate). We construct a
+                    # synthetic allow verdict that captures the upgrade so
+                    # the executor's gate passes. The approval_id is
+                    # already recorded on ``run_ctx.approvals`` above for
+                    # auditability.
+                    try:
+                        from albra_seed.policy.engine import PolicyVerdict
+                        from albra_seed.core.types import PolicyDecision
+
+                        authorization = PolicyVerdict(
+                            decision=PolicyDecision.ALLOW,
+                            allowed=True,
+                        )
+                    except Exception:  # noqa: BLE001
+                        # Fall back to a minimal stub object if the
+                        # PolicyVerdict import fails (CORE_ONLY mode
+                        # without the policy subpackage).
+                        class _AllowVerdict:
+                            allowed = True
+                            decision = "allow"
+
+                        authorization = _AllowVerdict()
+            decisions.append({
+                "tool": call.tool_name,
+                "decision": decision,
+                "authorization": authorization,
+            })
             if decision == "deny":
                 run_ctx.warnings.append(
                     f"tool call denied: {call.tool_name}"
@@ -1064,16 +1266,27 @@ class Agent:
         return {"decisions": decisions, "aborted": ctx.get("abort", False)}
 
     async def _phase_execute(self, agent: Agent, ctx: dict[str, Any]) -> dict[str, Any]:
-        """Execute allowed tool calls. Honors cancellation.
+        """Execute allowed tool calls via the ToolExecutor. Honors cancellation.
+
+        H-01 (CRITICAL): this phase MUST route every tool invocation
+        through ``ToolExecutor.execute()`` — NEVER call
+        ``tool.execute()`` directly. The ToolExecutor is the LAST
+        defense-in-depth gate before the tool runs: it re-validates the
+        authorization verdict (H-02), enforces idempotency on
+        ``call_id`` (H-08), applies the contract's timeout, and runs
+        input/output schema validation. Bypassing it (the pre-H-01
+        behavior) meant a caller who reached ``_phase_execute`` could
+        invoke any registered tool with no per-call authorization
+        enforcement at the execution point.
 
         SEC-PERIMETER (Hallazgo 5): defense-in-depth re-check of the kill
         switch + cooldown at the EXECUTION point. Between CHECK_PERMISSIONS
         and EXECUTE, the kill switch might have been activated, permissions
         might have been revoked, or a cooldown might have triggered. We
-        re-validate every gate BEFORE invoking ``tool.execute()`` so a
-        state change in the window between the two phases NEVER opens the
-        gate. Failures here produce a failed ``ToolResult`` (NOT an
-        exception) so the agent loop continues processing remaining calls.
+        re-validate every gate BEFORE invoking the executor so a state
+        change in the window between the two phases NEVER opens the gate.
+        Failures here produce a failed ``ToolResult`` (NOT an exception)
+        so the agent loop continues processing remaining calls.
 
         COGNITIVE-CYCLE (dedup): a ``tool_call.id`` that has already been
         executed in a PRIOR cognitive-loop iteration is NOT re-executed.
@@ -1085,6 +1298,20 @@ class Agent:
         call returned without re-running it) without re-invoking the
         tool. The behavior is conservative: the original result was
         already observed in the prior iteration's OBSERVE.
+
+        H-06 (time budget): before each dispatch, we read
+        ``ctx["cognitive_remaining_seconds"]`` (refreshed by the cognitive
+        loop driver at the top of every iteration). When the remaining
+        wall-clock budget is exhausted (or non-positive), the call is
+        short-circuited with a ``cognitive_time_budget_exhausted``
+        ToolResult — we do NOT invoke the tool, preventing a single
+        long-running call from blowing past the loop's time budget.
+
+        H-07 (per-tool cap): before each dispatch, we increment
+        ``run_ctx.cognitive_tool_call_counts[call.tool_name]``. When
+        the count would exceed ``config.max_calls_per_tool``, the call
+        is short-circuited with a ``per_tool_call_limit_exceeded``
+        ToolResult — a misbehaving provider cannot spam a single tool.
         """
         cancel_event: asyncio.Event = ctx["cancel_event"]
         if cancel_event.is_set():
@@ -1095,6 +1322,27 @@ class Agent:
         plan: list[ToolCall] = ctx["PLAN"]["tool_calls"]
         run_ctx: RunContext = ctx["context"]
         results: list[ToolResult] = []
+
+        # H-07: read the per-tool cap + per-tool tracker from the
+        # cognitive-loop config. The config is set on ctx_dict by
+        # ``_run_cognitive_cycle`` (honoring the per-call override).
+        # When the cognitive loop is NOT active (legacy linear path or
+        # CORE_ONLY), there is no per-tool cap — every call is dispatched
+        # (subject to the other gates). This preserves backward compat.
+        cognitive_config: CognitiveLoopConfig | None = ctx.get(
+            "cognitive_loop_config"
+        )
+        max_calls_per_tool: int | None = (
+            cognitive_config.max_calls_per_tool
+            if cognitive_config is not None
+            else None
+        )
+
+        # H-06: read the remaining wall-clock budget. Refreshed at the
+        # top of every cognitive-loop iteration by ``_run_cognitive_cycle``.
+        # ``None`` means the cognitive loop is not active (legacy path) —
+        # no time-budget enforcement.
+        remaining_seconds: float | None = ctx.get("cognitive_remaining_seconds")
 
         # COGNITIVE-CYCLE: dedup set. ``ctx["executed_call_ids"]`` is
         # initialized by ``_run_cognitive_cycle`` and persists across
@@ -1110,6 +1358,12 @@ class Agent:
         # came from the firewall (extremely unlikely; the policy would
         # still need to have said ALLOW for the call to reach this point).
         firewall = self.runtime.get_component(COMPONENT_FIREWALL)
+
+        # H-01: obtain the ToolExecutor. Lazily constructed on first use
+        # and cached on the Agent instance so its idempotency set (H-08)
+        # persists across cognitive-loop iterations AND across multiple
+        # ``run()`` invocations of the same Agent.
+        executor = self._get_tool_executor()
 
         for call, decision in zip(plan, decisions):
             # COGNITIVE-CYCLE dedup: if this exact ``call.id`` was
@@ -1147,6 +1401,54 @@ class Agent:
                     error=f"blocked: {decision['decision']}",
                 ))
                 continue
+
+            # H-06: time-budget check. If the cognitive loop's remaining
+            # wall-clock budget is exhausted (or non-positive), short-
+            # circuit the call WITHOUT invoking the tool. A single long-
+            # running tool call could otherwise blow past the loop's
+            # time budget before the between-iterations check fires.
+            if remaining_seconds is not None and remaining_seconds <= 0:
+                results.append(ToolResult(
+                    call_id=call.id, success=False,
+                    error="cognitive_time_budget_exhausted",
+                    output={"time_budget_exhausted": True},
+                ))
+                run_ctx.warnings.append(
+                    f"cognitive_loop: tool_call {call.id} "
+                    f"({call.tool_name}) skipped — time budget exhausted"
+                )
+                continue
+
+            # H-07: per-tool cap. If this tool has already been dispatched
+            # ``max_calls_per_tool`` times across all iterations, short-
+            # circuit the call. A misbehaving provider cannot spam a
+            # single tool (e.g. send_email 100 times).
+            if max_calls_per_tool is not None:
+                tool_count = run_ctx.cognitive_tool_call_counts.get(
+                    call.tool_name, 0
+                )
+                if tool_count >= max_calls_per_tool:
+                    results.append(ToolResult(
+                        call_id=call.id, success=False,
+                        error="per_tool_call_limit_exceeded",
+                        output={
+                            "per_tool_limit": max_calls_per_tool,
+                            "tool_name": call.tool_name,
+                        },
+                    ))
+                    run_ctx.warnings.append(
+                        f"cognitive_loop: tool_call {call.id} "
+                        f"({call.tool_name}) skipped — per-tool call "
+                        f"limit ({max_calls_per_tool}) exceeded"
+                    )
+                    continue
+                # Increment BEFORE dispatch so a concurrent re-entrant
+                # call (unlikely, but possible if the provider emits
+                # duplicate tool_calls in the same iteration) is also
+                # bounded.
+                run_ctx.cognitive_tool_call_counts[call.tool_name] = (
+                    tool_count + 1
+                )
 
             # DEFENSE-IN-DEPTH (Hallazgo 5): re-check kill switch at the
             # execution point. Between CHECK_PERMISSIONS and EXECUTE, the
@@ -1188,23 +1490,56 @@ class Agent:
                     )
                     continue
 
-            tool = self.runtime.get_tool(call.tool_name)
-            if tool is None:
-                results.append(ToolResult(
-                    call_id=call.id, success=False,
-                    error=f"tool not found: {call.tool_name}",
-                ))
-                continue
+            # H-01: route through ToolExecutor (NOT tool.execute directly).
+            # The executor re-validates the authorization verdict (H-02),
+            # enforces idempotency on call_id (H-08), and applies the
+            # contract's timeout + retry policy.
+            authorization = decision.get("authorization")
             try:
-                result = await tool.execute(call.arguments, context=run_ctx)
-                results.append(result)
-                run_ctx.tools_used.append(call.tool_name)
+                result = await executor.execute(
+                    call.tool_name,
+                    call.arguments,
+                    context=run_ctx,
+                    authorization=authorization,
+                    call_id=call.id,
+                )
             except Exception as exc:  # noqa: BLE001
+                # The executor itself raised (NOT the tool — tool
+                # exceptions are caught inside the executor and returned
+                # as failed ToolResults). This is an infrastructure error
+                # (registry lookup, validation, etc.) — surface it as a
+                # failed ToolResult so the loop continues.
                 results.append(ToolResult(
                     call_id=call.id, success=False,
                     error=f"{type(exc).__name__}: {exc}",
                 ))
-                run_ctx.errors.append(f"tool {call.tool_name} failed: {exc}")
+                run_ctx.errors.append(
+                    f"tool {call.tool_name} failed: {exc}"
+                )
+                continue
+            results.append(result)
+            # H-01: the executor catches tool-level exceptions and returns
+            # them as failed ToolResults (success=False). The pre-H-01
+            # agent code appended to ``run_ctx.errors`` when a tool
+            # raised; we preserve that behavior so downstream consumers
+            # (LearningManager's ProposalGenerator inspects
+            # ``run_ctx.errors``) still fire on tool failures. Without
+            # this, a tool that raises would silently become a failed
+            # ToolResult with no error recorded on the RunContext —
+            # breaking the learning feedback loop.
+            if not result.success:
+                run_ctx.errors.append(
+                    f"tool {call.tool_name} failed: "
+                    f"{result.error or 'unknown error'}"
+                )
+            # ``run_ctx.tools_used`` is also appended to inside the
+            # executor (when context is provided). The double-append is
+            # harmless — the list is a record, not a counter — but we
+            # keep this append too for backward compat with tests that
+            # inspect ``tools_used`` after a direct ``_phase_execute``
+            # call (without going through the executor).
+            if call.tool_name not in run_ctx.tools_used:
+                run_ctx.tools_used.append(call.tool_name)
         return {"results": results}
 
     async def _phase_observe(self, agent: Agent, ctx: dict[str, Any]) -> dict[str, Any]:
@@ -1612,6 +1947,57 @@ class Agent:
         if self.runtime._providers:  # noqa: SLF001
             return next(iter(self.runtime._providers.values()))  # noqa: SLF001
         return None
+
+    def _get_tool_executor(self) -> Any:
+        """Return the Agent's cached ToolExecutor (H-01/H-08).
+
+        The executor wraps a ``ToolRegistry`` built from the runtime's
+        registered tools. On first call we seed the registry with every
+        currently-registered tool; on subsequent calls we re-sync so any
+        tool registered AFTER the executor was built is also visible.
+
+        The executor (and its idempotency set ``_executed_calls``) is
+        cached on the Agent instance — never on the Runtime — so:
+          * it survives across cognitive-loop iterations within a run
+            (H-08 idempotency works across iterations), and
+          * it survives across multiple ``run()`` invocations of the
+            same Agent (H-08 idempotency works across runs — a retried
+            call_id from a prior run is suppressed).
+
+        Returning ``Any`` (rather than ``ToolExecutor``) avoids importing
+        the tools subpackage at module load time — keeping CORE_ONLY
+        mode decoupled. The import is deferred to first use.
+        """
+        if self._tool_executor is None:
+            # Deferred import keeps the tools subpackage off the module-
+            # load path (CORE_ONLY mode never reaches _phase_execute when
+            # the provider emits no tool_calls).
+            from albra_seed.tools.executor import ToolExecutor
+            from albra_seed.tools.registry import ToolRegistry
+
+            registry = ToolRegistry()
+            for name, tool in self.runtime._tools.items():  # noqa: SLF001
+                try:
+                    registry.register(tool)
+                except Exception:  # noqa: BLE001
+                    # A tool whose contract fails validation is skipped —
+                    # the executor's ``execute()`` returns a not-found
+                    # result for it, which is the correct behavior.
+                    pass
+            self._tool_executor = ToolExecutor(registry)
+            return self._tool_executor
+
+        # Re-sync: any tools registered AFTER the executor was built must
+        # be added to its registry so the executor can dispatch them.
+        # We use ``list()`` to avoid mutation-during-iteration issues.
+        registry = self._tool_executor.registry
+        for name, tool in list(self.runtime._tools.items()):  # noqa: SLF001
+            if name not in registry.list():
+                try:
+                    registry.register(tool)
+                except Exception:  # noqa: BLE001
+                    pass
+        return self._tool_executor
 
     def _build_response(
         self,

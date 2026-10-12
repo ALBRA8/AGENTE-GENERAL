@@ -293,7 +293,23 @@ class RunContext(BaseModel):
     # for passing identity to the PolicyEngine. Typed as ``Any`` to avoid a
     # circular import (AuthPrincipal lives in ``albra_seed.security.auth``,
     # which itself imports from ``albra_seed.core.types``).
-    verified_principal: Any = None  # AuthPrincipal | None
+    #
+    # H-04: TYPE-SAFETY NOTE. ``verified_principal`` is intentionally
+    # ``Any`` (not ``AuthPrincipal | None``) to break the circular import.
+    # At runtime it is ALWAYS either:
+    #   * ``None`` — when IdentityResolver has not been invoked yet
+    #     (e.g. a RunContext constructed directly by a test that does
+    #     not run the agent loop).
+    #   * an ``AuthPrincipal`` instance — after ``IdentityResolver.
+    #     resolve_and_attach()`` has been called by ``_phase_check_
+    #     permissions``.
+    # Consumers that read this field SHOULD treat it as
+    # ``AuthPrincipal | None`` and use ``getattr(vp, "roles", [])``
+    # / ``getattr(vp, "identity", None)`` rather than direct attribute
+    # access — the ``getattr`` form is robust to ``None`` and to any
+    # future principal type that exposes the same surface.
+    # ``IdentityResolver.get_principal()`` is the canonical accessor.
+    verified_principal: Any = None  # AuthPrincipal | None (H-04)
     # COGNITIVE-CYCLE: budget tracking for the cognitive tool-reasoning
     # loop. ``cognitive_started_at`` is set when the cognitive inner loop
     # begins (after RECEIVE/UNDERSTAND, before the first REASON of the
@@ -307,6 +323,15 @@ class RunContext(BaseModel):
     cognitive_iterations: int = 0
     cognitive_tool_calls: int = 0
     cognitive_started_at: datetime | None = None
+    # H-07: per-tool call-count tracker for the cognitive loop. Maps
+    # ``tool_name → count`` of how many times that tool has been
+    # dispatched across all iterations. ``_phase_execute`` reads and
+    # increments this BEFORE each dispatch and refuses to run a tool
+    # whose count would exceed ``CognitiveLoopConfig.max_calls_per_tool``.
+    # Reset to ``{}`` at the start of every ``_run_cognitive_cycle`` so
+    # a fresh run starts clean (a stale count from a prior run would
+    # falsely block legitimate calls).
+    cognitive_tool_call_counts: dict[str, int] = Field(default_factory=dict)
 
 
 class Evidence(BaseModel):
