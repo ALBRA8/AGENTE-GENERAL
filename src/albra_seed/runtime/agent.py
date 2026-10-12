@@ -276,7 +276,13 @@ class Agent:
         return {"tool_calls": tool_calls, "plan": [tc.tool_name for tc in tool_calls]}
 
     async def _phase_check_permissions(self, agent: Agent, ctx: dict[str, Any]) -> dict[str, Any]:
-        """Run policy engine + firewall + (optionally) approval engine."""
+        """Run policy engine + firewall + (optionally) approval engine.
+
+        SECURITY INVARIANT (DEFAULT-DENY):
+        When a Tool call is in the plan, the absence of a security perimeter
+        (firewall AND policy engine BOTH missing) MUST yield DENY — never ALLOW.
+        CORE_ONLY without tools is unaffected (no plan -> no decision needed).
+        """
         plan: list[ToolCall] = ctx["PLAN"]["tool_calls"]
         run_ctx: RunContext = ctx["context"]
         decisions: list[dict[str, Any]] = []
@@ -286,19 +292,54 @@ class Agent:
         approval = self.runtime.get_component(COMPONENT_APPROVAL_ENGINE)
 
         for call in plan:
-            decision = "allow"
-            # Policy engine: deny -> block.
+            # DEFAULT-DENY: a Tool call requires AT LEAST ONE active gate
+            # (firewall OR policy engine). If BOTH are absent, DENY.
+            # The decision only becomes "allow" if an active gate explicitly
+            # allows it. CORE_ONLY without tools never reaches this loop.
+            if firewall is None and policy is None:
+                decision = "deny"
+                decisions.append({
+                    "tool": call.tool_name,
+                    "decision": decision,
+                    "reason": "no security perimeter configured (firewall + policy both absent)",
+                })
+                run_ctx.warnings.append(
+                    f"tool call denied (no security perimeter): {call.tool_name}"
+                )
+                continue
+
+            # At least one gate is active. Start from DENY; an active gate
+            # must explicitly ALLOW (or REQUIRE_HITL) for the call to proceed.
+            # Any active gate saying DENY wins (most restrictive).
+            decision = "deny"
+            require_hitl = False
+
+            # Policy engine: explicit allow / deny / require_hitl.
             if policy is not None and hasattr(policy, "evaluate"):
                 verdict = await policy.evaluate(call, context=run_ctx)
-                if getattr(verdict, "decision", None) == "deny":
+                v = getattr(verdict, "decision", None)
+                if v == "deny":
                     decision = "deny"
-                elif getattr(verdict, "decision", None) == "require_hitl":
-                    decision = "require_hitl"
-            # Firewall: default-deny on top of policy.
+                elif v == "require_hitl":
+                    require_hitl = True
+                elif v == "allow":
+                    decision = "allow"
+                # If policy returns unknown/None, decision stays "deny"
+
+            # Firewall: can only upgrade deny→allow (when policy didn't deny)
+            # or downgrade allow→deny (when firewall denies).
             if firewall is not None and hasattr(firewall, "check"):
                 fw_decision = await firewall.check(call, context=run_ctx)
                 if getattr(fw_decision, "allowed", True) is False:
                     decision = "deny"
+                    require_hitl = False  # deny wins over hitl
+                elif decision == "deny" and getattr(fw_decision, "allowed", False) is True:
+                    # Firewall explicitly allows (policy was None or didn't say allow)
+                    decision = "allow"
+
+            if require_hitl:
+                decision = "require_hitl"
+
             # Approval engine: HITL.
             if decision == "require_hitl" and approval is not None:
                 approval_result = await approval.request(call, context=run_ctx)

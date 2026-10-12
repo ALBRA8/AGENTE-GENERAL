@@ -331,8 +331,15 @@ async def test_agent_loop_captures_timeout_and_failure() -> None:
 async def test_agent_executes_tool_via_registry(
     runtime: Runtime, mock_provider: MockProvider, identity: AgentIdentity
 ) -> None:
-    """A tool call in the draft response is dispatched through the registry."""
+    """A tool call in the draft response is dispatched through the registry.
+
+    Since BLOQ 1 (security fail-open closure), a Tool call requires AT LEAST
+    ONE active security gate (firewall OR policy engine). This test wires a
+    permissive ActionFirewall rule so the EchoTool is explicitly ALLOWED.
+    """
     from albra_seed.core.types import ToolCall
+    from albra_seed.firewall.firewall import ActionFirewall, FirewallRule
+    from albra_seed.core.types import RiskLevel
 
     class ToolCallingProvider(MockProvider):
         async def complete(self, messages, **kwargs):
@@ -348,6 +355,14 @@ async def test_agent_executes_tool_via_registry(
     await runtime.startup()
     runtime.register_provider(ToolCallingProvider())
     runtime.register_tool(EchoTool())
+    # Register a permissive firewall rule so the EchoTool is explicitly ALLOWED
+    # (default-deny would otherwise block it now that the perimeter is enforced).
+    fw = ActionFirewall()
+    fw.add_rule(FirewallRule(
+        action_pattern="echo", actor_pattern="*", decision="allow",
+        risk_threshold=RiskLevel.UNKNOWN, autonomy_required=0,
+    ))
+    runtime.register("firewall", fw)
 
     agent = Agent(identity, runtime)
     response = await agent.run("echo me")

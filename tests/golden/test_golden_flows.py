@@ -215,11 +215,27 @@ async def test_golden_receive_task_reason_respond() -> None:
 
 
 async def test_golden_execute_safe_tool() -> None:
-    """Agent invokes EchoTool successfully end-to-end."""
+    """Agent invokes EchoTool successfully end-to-end.
+
+    Since BLOQ 1 (security fail-open closure), a Tool call requires AT LEAST
+    ONE active security gate. This test wires a permissive ActionFirewall rule
+    so the EchoTool is explicitly ALLOWED.
+    """
+    from albra_seed.firewall.firewall import ActionFirewall, FirewallRule
+    from albra_seed.core.types import RiskLevel
+
     runtime = Runtime()
     await runtime.startup()
     runtime.register_provider(_ProviderCallingTool("echo", {"message": "hi"}))
     runtime.register_tool(EchoTool())
+    # Permissive firewall rule: allow EchoTool explicitly (security perimeter
+    # must be present and explicitly allow the tool — fail-open is closed).
+    fw = ActionFirewall()
+    fw.add_rule(FirewallRule(
+        action_pattern="echo", actor_pattern="*", decision="allow",
+        risk_threshold=RiskLevel.UNKNOWN, autonomy_required=0,
+    ))
+    runtime.register("firewall", fw)
     agent = Agent(_identity(), runtime)
 
     response = await agent.run("echo hi")

@@ -1,4 +1,19 @@
-"""PUBLIC: POST /api/v1/execution, GET /api/v1/execution/{execution_id}."""
+"""PUBLIC: POST /api/v1/execution, GET /api/v1/execution/{execution_id}.
+
+SECURITY CONTRACT (BLOQ 2 closure):
+The POST /execution endpoint calls agent.run() which may execute Tools.
+Tool execution requires a security perimeter (firewall + policy) configured
+on the Runtime. If the perimeter is absent, the endpoint refuses to execute
+and returns HTTP 503 (perimeter not configured).
+
+This contract enforces DEFAULT-DENY at the HTTP boundary:
+- CORE_ONLY without perimeter → 503 "security perimeter not configured"
+- CORE_ONLY with perimeter → 200 (tools go through firewall + policy)
+- Authenticated request with perimeter → 200 (subject to policy decision)
+
+The endpoint does NOT bypass Runtime security; it merely refuses to be an
+open door when the perimeter is absent.
+"""
 
 from __future__ import annotations
 
@@ -13,6 +28,18 @@ from albra_seed.api.schemas import (
 )
 
 
+def _runtime_has_security_perimeter(runtime: Any) -> bool:
+    """True iff the Runtime has at least one security gate registered
+    (firewall OR policy engine). When BOTH are absent, the runtime is
+    in a state where any tool execution would be fail-open — which the
+    DEFAULT-DENY contract forbids. The HTTP execution endpoint refuses
+    to even call agent.run() in that case.
+    """
+    firewall = runtime.get_component("firewall")
+    policy = runtime.get_component("policy_engine")
+    return firewall is not None or policy is not None
+
+
 def build_public_execution_router(ctx: RequestContext) -> Any:
     """Return a FastAPI APIRouter for the public execution endpoints."""
     from fastapi import APIRouter, HTTPException  # lazy
@@ -22,7 +49,11 @@ def build_public_execution_router(ctx: RequestContext) -> Any:
     @router.post(
         "/execution",
         response_model=ExecutionResponse,
-        responses={400: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
+        responses={
+            400: {"model": ErrorResponse},
+            404: {"model": ErrorResponse},
+            503: {"model": ErrorResponse},
+        },
     )
     async def execute(req: ExecutionRequest) -> Any:
         agent = ctx.get_agent(req.agent_id)
@@ -30,6 +61,18 @@ def build_public_execution_router(ctx: RequestContext) -> Any:
             raise HTTPException(
                 status_code=404,
                 detail=f"no agent registered with id={req.agent_id!r}",
+            )
+        # SECURITY CONTRACT (BLOQ 2): refuse to execute via HTTP when the
+        # Runtime has no security perimeter. This prevents the HTTP surface
+        # from becoming an open door for tool execution.
+        if not _runtime_has_security_perimeter(ctx.runtime):
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "execution endpoint requires a security perimeter "
+                    "(firewall or policy engine) configured on the Runtime. "
+                    "Register one before exposing /execution over HTTP."
+                ),
             )
         try:
             response = await agent.run(

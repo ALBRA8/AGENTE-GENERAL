@@ -171,9 +171,26 @@ def test_secrets_are_redacted_in_config_endpoint(monkeypatch: pytest.MonkeyPatch
 
 def test_execution_endpoint_runs_agent_and_returns_trace(runtime: Runtime) -> None:
     """POST /api/v1/execution runs the agent; GET /api/v1/execution/{id}
-    returns the cached trace."""
+    returns the cached trace.
+
+    Since BLOQ 2 (HTTP execution perimeter closure), the endpoint requires
+    a security perimeter (firewall OR policy engine) on the Runtime. This
+    test registers a permissive ActionFirewall so the perimeter is present.
+    """
     from albra_seed.providers.mock import MockProvider
+    from albra_seed.firewall.firewall import ActionFirewall, FirewallRule
+    from albra_seed.core.types import RiskLevel
     runtime.register_provider(MockProvider())
+    # Security perimeter: register a permissive firewall (allows anything
+    # that the agent's Mock provider emits — which is no tool calls).
+    # The perimeter itself is what matters; default-deny is still enforced
+    # by the runtime if a tool is actually attempted.
+    fw = ActionFirewall()
+    fw.add_rule(FirewallRule(
+        action_pattern="*", actor_pattern="*", decision="allow",
+        risk_threshold=RiskLevel.UNKNOWN, autonomy_required=0,
+    ))
+    runtime.register("firewall", fw)
 
     identity = AgentIdentity(name="exec-agent", providers=["mock"])
     agent = Agent(identity=identity, runtime=runtime)
