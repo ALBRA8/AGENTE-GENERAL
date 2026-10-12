@@ -59,7 +59,7 @@ python scripts/clean_room_verify.py     # 17/17 required + 2/2 optional PASS
 python scripts/audit_matrix.py          # 40/40 VERIFIED
 python scripts/parity_check.py          # exit 0, 106/106 DNA
 python scripts/contamination_scan.py    # exit 0, is_clean=True
-python -m pytest tests/ -q              # 732 passed
+python -m pytest tests/ -q              # 769 passed (732 baseline + 16 cognitive-mode + 21 adversarial security tests)
 ```
 
 Expected last line of clean_room: `CLEAN-ROOM: PASS` (17/17 required + 2/2 optional).
@@ -203,15 +203,16 @@ python scripts/contamination_scan.py
 
 **Test counts** (mirrored from [`docs/CERTIFICATION.md`](docs/CERTIFICATION.md)):
 
-- 368 unit tests (incl. 8 birth/readiness + 11 factual integrity + 10 forget/audit BLOQ-MEM + 31 RBAC security perimeter + 13 decision memory + 15 learning + 9 decision/learning integration + 38 memory sanitizer + 15 cognitive cycle)
+- 368 unit tests (incl. 8 birth/readiness + 11 factual integrity + 10 forget/audit BLOQ-MEM + 31 RBAC security perimeter + 13 decision memory + 15 learning + 9 decision/learning integration + 38 memory sanitizer + 15 cognitive cycle + 16 cognitive modes (H-09))
+- 83 security tests (5 baseline + 31 RBAC + 13 closure + 9 perimeter-memory-independence + 4 memory-injection + 21 adversarial H-10)
 - 81 A2A tests (28 main + 16 wire + 10 routes + 18 external interop + 9 security perimeter BLOQ-A2A-SEC)
 - 13 golden flow tests (end-to-end scenarios)
-- 5 integration tests (multi-subsystem)
+- 8 integration tests (multi-subsystem)
 - 4 contract tests (interface compliance)
-- 5 security tests (secrets, firewall, tamper detection)
+- 5 baseline security tests (secrets, firewall, tamper detection) — counted in the 83 above
 - 17 genetic parity tests (106 DNA entries verified)
 - 12 genetic contamination tests (249 files scanned, 0 critical)
-- **Total: 732 tests passing in ~19s**
+- **Total: 769 tests passing in ~20s**
 
 > The test count grows as the universal security perimeter and the
 > cognitive/memory subsystems are tightened. See
@@ -233,11 +234,26 @@ still passes.
   fail-closed registry/authenticator/policy/firewall exceptions, and
   defense-in-depth re-checks at the EXECUTE point. See
   `tests/security/test_rbac_security.py`.
-- **Cognitive cycle with limits** — `CognitiveLoopConfig`
-  (`max_iterations`, `max_tool_calls`, `max_time_seconds`) bounds every
-  agent run; the first limit hit terminates the loop with a recorded
-  reason. Tool results are treated as DATA, never INSTRUCTIONS. See
-  `tests/unit/test_cognitive_cycle.py` (15 tests).
+- **Central tool executor (H-01/H-02/H-08)** — `ToolExecutor` is the
+  SOLE entry point for non-dry-run tool execution. Every
+  `_phase_execute` call routes through `executor.execute(name, args,
+  authorization=verdict, call_id=...)`. The executor RE-VALIDATES the
+  authorization verdict (H-02) and enforces idempotent `call_id`
+  (H-08) — a retried call_id returns a successful no-op
+  (`output.idempotent_skip=True`) instead of re-invoking the tool.
+  See `tests/security/test_adversarial.py::TestDirectExecutorBypass`
+  and `TestRetry`.
+- **Cognitive cycle with limits + TWO operating modes (H-09)** —
+  `CognitiveLoopConfig` (`max_iterations`, `max_tool_calls`,
+  `max_time_seconds`, `max_context_messages`, `max_calls_per_tool`)
+  bounds every cognitive agent run; the first limit hit terminates
+  the loop with a recorded reason. Tool results are treated as DATA,
+  never INSTRUCTIONS. The Agent has TWO documented modes:
+  **LINEAR** (default, `cognitive_loop_config=None`) — single
+  REASON→EXECUTE→RESPOND cycle, no re-reasoning; and **COGNITIVE**
+  (opt-in via `CognitiveLoopConfig()`) — iterates as long as the
+  draft contains `tool_calls`. See `tests/unit/test_cognitive_cycle.py`
+  (15 tests) + `tests/unit/test_cognitive_modes.py` (16 H-09 tests).
 - **DecisionMemory + LearningManager integration** — every permissioned
   decision (allowed + denied) is recorded as a `DecisionRecord`;
   failing executions produce `LearningProposal`s that start in PROPOSED
@@ -297,6 +313,7 @@ src/albra_specialization/
 - [Extending Guide](docs/EXTENDING.md) — how to add tools/skills/providers/plugins
 - [Specialization Contract](docs/SPECIALIZATION.md) — how to build a specialized agent
 - [Audit Matrix](docs/AUDIT_MATRIX.md) — 40-component status matrix (auto-generated)
+- [Requirements Matrix](docs/REQUIREMENTS_MATRIX.md) — H-01..H-11 post-V1.0 hardening traceability matrix
 - [LIPO Report](docs/LIPO_REPORT.md) — KEEP / REFACTOR / MOVE / classification (40 components)
 - [Universal DNA Gap Closure](docs/UNIVERSAL_DNA_GAP_CLOSURE.md) — 7-gap closure record
 - [A2A Integration](docs/A2A_INTEGRATION.md) — A2A 1.0 adapter design (72 tests)
@@ -353,7 +370,7 @@ MIT — see [LICENSE](LICENSE).
 | Universal DNA entries         | **106** (`src/albra_seed/parity/dna.py`)   |
 | A2A helper modules (NOT DNA)| **3** (`a2a.wire` / `a2a.exposition` / `a2a.observers`) |
 | Allowed specializations       | 8                                         |
-| Total tests                   | **732** (368 unit incl. 31 RBAC perimeter + 13 decision memory + 15 learning + 9 decision/learning integration + 38 sanitizer + 15 cognitive cycle + 81 a2a incl. 9 sec perimeter + 13 golden + 5 integration + 4 contracts + 5 security + 17 parity + 12 contamination) |
+| Total tests                   | **769** (368 unit incl. 31 RBAC perimeter + 13 decision memory + 15 learning + 9 decision/learning integration + 38 sanitizer + 15 cognitive cycle + 16 cognitive modes H-09 + 81 a2a incl. 9 sec perimeter + 13 golden + 8 integration + 4 contracts + 83 security incl. 21 adversarial H-10 + 17 parity + 12 contamination) |
 | A2A tests                    | 81 (28 main + 16 wire + 10 routes + 18 interop + 9 security perimeter) |
 | Clean-room                   | PASS (17/17 required + 2/2 optional; 16 real gates + 1 informational scope-doc R) |
 | Genetic parity               | PASS (`is_pure_seed=True`, 106/106 DNA)   |
@@ -361,7 +378,8 @@ MIT — see [LICENSE](LICENSE).
 | A2A security perimeter        | CLOSED for ALL 3 inbound ops (message/send + tasks/get + tasks/cancel) — BLOQ-A2A-SEC |
 | Memory FACT rule              | UNIFIED via `MemoryProvenance.validate_fact()` — BLOQ-MEM |
 | Unified security perimeter    | RBAC + `IdentityResolver` → `verified_principal` (31 RBAC tests) |
-| Cognitive cycle               | `CognitiveLoopConfig` (max_iterations / max_tool_calls / max_time_seconds) |
+| Cognitive cycle               | `CognitiveLoopConfig` (max_iterations / max_tool_calls / max_time_seconds / max_context_messages / max_calls_per_tool) + TWO operating modes: LINEAR (default) + COGNITIVE (opt-in) — H-09 |
+| Central tool executor         | `ToolExecutor` is the SOLE entry point for non-dry-run execution; re-validates authorization (H-02) + idempotent call_id (H-08) — H-01 |
 | Decision + learning loop      | `DecisionMemory` + `LearningManager` wired into `_phase_record` (HITL-gated proposals) |
 | Master DNA contract           | [`docs/MASTER_DNA.md`](docs/MASTER_DNA.md) — every guarantee testable |
 | Ecosystem conformity matrix   | [`docs/ECOSYSTEM_CONFORMITY.md`](docs/ECOSYSTEM_CONFORMITY.md) — 9 known ALBRA repos |

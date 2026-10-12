@@ -7,8 +7,8 @@
 > copy of the numbers. When any number here changes, all referencing docs are
 > out of date until refreshed from this file.
 
-**Last verified:** 2026-10-12
-**Commit:** `8437f2a` — `fix: close 2 security blockers — fail-open perimeter + HTTP execution boundary`
+**Last verified:** 2026-10-13
+**Commit:** `246a922` — `fix(security): central executor authorization gate + cognitive budget hardening (H-01 to H-08)` + H-09/H-10/H-11 docs/tests amendment (uncommitted at this write — will be the final SHA after this commit).
 **Status:** `READY_TO_FREEZE`
 
 ---
@@ -24,7 +24,7 @@ script or by counting actual files. None are invented.
 | A2A helper modules (NOT DNA)| 3   | `a2a.wire`, `a2a.exposition`, `a2a.observers` — see § "A2A Helper Modules" |
 | Allowed specializations      | 8     | `src/albra_seed/parity/dna.py` `ALLOWED_SPECIALIZATIONS`                |
 | Audit matrix probes          | 40    | `scripts/audit_matrix.py` `PROBES` list (33 original + 7 gap closures)  |
-| Total tests                   | 487   | `python -m pytest tests/ --collect-only -q`                             |
+| Total tests                   | 769   | `python -m pytest tests/ --collect-only -q` (732 baseline + 16 cognitive-mode tests added by H-09 + 21 adversarial security tests added by H-10) |
 | A2A tests                    | 81    | `python -m pytest tests/a2a/ --collect-only -q` (28 main + 16 wire + 10 routes + 18 external interop + 9 security perimeter) |
 | A2A tests — main             | 28    | `tests/a2a/test_a2a.py`                                                 |
 | A2A tests — wire format      | 16    | `tests/a2a/test_a2a_wire.py`                                             |
@@ -32,16 +32,19 @@ script or by counting actual files. None are invented.
 | A2A tests — external interop | 18    | `tests/a2a/test_external_interop.py`                                    |
 | A2A tests — security perimeter | 9   | `tests/a2a/test_a2a_security_perimeter.py` (BLOQ-A2A-SEC)               |
 | Golden flows                 | 13    | `tests/golden/test_golden_flows.py`                                     |
-| Integration tests            | 5     | `tests/integration/test_runtime_integration.py`                         |
+| Integration tests            | 8     | `tests/integration/test_runtime_integration.py`                         |
 | Contract tests               | 4     | `tests/contracts/test_contracts.py`                                     |
-| Security tests               | 5     | `tests/security/test_security.py`                                       |
+| Security tests               | 83    | `tests/security/` (5 baseline + 31 RBAC + 13 closure + 9 perimeter-memory-independence + 4 memory-injection + 21 adversarial H-10) |
+| Adversarial security tests (H-10) | 21 | `tests/security/test_adversarial.py` |
 | Genetic parity tests         | 17    | `tests/genetic/test_parity.py`                                          |
 | Genetic contamination tests  | 12    | `tests/contamination/test_contamination.py`                             |
 | Memory factual integrity     | 11    | `tests/unit/test_memory_factual_integrity.py` (BLOQ-MEM)                |
 | Memory forget / audit        | 10    | `tests/unit/test_memory_forget_audit.py` (BLOQ-MEM)                     |
 | Birth / readiness tests      | 8     | `tests/unit/test_birth_readiness.py`                                    |
-| Unit tests (total)           | 337   | `python -m pytest tests/unit/ --collect-only -q` (316 + 11 factual + 10 forget audit) |
-| Unit tests (excl. birth/readiness) | ~329 | 337 − 8                                                               |
+| Unit tests (total)           | 519   | `python -m pytest tests/unit/ --collect-only -q` (503 baseline + 16 cognitive-mode tests added by H-09) |
+| Cognitive-mode tests (H-09)  | 16    | `tests/unit/test_cognitive_modes.py` (explicit linear-vs-cognitive mode defaults + per-call override) |
+| Cognitive-cycle tests        | 15    | `tests/unit/test_cognitive_cycle.py` (budget limits + dedup + context accumulation) |
+| Unit tests (excl. birth/readiness) | ~511 | 519 − 8                                                               |
 
 ### Allowed specializations (8)
 
@@ -73,13 +76,35 @@ than adding a new probe, so it does not appear as its own probe. It is
 exercised by `tests/unit/test_birth_readiness.py` and by check #4 + #5 of
 the clean-room script.)
 
+### Post-V1.0 hardening amendments (H-01..H-11)
+
+The H-01..H-08 hardening commit `246a922` introduced a central
+`ToolExecutor` authorization gate (H-01/H-02), per-call cognitive-loop
+config + per-tool cap (H-03..H-07), and idempotent `call_id` (H-08).
+H-09/H-10/H-11 (this amendment) add explicit adversarial tests + the
+requirements matrix; they do NOT modify source code.
+
+| Probe                                  | Amendment | Test file                                       |
+| -------------------------------------- | --------- | ----------------------------------------------- |
+| `cognitive_modes`                     | H-09      | `tests/unit/test_cognitive_modes.py` (16 tests) |
+| `adversarial_token_validation`         | H-10      | `tests/security/test_adversarial.py::TestTokenValidation` |
+| `adversarial_forged_principal`        | H-10      | `tests/security/test_adversarial.py::TestForgedPrincipal` |
+| `adversarial_direct_executor_bypass`  | H-10      | `tests/security/test_adversarial.py::TestDirectExecutorBypass` |
+| `adversarial_revocation_between_phases` | H-10   | `tests/security/test_adversarial.py::TestRevocationBetweenCheckAndExecute` |
+| `adversarial_contract_permissions`     | H-10      | `tests/security/test_adversarial.py::TestContractPermissions` |
+| `adversarial_call_excess`              | H-10      | `tests/security/test_adversarial.py::TestCallExcess` |
+| `adversarial_timeout`                  | H-10      | `tests/security/test_adversarial.py::TestTimeout` |
+| `adversarial_retry_idempotency`         | H-10      | `tests/security/test_adversarial.py::TestRetry` |
+| `adversarial_no_effect_on_denial`      | H-10      | `tests/security/test_adversarial.py::TestNoEffectOnDenial` |
+| `requirements_matrix`                  | H-11      | `docs/REQUIREMENTS_MATRIX.md` (traceability matrix) |
+
 ---
 
-## Gate Results (verified 2026-10-12)
+## Gate Results (verified 2026-10-13)
 
 | Gate                       | Result | Evidence                                                                              |
 | -------------------------- | ------ | ------------------------------------------------------------------------------------- |
-| Tests                       | PASS   | `python -m pytest tests/ -q` → **487 passed in ~8s**                                  |
+| Tests                       | PASS   | `python -m pytest tests/ -q` → **769 passed in ~20s** (732 baseline + 16 cognitive-mode tests added by H-09 + 21 adversarial security tests added by H-10) |
 | Audit Matrix               | PASS   | `python scripts/audit_matrix.py` → **40/40 VERIFIED**                                 |
 | Genetic Parity             | PASS   | `python scripts/parity_check.py` → exit 0, `is_pure_seed=True`, 106/106 DNA present   |
 | Genetic Contamination      | PASS   | `python scripts/contamination_scan.py` → exit 0, `is_clean=True`, 0 critical, 0 warnings, 249 files scanned |
@@ -264,7 +289,8 @@ This breaks down as:
 2. Required deps (`pydantic`, `structlog`, `dotenv`) are importable.
 3. `SeedConfig.from_env()` → CORE_ONLY.
 4. `Runtime.startup()` + `readiness() == True`.
-5. `pytest tests/` passes (487 tests).
+5. `pytest tests/` passes (769 tests at HEAD `246a922` + H-09/H-10/H-11
+   amendment).
 6. `__seed_version__ == "ALBRA_SEED_V1.0"`.
 7. `Agent.run("hello")` returns `AgentResponse`.
 8. `runtime.health()` returns dict with `status` key.
@@ -359,7 +385,7 @@ python scripts/clean_room_verify.py    # 17/17 required + 2/2 optional PASS
 python scripts/audit_matrix.py         # 40/40 VERIFIED (writes docs/AUDIT_MATRIX.md)
 python scripts/parity_check.py         # exit 0, is_pure_seed=True, 106/106 DNA
 python scripts/contamination_scan.py   # exit 0, is_clean=True, 0 critical
-python -m pytest tests/ -q             # 487 passed
+python -m pytest tests/ -q             # 769 passed
 ```
 
 All gates must PASS. If any gate fails, the seed is NOT ready to freeze;
