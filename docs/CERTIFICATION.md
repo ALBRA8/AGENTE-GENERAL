@@ -8,9 +8,7 @@
 > out of date until refreshed from this file.
 
 **Last verified:** 2026-10-12
-**Commit:** `914c016`
-commit SHA after this gap-closure round (BLOQ 1–8) is committed.
-Until then, the latest hash on `main` is the working reference: `1d84d8f`.
+**Commit:** `089a1dc` — `fix: close 8 clean-room failures — httpx extra + importorskip + tomllib 3.10 + fastapi pin + dynamic counters`
 **Status:** `READY_TO_FREEZE`
 
 ---
@@ -86,6 +84,7 @@ the clean-room script.)
 | Genetic Parity             | PASS   | `python scripts/parity_check.py` → exit 0, `is_pure_seed=True`, 106/106 DNA present   |
 | Genetic Contamination      | PASS   | `python scripts/contamination_scan.py` → exit 0, `is_clean=True`, 0 critical, 0 warnings, 249 files scanned |
 | Clean-room                 | PASS   | `python scripts/clean_room_verify.py` → **17/17 required + 2/2 optional** PASS (16 real PASS/FAIL gates + 1 informational scope-doc check R; see Clean-room scope §) |
+| **CI (GitHub Actions)**     | **PASS** | workflow `.github/workflows/clean-room.yml` on commit `089a1dc` → **3/3 jobs success** (Python 3.10, 3.11, 3.12 on ubuntu-latest); run_id `38169875460` |
 | CORE_ONLY birth            | PASS   | Birth check inside `clean_room_verify.py` (check #3 + #4) + `tests/unit/test_birth_readiness.py` (8 tests) |
 | A2A wire format             | PASS   | `pytest tests/a2a/test_a2a_wire.py` → **16 passed**                                   |
 | A2A routes                  | PASS   | `pytest tests/a2a/test_a2a_routes.py` → **10 passed**                                 |
@@ -335,7 +334,7 @@ source .venv/bin/activate        # Linux/macOS
 
 # 3. Install from scratch (this is the part the script CANNOT verify
 #    for itself — it assumes deps are already installed)
-pip install -e .[dev]
+pip install -e .[dev,a2a,api]
 
 # 4. Run the clean-room verification
 python scripts/clean_room_verify.py
@@ -354,7 +353,7 @@ write-up.
 ```bash
 git clone https://github.com/ALBRA8/AGENTE-GENERAL.git
 cd AGENTE-GENERAL
-pip install -e .[dev]  # or: pip install -e . + pytest + httpx + fastapi
+pip install -e .[dev,a2a,api]  # canonical install for full test coverage (CI uses this)
 python scripts/clean_room_verify.py    # 17/17 required + 2/2 optional PASS
 python scripts/audit_matrix.py         # 40/40 VERIFIED (writes docs/AUDIT_MATRIX.md)
 python scripts/parity_check.py         # exit 0, is_pure_seed=True, 106/106 DNA

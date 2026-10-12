@@ -2,7 +2,13 @@
 
 > **Document ID:** `UNIVERSAL_DNA_GAP_CLOSURE.md`
 > **Generated:** 2026-10-11 by Task ID `GAP-DOCS`; updated 2026-10-12
-> by Task ID `BLOQ-DOCS` to record BLOQ 1–8 closures.
+> by Task ID `BLOQ-DOCS` to record BLOQ 1–8 closures; last updated
+> 2026-10-12 for final pre-freeze certification (commit `089a1dc`).
+> **Final certified commit:** `089a1dc` — see [`docs/CERTIFICATION.md`](CERTIFICATION.md)
+> for the canonical single source of truth. Any earlier commit references
+> in the body of this report (e.g. `8af913e`, `1d84d8f`, `914c016`) are
+> HISTORICAL — they document intermediate audit rounds and have been
+> superseded by `089a1dc`.
 > **Scope:** Closure of the 7 audit gaps identified against the ALBRA SEED V1.0 universal DNA
 > + the BLOQ 1–8 closure round (A2A security perimeter, memory factual
 > integrity, memory forget/audit, certification docs, clean-room honest

@@ -33,7 +33,7 @@
 | skills | VERIFIED | IMPLEMENTED | PASS | none | LOW | tests/unit/test_skills.py | registry + executor + validator + lifecycle + contract |
 | plugins | VERIFIED | IMPLEMENTED | PASS | none | MEDIUM | tests/unit/test_plugins.py | loader + validator + manager + manifest |
 | communication | VERIFIED | IMPLEMENTED | PASS | none (TEXT adapter always available; others optional) | LOW | tests/unit/test_communication.py | router + adapters + registry + message |
-| multimodal | VERIFIED | IMPLEMENTED | PASS | Pillow (optional), openai-whisper (optional), pypdf (optional), python-docx (optional) | LOW | tests/unit/test_multimodal.py | text always ready; image/voice/document lazy-import optional deps |
+| multimodal | VERIFIED | IMPLEMENTED | PASS | openai-whisper (optional) | LOW | tests/unit/test_multimodal.py | text always ready; image/voice/document lazy-import optional deps |
 | files | VERIFIED | IMPLEMENTED | PASS | none (optional deps via multimodal) | LOW | tests/unit/test_files.py | handler + metadata + provenance + extractor |
 | workflows | VERIFIED | IMPLEMENTED | PASS | none | MEDIUM | tests/unit/test_workflows.py | graph + executor + state + step + registry |
 | jobs | VERIFIED | IMPLEMENTED | PASS | none (stdlib sqlite3 for SQLiteQueue) | MEDIUM | tests/unit/test_jobs.py | manager + queue + sqlite_queue + job + history |
