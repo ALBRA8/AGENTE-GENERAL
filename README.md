@@ -59,7 +59,7 @@ python scripts/clean_room_verify.py     # 17/17 required + 2/2 optional PASS
 python scripts/audit_matrix.py          # 40/40 VERIFIED
 python scripts/parity_check.py          # exit 0, 106/106 DNA
 python scripts/contamination_scan.py    # exit 0, is_clean=True
-python -m pytest tests/ -q              # 474 passed
+python -m pytest tests/ -q              # 732 passed
 ```
 
 Expected last line of clean_room: `CLEAN-ROOM: PASS` (17/17 required + 2/2 optional).
@@ -203,7 +203,7 @@ python scripts/contamination_scan.py
 
 **Test counts** (mirrored from [`docs/CERTIFICATION.md`](docs/CERTIFICATION.md)):
 
-- 337 unit tests (incl. 8 birth/readiness + 11 factual integrity + 10 forget/audit BLOQ-MEM)
+- 368 unit tests (incl. 8 birth/readiness + 11 factual integrity + 10 forget/audit BLOQ-MEM + 31 RBAC security perimeter + 13 decision memory + 15 learning + 9 decision/learning integration + 38 memory sanitizer + 15 cognitive cycle)
 - 81 A2A tests (28 main + 16 wire + 10 routes + 18 external interop + 9 security perimeter BLOQ-A2A-SEC)
 - 13 golden flow tests (end-to-end scenarios)
 - 5 integration tests (multi-subsystem)
@@ -211,7 +211,48 @@ python scripts/contamination_scan.py
 - 5 security tests (secrets, firewall, tamper detection)
 - 17 genetic parity tests (106 DNA entries verified)
 - 12 genetic contamination tests (249 files scanned, 0 critical)
-- **Total: 474 tests passing in ~8s**
+- **Total: 732 tests passing in ~19s**
+
+> The test count grows as the universal security perimeter and the
+> cognitive/memory subsystems are tightened. See
+> [`docs/MASTER_DNA.md`](docs/MASTER_DNA.md) for the contract each test
+> guards, and [`docs/CERTIFICATION.md`](docs/CERTIFICATION.md) for the
+> canonical numbers at any given commit.
+
+---
+
+## ✨ What's New (post-V1.0 hardening)
+
+These additions are backward-compatible specializations of the universal
+DNA — no existing guarantee was relaxed; every test that passed at V1.0
+still passes.
+
+- **Unified security perimeter (RBAC + IdentityResolver)** — `IdentityResolver`
+  resolves `verified_principal` on `RunContext` via the `Authenticator`
+  (never via caller metadata). 31 RBAC tests cover impersonation,
+  fail-closed registry/authenticator/policy/firewall exceptions, and
+  defense-in-depth re-checks at the EXECUTE point. See
+  `tests/security/test_rbac_security.py`.
+- **Cognitive cycle with limits** — `CognitiveLoopConfig`
+  (`max_iterations`, `max_tool_calls`, `max_time_seconds`) bounds every
+  agent run; the first limit hit terminates the loop with a recorded
+  reason. Tool results are treated as DATA, never INSTRUCTIONS. See
+  `tests/unit/test_cognitive_cycle.py` (15 tests).
+- **DecisionMemory + LearningManager integration** — every permissioned
+  decision (allowed + denied) is recorded as a `DecisionRecord`;
+  failing executions produce `LearningProposal`s that start in PROPOSED
+  (HITL gate; never auto-applied). See
+  `tests/unit/test_decision_learning_integration.py` (9 tests).
+- **Sanitizer improvements** — short-code secret keys
+  (`cvv`/`pin`/`ssn`/`card_number`/`credit_card`) redact on ANY match;
+  detection and redaction share one source of truth (`_SECRET_KEY_SUBSTRINGS`
+  == `_INLINE_SECRET_PATTERN`); mixed-alphanumeric heuristic closes the
+  `password=abc123` gap. See `tests/unit/test_memory_sanitizer.py` (38 tests).
+
+For the contract that every ALBRA organism MUST satisfy, see
+[`docs/MASTER_DNA.md`](docs/MASTER_DNA.md). For an ecosystem-wide fit
+assessment against the other known ALBRA repos, see
+[`docs/ECOSYSTEM_CONFORMITY.md`](docs/ECOSYSTEM_CONFORMITY.md).
 
 ---
 
@@ -249,6 +290,8 @@ src/albra_specialization/
 
 ## 📚 Documentation
 
+- **[Master DNA Contract](docs/MASTER_DNA.md)** — the canonical contract every ALBRA organism MUST satisfy (every guarantee testable).
+- **[Ecosystem Conformity Matrix](docs/ECOSYSTEM_CONFORMITY.md)** — fit assessment against the 9 known ALBRA repos.
 - **[Certification Status](docs/CERTIFICATION.md)** — **canonical single source of truth** for all numbers and gate results.
 - [Architecture](docs/ARCHITECTURE.md) — full architecture map
 - [Extending Guide](docs/EXTENDING.md) — how to add tools/skills/providers/plugins
@@ -310,13 +353,18 @@ MIT — see [LICENSE](LICENSE).
 | Universal DNA entries         | **106** (`src/albra_seed/parity/dna.py`)   |
 | A2A helper modules (NOT DNA)| **3** (`a2a.wire` / `a2a.exposition` / `a2a.observers`) |
 | Allowed specializations       | 8                                         |
-| Total tests                   | **474** (337 unit incl. 8 birth + 11 factual + 10 forget audit + 81 a2a incl. 9 sec perimeter + 13 golden + 5 integration + 4 contracts + 5 security + 17 parity + 12 contamination) |
+| Total tests                   | **732** (368 unit incl. 31 RBAC perimeter + 13 decision memory + 15 learning + 9 decision/learning integration + 38 sanitizer + 15 cognitive cycle + 81 a2a incl. 9 sec perimeter + 13 golden + 5 integration + 4 contracts + 5 security + 17 parity + 12 contamination) |
 | A2A tests                    | 81 (28 main + 16 wire + 10 routes + 18 interop + 9 security perimeter) |
 | Clean-room                   | PASS (17/17 required + 2/2 optional; 16 real gates + 1 informational scope-doc R) |
 | Genetic parity               | PASS (`is_pure_seed=True`, 106/106 DNA)   |
 | Genetic contamination         | PASS (`is_clean=True`, 0 critical, 249 files) |
 | A2A security perimeter        | CLOSED for ALL 3 inbound ops (message/send + tasks/get + tasks/cancel) — BLOQ-A2A-SEC |
 | Memory FACT rule              | UNIFIED via `MemoryProvenance.validate_fact()` — BLOQ-MEM |
+| Unified security perimeter    | RBAC + `IdentityResolver` → `verified_principal` (31 RBAC tests) |
+| Cognitive cycle               | `CognitiveLoopConfig` (max_iterations / max_tool_calls / max_time_seconds) |
+| Decision + learning loop      | `DecisionMemory` + `LearningManager` wired into `_phase_record` (HITL-gated proposals) |
+| Master DNA contract           | [`docs/MASTER_DNA.md`](docs/MASTER_DNA.md) — every guarantee testable |
+| Ecosystem conformity matrix   | [`docs/ECOSYSTEM_CONFORMITY.md`](docs/ECOSYSTEM_CONFORMITY.md) — 9 known ALBRA repos |
 | Final status                 | **`READY_TO_FREEZE`**                     |
 
 > Canonical certification record: **[`docs/CERTIFICATION.md`](docs/CERTIFICATION.md)**.
