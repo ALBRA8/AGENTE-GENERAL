@@ -28,6 +28,18 @@ from albra_seed.memory.provenance import MemoryProvenance
 # callable or an async callable; both are supported. None disables auditing.
 AuditSink = Callable[[dict[str, Any]], Union[None, Awaitable[None]]]
 
+# Batch size used by ``MemoryManager.cleanup_working`` when paginating through
+# the store. Both backends cap a single ``query()`` call's result set
+# (InMemory slices ``[:limit]``; SQLite uses ``ORDER BY ... LIMIT ?``), so to
+# delete all matching WORKING records for an execution with more records than
+# the cap, ``cleanup_working`` MUST iterate: query a batch, delete those
+# records, query the next batch, ... until exhaustion. 1000 keeps each query
+# cheap (the InMemory store materialises every matching MemoryRecord before
+# slicing) while bounding the number of round-trips for a typical execution.
+# This is NOT an artificial ceiling — the loop terminates on exhaustion, so
+# an execution with 10_000_000 records is still fully cleaned.
+_CLEANUP_BATCH_SIZE = 1000
+
 
 class MemoryManager:
     """High-level orchestrator over a MemoryStore."""
@@ -237,6 +249,29 @@ class MemoryManager:
         filtering at the store level we ensure all matching records are
         returned regardless of how the store orders them.
 
+        PAGINATION: this method paginates through the store in batches of
+        ``_CLEANUP_BATCH_SIZE`` records. A single execution MAY have more
+        WORKING records than any one ``query()`` call returns — both store
+        backends cap ``query()`` results (InMemory slices ``[:limit]``;
+        SQLite uses ``ORDER BY ... LIMIT ?``). Before this pagination was
+        added, ``cleanup_working`` issued ONE query with ``limit=10000`` and
+        silently left any records beyond that bound orphaned. The pagination
+        loop terminates when:
+
+            * ``store.query()`` returns an empty batch — exhaustion, OR
+            * every record in the batch was already deleted in a prior
+              iteration (``seen_ids`` guards against a store that returns
+              stale rows after deletion — defensive, both current stores
+              physically remove deleted rows so this branch is not hit in
+              practice), OR
+            * ``store.query()`` returns fewer than ``batch_size`` records
+              — the store is signalling exhaustion.
+
+        The ``seen_ids`` set prevents infinite loops in pathological stores
+        that re-yield deleted records, and prevents double-counting /
+        double-deletion if a future store implementation snapshots the
+        result set.
+
         Delegates to ``store.delete()`` which writes a tombstone on SQLite
         (consistent with ``forget()``) — never a physical wipe. Lifecycle
         events are recorded so retrieval (``MemoryRetriever``) and audit
@@ -244,29 +279,51 @@ class MemoryManager:
 
         Returns the number of records deleted.
         """
-        # Use execution_id filter at the store level — no Python post-filtering.
-        # limit is a generous upper bound so we don't silently truncate a
-        # large execution's WORKING set. If a future caller exceeds this
-        # bound, the query simply returns the first 10_000; pagination can
-        # be added at that point. None execution_id → no filter (returns
-        # all matching WORKING records up to limit).
-        records = await self.store.query(
-            agent_id=agent_id,
-            domain=domain,
-            user_id=user_id,
-            context_id=context_id,
-            memory_type=MemoryType.WORKING,
-            execution_id=execution_id,
-            limit=10000,
-        )
         deleted = 0
-        for r in records:
-            ok = await self.store.delete(
-                r.record_id, reason="working_cleanup"
+        batch_size = _CLEANUP_BATCH_SIZE
+        seen_ids: set[str] = set()
+
+        while True:
+            # Query a batch — execution_id filter is applied at the store
+            # level so we never miss the target records regardless of how
+            # the store orders them.
+            records = await self.store.query(
+                agent_id=agent_id,
+                domain=domain,
+                user_id=user_id,
+                context_id=context_id,
+                memory_type=MemoryType.WORKING,
+                execution_id=execution_id,
+                limit=batch_size,
             )
-            if ok:
-                deleted += 1
-                self.lifecycle.record_deleted(r.record_id, reason="working_cleanup")
+            if not records:
+                break
+
+            # Skip records we already processed in a prior iteration — this
+            # guards against stores that re-yield deleted rows (neither
+            # current store does, but the contract here is defensive).
+            new_records = [r for r in records if r.record_id not in seen_ids]
+            if not new_records:
+                # All records in this batch were already deleted — terminate
+                # to avoid an infinite loop.
+                break
+
+            for r in new_records:
+                seen_ids.add(r.record_id)
+                ok = await self.store.delete(
+                    r.record_id, reason="working_cleanup"
+                )
+                if ok:
+                    deleted += 1
+                    self.lifecycle.record_deleted(
+                        r.record_id, reason="working_cleanup"
+                    )
+
+            # If the store returned fewer records than we asked for, it has
+            # signalled exhaustion — no more batches to fetch.
+            if len(records) < batch_size:
+                break
+
         return deleted
 
     async def get(self, record_id: str) -> MemoryRecord | None:

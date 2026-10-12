@@ -48,7 +48,6 @@ from albra_seed.core.base import MemoryRecord
 from albra_seed.core.types import MemoryType, utc_now
 from albra_seed.memory.manager import MemoryManager
 
-
 # --------------------------------------------------------------------- #
 # Config + result models                                               #
 # --------------------------------------------------------------------- #
@@ -63,20 +62,49 @@ class RetrievalConfig(BaseModel):
     and the min-score cutoff excludes near-zero matches.
 
     ``candidate_limit`` bounds the candidate pool pulled from the store
-    before ranking. The retriever calls ``manager.recall(limit=...)``
-    with this value. A bounded-but-generous default (1000) ensures an
-    OLD-but-relevant memory is NOT silently excluded by the candidate
-    window when the store contains >100 records, while still capping the
-    scan cost on very large stores. Callers that need a larger pool
-    (e.g. stores with >1000 records where old relevant memories matter)
-    simply raise this value via the ``RetrievalConfig`` constructor or
-    pass an explicit ``limit=`` to ``retrieve()``.
+    BEFORE ranking. The retriever calls ``manager.recall(limit=...)``
+    with this value; the store applies ``ORDER BY created_at DESC LIMIT ?``
+    (SQLite) or an equivalent sort + slice (InMemory).
+
+    CONTRACT — why a limit exists at all:
+        The store sorts candidates by ``created_at DESC`` and slices to
+        ``limit`` BEFORE the retriever scores them. This is a deliberate
+        trade-off: a fully unbounded scan on a 100k-record store would
+        materialise 100k ``MemoryRecord`` objects per retrieval call,
+        which is wasteful when only the top-K survive ranking. The limit
+        bounds the scan cost; ranking (``top_k`` + ``min_score`` +
+        ``max_context_chars``) is what actually bounds the RESULT size.
+
+    KNOWN LIMITATION:
+        Because the store sorts by ``created_at DESC`` (NOT by score),
+        a ``candidate_limit`` SMALLER than the position of a relevant
+        OLD memory in that sort order will SILENTLY EXCLUDE it before
+        ranking. Concretely: with the historical default of 1000, a
+        store holding 1499 recent irrelevant records + 1 thirty-day-old
+        relevant record (oldest in the store) returned only the 1000
+        newest — the relevant old memory never reached the scorer.
+
+    DEFAULT = 10000:
+        Raised from the historical 1000 to cover most practical working
+        sets while still bounding the per-call materialisation cost.
+        A caller whose store holds >10000 records AND for whom
+        OLD-but-relevant memories matter should raise ``candidate_limit``
+        (via the ``RetrievalConfig`` constructor or an explicit
+        ``limit=`` argument to ``retrieve()``). Conversely, a caller
+        who wants to bound scan cost on a large store can lower it —
+        doing so is a documented opt-in to the limitation above.
+
+    See ``tests/unit/test_retrieval_limit_inconsistency.py`` for the
+    contract tests (1499+1 regression, default-size assertion, and the
+    bounded-scan assertion that confirms a low ``candidate_limit``
+    DOES truncate the candidate pool — i.e. the limit is enforced, not
+    a no-op).
     """
 
     top_k: int = 5
     max_context_chars: int = 2000
     min_score: float = 0.05  # below this, exclude
-    candidate_limit: int = 1000  # candidate pool size before ranking
+    candidate_limit: int = 10000  # candidate pool size before ranking (was 1000)
     recency_half_life_hours: float = 168.0  # 1 week
     type_weights: dict[MemoryType, float] = Field(
         default_factory=lambda: {
@@ -166,10 +194,9 @@ class MemoryRetriever:
         """
         # 1. Pull candidate records through the isolation-aware recall API.
         #    Use the configured ``candidate_limit`` as the default pool size
-        #    (10x the previous hardcoded 100). A caller-supplied ``limit``
-        #    still wins — backwards-compatible. The larger default ensures
-        #    an OLD-but-relevant memory is not excluded from the candidate
-        #    window when the store has >100 records. The ranking step
+        #    (default 10000 — see RetrievalConfig docstring for the contract
+        #    and the known OLD-but-relevant limitation). A caller-supplied
+        #    ``limit`` still wins — backwards-compatible. The ranking step
         #    (top_k + min_score + max_context_chars) is what actually bounds
         #    the result size; this limit only bounds the scan cost.
         try:
