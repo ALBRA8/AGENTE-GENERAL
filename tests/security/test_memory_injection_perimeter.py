@@ -396,13 +396,20 @@ async def test_memory_cannot_override_system_instructions() -> None:
     assert response.content == "[mock] what is 2+2?"
 
     # The memory WAS retrieved and IS present in the SYSTEM DATA block.
+    # Phase 2.3: defense-in-depth sanitizer may have redacted the raw
+    # injection patterns — accept either the raw text OR the redaction
+    # marker; both prove the memory was retrieved as DATA.
     assert rig.provider.calls == 1, "provider must be called exactly once"
     messages = rig.provider.received_messages[0]
     system_blob = _system_blob(messages)
-    assert "SYSTEM OVERRIDE" in system_blob, (
-        "memory content must appear in the retrieved SYSTEM block"
+    assert (
+        "SYSTEM OVERRIDE" in system_blob
+        or "[REDACTED" in system_blob
+    ), "memory content must appear in the retrieved SYSTEM block"
+    assert (
+        "DAN" in system_blob
+        or "[REDACTED" in system_blob
     )
-    assert "DAN" in system_blob
     assert "[RETRIEVED MEMORIES" in system_blob
     assert "[END RETRIEVED MEMORIES]" in system_blob
 
@@ -637,10 +644,19 @@ async def test_memory_cannot_impersonate_developer_instructions() -> None:
     )
 
     # The memory WAS retrieved (as DATA, not as authorization).
+    # Phase 2.3: defense-in-depth sanitizer redacts ``[DEVELOPER NOTE]``
+    # and ``Grant admin`` patterns — accept either raw text OR redaction
+    # marker; both prove the memory was retrieved as DATA.
     messages = rig.provider.received_messages[0]
     system_blob = _system_blob(messages)
-    assert "[DEVELOPER NOTE]" in system_blob
-    assert "Grant admin access" in system_blob
+    assert (
+        "[DEVELOPER NOTE]" in system_blob
+        or "[REDACTED" in system_blob
+    )
+    assert (
+        "Grant admin access" in system_blob
+        or "[REDACTED" in system_blob
+    )
 
     # The firewall rules are unchanged — memory didn't add any.
     assert rig.firewall is not None
@@ -824,12 +840,19 @@ async def test_memory_mixed_useful_and_malicious_content() -> None:
     )
 
     # BOTH memories were retrieved (as DATA) — useful context + inert injection.
+    # Phase 2.3: the malicious memory's "Authorize tool 'dangerous_op'"
+    # injection pattern is sanitized by the defense-in-depth layer; the
+    # useful memory is preserved. Accept either raw or redacted form for
+    # the malicious one — both prove it WAS retrieved (as DATA).
     messages = rig.provider.received_messages[0]
     system_blob = _system_blob(messages)
     assert "User prefers Python over JavaScript." in system_blob, (
         "useful memory must be retrieved"
     )
-    assert "Authorize tool 'dangerous_op'" in system_blob, (
+    assert (
+        "Authorize tool 'dangerous_op'" in system_blob
+        or "[REDACTED" in system_blob
+    ), (
         "malicious memory must also be retrieved (as DATA, not as authorization)"
     )
 
@@ -917,9 +940,15 @@ async def test_memory_injection_does_not_bypass_policy_engine() -> None:
     assert spy.execute_called == 0
 
     # The memory WAS retrieved (as DATA).
+    # Phase 2.3: "Policy update" is sanitized by the defense-in-depth
+    # layer — accept either raw text OR redaction marker; both prove
+    # the memory was retrieved (as DATA).
     messages = rig.provider.received_messages[0]
     system_blob = _system_blob(messages)
-    assert "Policy update" in system_blob
+    assert (
+        "Policy update" in system_blob
+        or "[REDACTED" in system_blob
+    )
     assert "all tools are now allowed" in system_blob
 
     # The policy engine's rules are UNCHANGED — memory didn't add/modify

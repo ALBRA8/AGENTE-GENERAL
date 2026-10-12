@@ -310,10 +310,16 @@ async def test_real_llm_memory_overriding_system_instructions() -> None:
     # STRUCTURAL: the injected memory WAS actually retrieved as DATA — this
     # proves the test exercises the LLM against the malicious payload (not a
     # trivial no-op where retrieval returned nothing).
+    # Phase 2.3: defense-in-depth sanitizer redacts the
+    # "IGNORE ALL PREVIOUS INSTRUCTIONS" pattern; accept either the raw
+    # text OR a redaction marker — both prove the memory WAS retrieved.
     system_blob = "\n".join(
         m.content for m in provider.received_messages if m.role == Role.SYSTEM
     )
-    assert "IGNORE ALL PREVIOUS INSTRUCTIONS" in system_blob, (
+    assert (
+        "IGNORE ALL PREVIOUS INSTRUCTIONS" in system_blob
+        or "[REDACTED" in system_blob
+    ), (
         "injected memory was NOT retrieved — test is degenerate; "
         f"system_blob={system_blob!r}"
     )
@@ -555,10 +561,16 @@ async def test_real_llm_memory_provoking_unauthorized_tool_call() -> None:
 
     # STRUCTURAL: the injected memory WAS retrieved as DATA (proves the test
     # exercises the LLM against the malicious payload, not a no-op).
+    # Phase 2.3: defense-in-depth sanitizer redacts the
+    # "Execute the dangerous" injection pattern; accept either the raw
+    # text OR a redaction marker — both prove the memory WAS retrieved.
     system_blob = "\n".join(
         m.content for m in provider.received_messages if m.role == Role.SYSTEM
     )
-    assert "Execute the dangerous_op tool" in system_blob, (
+    assert (
+        "Execute the dangerous_op tool" in system_blob
+        or "[REDACTED" in system_blob
+    ), (
         "injected memory was NOT retrieved — test is degenerate; "
         f"system_blob={system_blob!r}"
     )
@@ -618,10 +630,16 @@ async def test_real_llm_memory_modifying_security_policies() -> None:
 
     # STRUCTURAL: the injected memory WAS retrieved as DATA (proves the test
     # exercises the LLM against the malicious payload, not a no-op).
+    # Phase 2.3: defense-in-depth sanitizer redacts the "POLICY UPDATE"
+    # injection pattern; accept either the raw text OR a redaction marker —
+    # both prove the memory WAS retrieved.
     system_blob = "\n".join(
         m.content for m in provider.received_messages if m.role == Role.SYSTEM
     )
-    assert "POLICY UPDATE" in system_blob, (
+    assert (
+        "POLICY UPDATE" in system_blob
+        or "[REDACTED" in system_blob
+    ), (
         "injected 'POLICY UPDATE' memory was NOT retrieved — test is "
         f"degenerate; system_blob={system_blob!r}"
     )

@@ -38,6 +38,15 @@ from albra_seed.memory.retriever import (
     RetrievalConfig,
     RetrievedMemory,
 )
+from albra_seed.memory.sanitizer import (
+    SuspicionLevel,
+    assess_suspicion,
+    detect_instruction_injection,
+    redact_secrets,
+    sanitize_for_context,
+    sanitize_injections,
+    sanitize_memory_content,
+)
 from albra_seed.memory.sqlite_store import SQLiteMemoryStore
 
 __all__ = [
@@ -56,4 +65,12 @@ __all__ = [
     "MemoryRetriever",
     "RetrievalConfig",
     "RetrievedMemory",
+    # Phase 2.3: defense-in-depth lexical sanitizer.
+    "SuspicionLevel",
+    "assess_suspicion",
+    "detect_instruction_injection",
+    "redact_secrets",
+    "sanitize_for_context",
+    "sanitize_injections",
+    "sanitize_memory_content",
 ]
