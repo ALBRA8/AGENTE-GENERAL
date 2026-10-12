@@ -36,6 +36,11 @@ from albra_seed.context.correlation import CorrelationTracker
 # against the *key* of any kwarg/field. A key matches if any substring is
 # present. (e.g. `openai_api_key`, `bearer_token`, `user_password`,
 # `refresh_token`, `auth_credential`.)
+#
+# Phase 2.3 audit: kept in sync with ``memory/sanitizer.py`` so the
+# logger and the sanitizer flag the same set of sensitive fields
+# (defense-in-depth). Added: ``ssn``, ``credit_card``, ``card_number``,
+# ``cvv``, ``pin``.
 _SECRET_KEY_SUBSTRINGS: tuple[str, ...] = (
     "password",
     "passwd",
@@ -54,6 +59,11 @@ _SECRET_KEY_SUBSTRINGS: tuple[str, ...] = (
     "jwt",
     "cookie",
     "passphrase",
+    "ssn",
+    "credit_card",
+    "card_number",
+    "cvv",
+    "pin",
 )
 
 # Value patterns that look like secrets (long base64-ish / hex strings).

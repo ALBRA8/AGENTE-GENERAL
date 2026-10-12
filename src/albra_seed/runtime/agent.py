@@ -1251,7 +1251,7 @@ class Agent:
         context_id)`` isolation bucket — using dimensions propagated from
         ``Session`` onto ``RunContext`` by ``Agent.run()``.
 
-        Two records are written per execution:
+        Three records are written per execution:
 
         1. A WORKING memory with a structured ``content`` dict capturing the
            full execution surface (user input, assistant response, tool calls,
@@ -1262,11 +1262,28 @@ class Agent:
            survives WORKING memory cleanup. ``confidence=0.3``,
            ``is_fact=False``.
 
+        3. MEM-LEARN: a DecisionRecord (stored as a DECISION MemoryRecord)
+           when the execution involved a tool decision. The record captures
+           the objective (user input), the decision_taken (allowed vs.
+           denied tools), the per-tool policy verdicts as ``reasoning``,
+           the execution_id, and the evidence_ids from tool results. The
+           record goes into the same MemoryStore as WORKING/EPISODIC —
+           isolation by ``memory_type=DECISION`` keeps it queryable
+           separately via ``DecisionMemory.list_decisions``.
+
+        MEM-LEARN (learning): if the execution had errors or warnings AND a
+        ``learning_manager`` component is registered, a ``LearningProposal``
+        is generated via ``ProposalGenerator.from_execution_trace`` and
+        registered with the manager in PROPOSED status. The proposal is
+        NEVER auto-applied — HITL (``request_review → approve → apply``)
+        is required before any change is marked applied.
+
         CORE_ONLY safety: if no ``MemoryManager`` is registered, fall back to
         the legacy raw-store write (string content) with a warning. This
         preserves the pre-MEM-WRITE behavior for callers that have not yet
         invoked ``birth()`` (e.g. custom test rigs that construct a Runtime
-        directly).
+        directly). Decision / Learning integrations are best-effort and
+        silently skipped if their components are absent.
         """
         run_ctx: RunContext = ctx["context"]
         evidence_collector = self.runtime.get_component(COMPONENT_EVIDENCE_COLLECTOR)
@@ -1414,6 +1431,138 @@ class Agent:
             )
         except Exception as exc:  # noqa: BLE001
             run_ctx.warnings.append(f"memory manager EPISODIC write failed: {exc}")
+
+        # MEM-LEARN: record a DecisionMemory entry when this execution
+        # involved a tool decision (CHECK_PERMISSIONS had at least one
+        # "decisions" entry). The DecisionRecord captures: the objective
+        # (user input), the decision_taken (which tools were allowed/denied),
+        # the reasoning (per-tool policy verdicts), the execution_id, and
+        # the evidence_ids accumulated from tool results.
+        #
+        # CORE_ONLY safe: every step is wrapped in try/except. A failure
+        # to record a decision MUST NOT abort the RECORD phase — the
+        # WORKING + EPISODIC memories above are already persisted.
+        try:
+            check_perms_out = ctx.get("CHECK_PERMISSIONS") or {}
+            decisions = check_perms_out.get("decisions") or []
+            if decisions:
+                from albra_seed.memory.decision_store import DecisionMemory
+                from albra_seed.memory.decisions import DecisionRecord
+
+                allowed_tools = [
+                    d["tool"] for d in decisions if d.get("decision") == "allow"
+                ]
+                denied_tools = [
+                    d["tool"] for d in decisions if d.get("decision") == "deny"
+                ]
+                # Compose a human-readable reasoning trace from per-tool
+                # verdicts. Each line is ``<tool>=<decision>`` optionally
+                # followed by `` (<reason>)`` when the gate left a reason.
+                reasoning = "; ".join(
+                    f"{d['tool']}={d.get('decision')}"
+                    + (f" ({d.get('reason')})" if d.get("reason") else "")
+                    for d in decisions
+                )
+
+                # Evidence: collect from the run context (any evidence
+                # captured by the evidence_collector above) plus any
+                # successful tool result ids.
+                ev_ids: list[str] = list(run_ctx.evidence_ids)
+
+                decision = DecisionRecord(
+                    agent_id=self.identity.agent_id,
+                    objective=ctx.get("RECEIVE", {}).get("content", "") or "",
+                    decision_taken=(
+                        f"allowed={allowed_tools}, denied={denied_tools}"
+                    ),
+                    reasoning=reasoning,
+                    evidence_ids=ev_ids,
+                    execution_id=run_ctx.execution_id,
+                    correlation_id=run_ctx.correlation_id,
+                    confidence=0.5,
+                )
+
+                # Resolve the MemoryStore: prefer an explicitly-registered
+                # "decision_memory" component (a caller may register a
+                # DecisionMemory wrapper), else fall back to the same
+                # default store used by the MemoryManager.
+                dm_component = self.runtime.get_component("decision_memory")
+                if dm_component is not None and isinstance(
+                    dm_component, DecisionMemory
+                ):
+                    await dm_component.record_decision(
+                        decision,
+                        domain=run_ctx.domain,
+                        user_id=run_ctx.user_id,
+                    )
+                else:
+                    store = self.runtime.get_memory_store("default")
+                    if store is not None:
+                        dm = DecisionMemory(store=store)
+                        await dm.record_decision(
+                            decision,
+                            domain=run_ctx.domain,
+                            user_id=run_ctx.user_id,
+                        )
+        except Exception as exc:  # noqa: BLE001
+            # CORE_ONLY safe — decision recording is optional. A failure
+            # here is recorded as a warning so audit/replay can see it
+            # without aborting the RECORD phase.
+            run_ctx.warnings.append(f"decision memory write failed: {exc}")
+
+        # MEM-LEARN: generate a LearningProposal when the execution had
+        # errors or warnings. The proposal is generated via
+        # ``ProposalGenerator.from_execution_trace`` and registered with the
+        # ``LearningManager`` (if configured) in PROPOSED status — NEVER
+        # auto-applied. HITL is required before any change is made.
+        #
+        # CORE_ONLY safe: every step is wrapped in try/except. A failure
+        # here MUST NOT abort the RECORD phase or the subsequent RESPOND.
+        try:
+            if run_ctx.errors or run_ctx.warnings:
+                from albra_seed.execution.trace import ExecutionTrace
+                from albra_seed.learning.manager import LearningManager
+                from albra_seed.learning.proposal import ProposalGenerator
+
+                learning_mgr = self.runtime.get_component("learning_manager")
+                if learning_mgr is not None and isinstance(
+                    learning_mgr, LearningManager
+                ):
+                    feedback_mgr = self.runtime.get_component(
+                        "feedback_manager"
+                    )
+                    # Build a minimal ExecutionTrace from the RunContext so
+                    # the generator has the errors/warnings/evidence it
+                    # needs. We do NOT pass ``trace=None`` — that would
+                    # cause the generator to see no errors and return None.
+                    trace = ExecutionTrace(
+                        execution_id=run_ctx.execution_id,
+                        correlation_id=run_ctx.correlation_id,
+                        agent_id=self.identity.agent_id,
+                        task=run_ctx.task,
+                        errors=list(run_ctx.errors),
+                        warnings=list(run_ctx.warnings),
+                        evidence_ids=list(run_ctx.evidence_ids),
+                    )
+                    generator = ProposalGenerator()
+                    proposal = await generator.from_execution_trace(
+                        agent_id=self.identity.agent_id,
+                        execution_id=run_ctx.execution_id,
+                        trace=trace,
+                        feedback_manager=feedback_mgr,
+                    )
+                    if proposal is not None:
+                        # LearningManager.propose() forces status=PROPOSED
+                        # and clears lifecycle fields — a caller cannot
+                        # smuggle in a pre-approved record. The HITL gate
+                        # (PROPOSED → APPLIED forbidden) is enforced by
+                        # the manager's ``apply()`` method.
+                        await learning_mgr.propose(proposal)
+        except Exception as exc:  # noqa: BLE001
+            # CORE_ONLY safe — learning is optional. A failure here is
+            # recorded as a warning so audit/replay can see it without
+            # aborting the RECORD phase.
+            run_ctx.warnings.append(f"learning proposal failed: {exc}")
 
         return {"recorded": True}
 

@@ -37,7 +37,15 @@ from typing import Any
 # Secret detection (synced with observability/logger.py)
 # =====================================================================
 
-# Key substrings that indicate a secret value.
+# Key substrings that indicate a secret value. Kept in sync with
+# ``observability/logger.py`` so the logger and the sanitizer flag the
+# same set of sensitive fields (defense-in-depth: redact in the
+# sanitizer BEFORE the value reaches the logger).
+#
+# Phase 2.3 audit additions: ``ssn``, ``credit_card``, ``card_number``,
+# ``cvv``, ``pin`` — these are short, high-sensitivity credentials
+# (CVV/PIN are 3-4 chars by spec; SSN is 9 digits; PANs are 13-19 digits).
+# Without them, a memory containing ``cvv=123`` would NOT be flagged.
 _SECRET_KEY_SUBSTRINGS: tuple[str, ...] = (
     "password",
     "passwd",
@@ -56,6 +64,28 @@ _SECRET_KEY_SUBSTRINGS: tuple[str, ...] = (
     "jwt",
     "cookie",
     "passphrase",
+    "ssn",
+    "credit_card",
+    "card_number",
+    "cvv",
+    "pin",
+)
+
+# Keys whose values are SHORT BY SPECIFICATION (CVV=3-4 digits, PIN=4-6
+# digits, SSN=9 digits, PANs=13-19 digits). For these keys, the standard
+# "redact only if value >= 16 chars" threshold would NEVER fire — we'd
+# leak every CVV/PIN/SSN. So when the matched key is one of these, we
+# redact on ANY non-empty match (length >= 1).
+_SHORT_CODE_KEYS: frozenset[str] = frozenset(
+    {
+        "cvv",
+        "pin",
+        "ssn",
+        "card_number",
+        "credit_card",
+        "creditcard",
+        "cardnumber",
+    }
 )
 
 # Value patterns that look like secrets (long base64-ish / hex strings).
@@ -73,9 +103,26 @@ _SECRET_VALUE_PATTERN = re.compile(
 # value let the same pattern cover plain-prose and JSON-serialized dict
 # content (which is what ``sanitize_memory_content`` produces for non-str
 # inputs).
+#
+# Phase 2.3 audit additions: ``ssn``, ``credit_card``, ``card_number``,
+# ``cvv``, ``pin`` — the same set added to ``_SECRET_KEY_SUBSTRINGS``.
+# Keeping the inline pattern in sync with the substring list is the fix
+# for the discrepancy between ``assess_suspicion()`` (which consults the
+# inline pattern) and ``redact_secrets()`` (which uses the same pattern
+# via ``.sub()``). Before this fix, ``assess_suspicion('cvv=123')``
+# returned CLEAN because ``cvv`` was not in the inline pattern — even
+# though the substring list (used by the logger) already considered ``cvv``
+# sensitive. Detection and classification now share one source of truth.
+#
+# Value capture: ``\S+?`` (1+ non-whitespace, non-greedy). We keep the
+# minimum at 1 (not 4 or 8) so short-code keys like ``cvv=123`` (3-char
+# value) and ``pin=12`` (2-char value) still match for DETECTION. The
+# decision to actually REDACT is delegated to ``_replace_inline``, which
+# applies a context-aware threshold (see below).
 _INLINE_SECRET_PATTERN = re.compile(
     r'(?i)["\']?(password|passwd|secret|token|credential|api_?key|access_?key|'
-    r"private_?key|session_?token|refresh_?token|bearer|jwt|passphrase)['\"]?"
+    r"private_?key|session_?token|refresh_?token|bearer|jwt|passphrase|"
+    r"ssn|credit_?card|card_?number|cvv|pin)['\"]?"
     r"\s*[:=]\s*[\"']?(\S+?)[\"']?(?=\s|$|[}\],])"
 )
 
@@ -83,15 +130,89 @@ _REDACTED_SECRET = "[REDACTED: potential secret]"
 
 
 def _looks_like_secret_value(value: str) -> bool:
-    """Check if a string value looks like a secret.
+    """Check if a standalone string value looks like a secret.
 
     Mirrors the logic of ``observability/logger.py:_looks_like_secret_value``
     so that a value considered secret by the logger is also considered
     secret here (defense-in-depth: redact before it even reaches the logger).
+
+    Phase 2.3 audit: the legacy threshold of ``len(value) >= 24`` missed
+    mid-length standalone credentials (e.g. a 16-char API key fragment).
+    We lower the floor to ``>= 16`` so the standalone path catches the same
+    set as the inline path's LONG-SECRET branch. Short standalone values
+    (< 16 chars) are left to the inline-pattern path (``key=value``) which
+    uses a context-aware threshold (see ``_should_redact_inline``).
+
+    Note: this function is for STANDALONE values only — tokens that
+    appear on their own (``sk-...``, ``Bearer ...``, a hex string). It is
+    NOT responsible for inline ``key=value`` patterns; those are handled
+    by ``_INLINE_SECRET_PATTERN`` + ``_should_redact_inline``. Adding an
+    inline-pattern check here would cause the standalone path to redact
+    tokens that the inline path already preserved (e.g. ``password=secret123``
+    when the value ``secret123`` is 9 chars — between the short-code and
+    long-secret thresholds), creating a discrepancy between detection and
+    redaction.
     """
-    if not isinstance(value, str) or len(value) < 24:
+    if not isinstance(value, str) or len(value) < 16:
         return False
     return bool(_SECRET_VALUE_PATTERN.match(value))
+
+
+def _is_short_code_key(key: str) -> bool:
+    """Return True if the matched key is a short-by-spec credential
+    (CVV, PIN, SSN, card number). For these keys we redact on ANY non-
+    empty match — the standard 16-char threshold would never fire.
+    """
+    if not key:
+        return False
+    k = key.lower().replace("_", "").replace("-", "")
+    return k in {
+        "cvv",
+        "pin",
+        "ssn",
+        "cardnumber",
+        "creditcard",
+    }
+
+
+def _looks_like_short_code(value: str) -> bool:
+    """Return True if a value looks like a short alphanumeric code (e.g.
+    ``abc123``, ``xyz789``).
+
+    Heuristic: length 4-8 AND contains at least one letter AND at least
+    one digit. This catches short mixed-alphanumeric credentials (the
+    most common form factor for 2FA codes, short tokens, PINs with
+    letters, ...) while leaving plain words (``secret``) and long
+    sentences alone.
+    """
+    if not isinstance(value, str):
+        return False
+    if not (4 <= len(value) <= 8):
+        return False
+    has_letter = any(c.isalpha() for c in value)
+    has_digit = any(c.isdigit() for c in value)
+    return has_letter and has_digit
+
+
+def _should_redact_inline(key: str, val: str) -> bool:
+    """Decide whether to redact an inline ``key=value`` match.
+
+    Three independent triggers (any one is sufficient):
+
+    1. SHORT-CODE KEY: the key is in ``_SHORT_CODE_KEYS`` (cvv, pin, ssn,
+       card_number, credit_card) — redact on any non-empty match.
+    2. LONG SECRET: value length >= 16 (existing threshold — catches
+       real API keys / tokens / hex strings).
+    3. SHORT CODE: value is a 4-8 char mixed alphanumeric (e.g. ``abc123``)
+       — catches short credentials that don't meet the 16-char bar.
+    """
+    if not val:
+        return False
+    if _is_short_code_key(key):
+        return True
+    if len(val) >= 16:
+        return True
+    return bool(_looks_like_short_code(val))
 
 
 def redact_secrets(content: str) -> str:
@@ -114,11 +235,17 @@ def redact_secrets(content: str) -> str:
     result = content
 
     # Redact inline ``key=value`` / ``key: value`` / ``"key": "value"`` patterns.
+    # Phase 2.3 audit: threshold logic moved to ``_should_redact_inline``
+    # which uses a CONTEXT-AWARE rule — short-code keys (cvv/pin/ssn/...)
+    # are redacted on ANY match (their values are short by spec), while
+    # other keys redact on length >= 16 OR a 4-8 char mixed-alphanumeric
+    # short-code heuristic. This closes the gap where ``password=abc123``
+    # (a real-looking short credential) was preserved by the old ``< 16``
+    # blanket threshold.
     def _replace_inline(match: re.Match[str]) -> str:
         key = match.group(1)
         val = match.group(2)
-        # Don't redact very short values (likely not secrets).
-        if len(val) < 16:
+        if not _should_redact_inline(key, val):
             return match.group(0)
         # Preserve the original separator (``:`` or ``=``).
         full = match.group(0)
