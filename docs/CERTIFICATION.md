@@ -8,7 +8,7 @@
 > out of date until refreshed from this file.
 
 **Last verified:** 2026-10-12
-**Commit:** `089a1dc` — `fix: close 8 clean-room failures — httpx extra + importorskip + tomllib 3.10 + fastapi pin + dynamic counters`
+**Commit:** `8437f2a` — `fix: close 2 security blockers — fail-open perimeter + HTTP execution boundary`
 **Status:** `READY_TO_FREEZE`
 
 ---
@@ -24,7 +24,7 @@ script or by counting actual files. None are invented.
 | A2A helper modules (NOT DNA)| 3   | `a2a.wire`, `a2a.exposition`, `a2a.observers` — see § "A2A Helper Modules" |
 | Allowed specializations      | 8     | `src/albra_seed/parity/dna.py` `ALLOWED_SPECIALIZATIONS`                |
 | Audit matrix probes          | 40    | `scripts/audit_matrix.py` `PROBES` list (33 original + 7 gap closures)  |
-| Total tests                   | 474   | `python -m pytest tests/ --collect-only -q`                             |
+| Total tests                   | 487   | `python -m pytest tests/ --collect-only -q`                             |
 | A2A tests                    | 81    | `python -m pytest tests/a2a/ --collect-only -q` (28 main + 16 wire + 10 routes + 18 external interop + 9 security perimeter) |
 | A2A tests — main             | 28    | `tests/a2a/test_a2a.py`                                                 |
 | A2A tests — wire format      | 16    | `tests/a2a/test_a2a_wire.py`                                             |
@@ -79,18 +79,19 @@ the clean-room script.)
 
 | Gate                       | Result | Evidence                                                                              |
 | -------------------------- | ------ | ------------------------------------------------------------------------------------- |
-| Tests                       | PASS   | `python -m pytest tests/ -q` → **474 passed in ~8s**                                  |
+| Tests                       | PASS   | `python -m pytest tests/ -q` → **487 passed in ~8s**                                  |
 | Audit Matrix               | PASS   | `python scripts/audit_matrix.py` → **40/40 VERIFIED**                                 |
 | Genetic Parity             | PASS   | `python scripts/parity_check.py` → exit 0, `is_pure_seed=True`, 106/106 DNA present   |
 | Genetic Contamination      | PASS   | `python scripts/contamination_scan.py` → exit 0, `is_clean=True`, 0 critical, 0 warnings, 249 files scanned |
 | Clean-room                 | PASS   | `python scripts/clean_room_verify.py` → **17/17 required + 2/2 optional** PASS (16 real PASS/FAIL gates + 1 informational scope-doc check R; see Clean-room scope §) |
-| **CI (GitHub Actions)**     | **PASS** | workflow `.github/workflows/clean-room.yml` on commit `089a1dc` → **3/3 jobs success** (Python 3.10, 3.11, 3.12 on ubuntu-latest); run_id `38169875460` |
+| **CI (GitHub Actions)**     | **PASS** | workflow `.github/workflows/clean-room.yml` on commit `8437f2a` → **3/3 jobs success** (Python 3.10, 3.11, 3.12 on ubuntu-latest); run_id `38197913446` |
 | CORE_ONLY birth            | PASS   | Birth check inside `clean_room_verify.py` (check #3 + #4) + `tests/unit/test_birth_readiness.py` (8 tests) |
 | A2A wire format             | PASS   | `pytest tests/a2a/test_a2a_wire.py` → **16 passed**                                   |
 | A2A routes                  | PASS   | `pytest tests/a2a/test_a2a_routes.py` → **10 passed**                                 |
 | A2A external interop        | PASS   | `pytest tests/a2a/test_external_interop.py` → **18 passed** via `httpx.ASGITransport` |
 | A2A security perimeter      | PASS   | `pytest tests/a2a/test_a2a_security_perimeter.py` → **9 passed** (BLOQ-A2A-SEC; all 3 ops through filter, token plumbing end-to-end) |
 | A2A full suite              | PASS   | `pytest tests/a2a/ -q` → **81 passed in ~2s**                                          |
+| Security fail-open closure  | PASS   | `pytest tests/security/test_security_closure.py` → **13 passed** (BLOQ 1 + BLOQ 2; DEFAULT-DENY enforced, no bypass flags, no token leakage) |
 | Memory FACT rule            | PASS   | `pytest tests/unit/test_memory_factual_integrity.py` → **11 passed** (BLOQ-MEM; unified via `MemoryProvenance.validate_fact`) |
 | Memory forget / audit       | PASS   | `pytest tests/unit/test_memory_forget_audit.py` → **10 passed** (BLOQ-MEM; tombstone by/reason + audit_sink) |
 | pyproject.toml parses       | PASS   | `python -c "import tomllib; tomllib.load(open('pyproject.toml','rb'))"` (8 optional-dependencies: openai/anthropic/groq/vector/api/otel/dev/all) |
@@ -263,7 +264,7 @@ This breaks down as:
 2. Required deps (`pydantic`, `structlog`, `dotenv`) are importable.
 3. `SeedConfig.from_env()` → CORE_ONLY.
 4. `Runtime.startup()` + `readiness() == True`.
-5. `pytest tests/` passes (474 tests).
+5. `pytest tests/` passes (487 tests).
 6. `__seed_version__ == "ALBRA_SEED_V1.0"`.
 7. `Agent.run("hello")` returns `AgentResponse`.
 8. `runtime.health()` returns dict with `status` key.
@@ -358,7 +359,7 @@ python scripts/clean_room_verify.py    # 17/17 required + 2/2 optional PASS
 python scripts/audit_matrix.py         # 40/40 VERIFIED (writes docs/AUDIT_MATRIX.md)
 python scripts/parity_check.py         # exit 0, is_pure_seed=True, 106/106 DNA
 python scripts/contamination_scan.py   # exit 0, is_clean=True, 0 critical
-python -m pytest tests/ -q             # 474 passed
+python -m pytest tests/ -q             # 487 passed
 ```
 
 All gates must PASS. If any gate fails, the seed is NOT ready to freeze;
