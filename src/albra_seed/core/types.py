@@ -294,6 +294,19 @@ class RunContext(BaseModel):
     # circular import (AuthPrincipal lives in ``albra_seed.security.auth``,
     # which itself imports from ``albra_seed.core.types``).
     verified_principal: Any = None  # AuthPrincipal | None
+    # COGNITIVE-CYCLE: budget tracking for the cognitive tool-reasoning
+    # loop. ``cognitive_started_at`` is set when the cognitive inner loop
+    # begins (after RECEIVE/UNDERSTAND, before the first REASON of the
+    # loop). ``cognitive_iterations`` counts the number of completed
+    # REASON→PLAN→CHECK_PERMISSIONS→EXECUTE→OBSERVE cycles.
+    # ``cognitive_tool_calls`` counts the TOTAL number of tool calls
+    # produced by the provider across all iterations (whether or not they
+    # were ultimately executed). Defaults of 0 / None keep existing call
+    # sites working unchanged — a RunContext constructed without the
+    # cognitive loop is unaffected.
+    cognitive_iterations: int = 0
+    cognitive_tool_calls: int = 0
+    cognitive_started_at: datetime | None = None
 
 
 class Evidence(BaseModel):

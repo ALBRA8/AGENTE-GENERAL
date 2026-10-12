@@ -48,6 +48,43 @@ CANONICAL_PHASES: tuple[str, ...] = (
     "RESPOND",
 )
 
+# Phases that participate in the cognitive tool-reasoning loop. These are
+# the phases that repeat each iteration when the agent re-reasons over
+# accumulated tool observations. The pre-loop phases (RECEIVE, UNDERSTAND)
+# run once before the loop, and the post-loop phases (VALIDATE, RECORD,
+# RESPOND) run once after the loop terminates.
+COGNITIVE_INNER_PHASES: tuple[str, ...] = (
+    "REASON",
+    "PLAN",
+    "CHECK_PERMISSIONS",
+    "EXECUTE",
+    "OBSERVE",
+)
+COGNITIVE_PRE_PHASES: tuple[str, ...] = ("RECEIVE", "UNDERSTAND")
+COGNITIVE_POST_PHASES: tuple[str, ...] = ("VALIDATE", "RECORD", "RESPOND")
+
+
+class CognitiveLoopConfig(BaseModel):
+    """Limits for the cognitive tool-reasoning loop.
+
+    Prevents infinite loops, excessive iterations, and runaway costs.
+    The cognitive loop runs REASON → PLAN → CHECK_PERMISSIONS →
+    EXECUTE → OBSERVE repeatedly as long as the provider's draft response
+    contains tool_calls. Each limit is checked at the END of every
+    iteration (after OBSERVE). If any limit is reached, the loop
+    terminates with a ``cognitive_loop_limit_reached`` warning on the
+    RunContext, and the agent proceeds to VALIDATE → RECORD → RESPOND
+    with whatever draft / observations were accumulated so far.
+
+    All limits have safe non-zero defaults so a misconfigured agent
+    never enters an infinite loop.
+    """
+
+    max_iterations: int = 5  # max reason→plan→execute→observe cycles
+    max_tool_calls: int = 20  # max total tool calls per run
+    max_time_seconds: float = 120.0  # wall-clock limit
+    max_context_messages: int = 50  # max messages accumulated in context
+
 
 class PhaseStatus(str, Enum):
     SUCCESS = "success"
@@ -188,4 +225,8 @@ __all__ = [
     "PhaseFn",
     "EventHook",
     "CANONICAL_PHASES",
+    "COGNITIVE_INNER_PHASES",
+    "COGNITIVE_PRE_PHASES",
+    "COGNITIVE_POST_PHASES",
+    "CognitiveLoopConfig",
 ]
