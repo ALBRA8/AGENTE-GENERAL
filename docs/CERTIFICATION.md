@@ -3,7 +3,7 @@
 > **Canonical single source of truth for ALBRA SEED certification state.**
 
 **Last verified:** 2026-10-13
-**Commit:** `f68b67d` (full SHA resolved after publish — see GitHub)
+**Audited candidate SHA:** `c510cebbd530fb6114a80f69092d9367676ebb1a` (commit that contains all Bloqueante 1-4 fixes)
 **Status:** `AUDIT_CANDIDATE` — pending independent audit. NOT READY_TO_FREEZE.
 
 ---
