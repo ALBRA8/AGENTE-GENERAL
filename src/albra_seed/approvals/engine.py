@@ -232,6 +232,7 @@ thread-safety, cross-process coordination, or durable execution resumption.
         return ApprovalResult(
             approval_id=approval_id,
             status=ApprovalStatus.EXPIRED,
+            reason=req.reason or ("deadline_passed" if deadline_passed else ""),
         )
 
     async def escalate(self, approval_id: str) -> ApprovalResult:
