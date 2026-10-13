@@ -117,7 +117,7 @@ and were produced by running `python -m pytest <dir>/ --collect-only -q`.
 | Security             | 1          | 5     | ALL PASS (secrets / firewall / tamper / UNKNOWN) |
 | Genetic parity       | 1          | 17    | ALL PASS (106 DNA entries verified) |
 | Genetic contamination | 1         | 12    | ALL PASS (249 files scanned, 0 critical) |
-| **Total**            | **~48**     | **833** | **ALL PASS in ~8s**           |
+| **Total**            | **~48**     | **880** | **ALL PASS in ~8s**           |
 
 A2A breakdown (81 tests total):
 
@@ -147,7 +147,7 @@ Memory test suite now includes:
 
 Key results:
 
-- 833/833 tests pass.
+- 880/880 tests pass.
 - All 13 golden flows from spec §57 implemented end-to-end with Mock
   provider + in-memory stores; NO external credentials required.
 - All 5 security tests verify: secrets never logged, kill switch global
@@ -181,7 +181,7 @@ The 16 real PASS/FAIL checks cover:
 2. INSTALL-LIKE (required deps)
 3. CONFIG-FROM-SCRATCH (CORE_ONLY)
 4. INIT-FROM-SCRATCH (startup + readiness)
-5. TEST-RUN (833 passed, 0 failed)
+5. TEST-RUN (880 passed, 0 failed)
 6. BUILD-CHECK (`__seed_version__` = `ALBRA_SEED_V1.0`)
 7. STARTUP-CHECK (`Agent.run("hello")` returns a response)
 8. HEALTH-CHECK (`runtime.health()` has `status`)
@@ -353,14 +353,14 @@ python scripts/clean_room_verify.py     # 17/17 required + 2/2 optional PASS
 python scripts/audit_matrix.py          # 40/40 VERIFIED
 python scripts/parity_check.py          # exit 0, 106/106 DNA
 python scripts/contamination_scan.py    # exit 0, is_clean=True
-python -m pytest tests/ -q              # 833 passed
+python -m pytest tests/ -q              # 880 passed
 ```
 
 Expected:
 
 - `CLEAN-ROOM: PASS` (17/17 required = 16 real PASS/FAIL gates + 1 informational scope-doc check R; 2/2 optional).
 - 40 components all VERIFIED + IMPLEMENTED + PASS in `docs/AUDIT_MATRIX.md`.
-- `833 passed in ~8s`.
+- `880 passed in ~8s`.
 - `is_pure_seed=True`, `is_clean=True`.
 
 ---

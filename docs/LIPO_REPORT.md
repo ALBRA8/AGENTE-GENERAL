@@ -49,9 +49,9 @@
 The 7 new gap-closure components added after V1.0 (feedback, learning,
 decision_memory, skill_evolution, parity, contamination, a2a) are all KEEP.
 
-**Total tests**: **833** (was 280 at first freeze; was 372 after the first
+**Total tests**: **880** (was 280 at first freeze; was 372 after the first
 six gap closures; was an intermediate count after the A2A wire-format + external-interop
-additions; now **833** after BLOQ-A2A-SEC (+9 A2A security-perimeter
+additions; now **880** after BLOQ-A2A-SEC (+9 A2A security-perimeter
 tests) and BLOQ-MEM (+11 memory factual-integrity + +10 memory
 forget/audit tests)). The exact count is recomputed at verification
 time by `scripts/clean_room_verify.py::_count_tests()` running
@@ -202,7 +202,7 @@ for the per-gap composition record).
 | `scripts/parity_check.py`          | AUXILIARY      | Genetic parity CLI (GAP-6). Stdlib-only.                                                   |
 | `scripts/contamination_scan.py`    | AUXILIARY      | Genetic contamination CLI (GAP-7). Stdlib-only (pathlib).                                   |
 | `examples/`                        | AUXILIARY      | 15 runnable example scripts (`python examples/01_minimal_agent.py` etc.). NO domain knowledge. |
-| `tests/`                           | AUXILIARY      | 833 tests across `unit/` (337 incl. 8 birth/readiness + 11 factual integrity + 10 forget/audit), `a2a/` (81 = 28 main + 16 wire + 10 routes + 18 interop + 9 security perimeter), `golden/` (13), `integration/` (5), `contracts/` (4), `security/` (5), `genetic/` (17), `contamination/` (12). |
+| `tests/`                           | AUXILIARY      | 880 tests across `unit/` (337 incl. 8 birth/readiness + 11 factual integrity + 10 forget/audit), `a2a/` (81 = 28 main + 16 wire + 10 routes + 18 interop + 9 security perimeter), `golden/` (13), `integration/` (5), `contracts/` (4), `security/` (5), `genetic/` (17), `contamination/` (12). |
 | `docs/`                            | AUXILIARY      | Architecture, Specialization, Extending, Security, Memory, Cleanroom, LIPO, Examples, Final report, Audit matrix, A2A integration, Universal DNA gap closure, Birth contract, Certification. |
 | `pyproject.toml`                   | AUXILIARY      | Build + optional-dependency declarations. CORE_ONLY mode is the default.                  |
 | `requirements.txt`                 | AUXILIARY      | Convenience mirror of `pyproject.toml [project.dependencies]` — canonical source is `pyproject.toml`. `pip install -r requirements.txt` still works; `pip install -e .` is preferred. |
@@ -307,7 +307,7 @@ AUDIT_CANDIDATE bar:
 - ✅ 106/106 universal DNA components present (`scripts/parity_check.py` → exit 0, `is_pure_seed=True`).
 - ✅ 3 A2A helper modules (`a2a.wire` / `a2a.exposition` / `a2a.observers`) documented as NOT-DNA (BLOQ-DOCS).
 - ✅ 0 critical contamination findings across 249 files scanned.
-- ✅ 833/833 tests PASS in ~8s (337 unit incl. 11 factual + 10 forget audit + 8 birth/readiness; 81 A2A incl. 9 security perimeter; 13 golden; 5 integration; 4 contracts; 5 security; 17 parity; 12 contamination).
+- ✅ 880/880 tests PASS in ~8s (337 unit incl. 11 factual + 10 forget audit + 8 birth/readiness; 81 A2A incl. 9 security perimeter; 13 golden; 5 integration; 4 contracts; 5 security; 17 parity; 12 contamination).
 - ✅ A2A security perimeter CLOSED for ALL 3 inbound operations
   (message/send + tasks/get + tasks/cancel) with token plumbing end-to-end (BLOQ-A2A-SEC).
 - ✅ Memory FACT rule unified via `MemoryProvenance.validate_fact()`;

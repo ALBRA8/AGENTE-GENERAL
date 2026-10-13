@@ -345,23 +345,36 @@ def sanitize_injections(content: str) -> str:
 def _detect_secrets(content: str) -> bool:
     """Unified secret detection used by BOTH assess_suspicion() and redact_secrets().
     
-    This ensures that any content redacted by redact_secrets() is ALSO
-    classified as SUSPICIOUS by assess_suspicion(). No divergences.
+    This function mirrors EXACTLY the logic that redact_secrets() uses to
+    decide whether to redact. If redact_secrets() would change any part of
+    the content, _detect_secrets() returns True. No divergence possible.
     
-    Detects:
-    1. Inline key=value patterns (_INLINE_SECRET_PATTERN + _should_redact_inline)
-    2. Standalone secret values (_looks_like_secret_value)
+    Detection logic (must match redact_secrets()):
+    1. Inline key=value patterns — uses _should_redact_inline() (the SAME
+       threshold function used by redact_secrets). A match that
+       _should_redact_inline() says NOT to redact is NOT counted as a secret.
+    2. Standalone secret values — uses _looks_like_secret_value() with the
+       SAME character stripping as redact_secrets().
     """
     if not isinstance(content, str):
         return False
-    # Check inline patterns
-    if _INLINE_SECRET_PATTERN.search(content):
-        return True
-    # Check standalone secret values (split by whitespace, check each token)
+    
+    # 1. Check inline patterns using the SAME threshold as redact_secrets()
+    for match in _INLINE_SECRET_PATTERN.finditer(content):
+        key = match.group(1)
+        val = match.group(2)
+        if _should_redact_inline(key, val):
+            return True
+    
+    # 2. Check standalone secret values — use the SAME stripping as redact_secrets()
+    # redact_secrets() uses: strip_chars = "\"'.,;:!?)[]{}" with token.strip(strip_chars)
+    # We must use EXACTLY the same logic so detection and redaction agree.
+    strip_chars = "\"'.,;:!?)[]{}"
     for token in content.split():
-        stripped = token.rstrip(".,;:!?)\"'}]")
+        stripped = token.strip(strip_chars)
         if _looks_like_secret_value(stripped):
             return True
+    
     return False
 
 
