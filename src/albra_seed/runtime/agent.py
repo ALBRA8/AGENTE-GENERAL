@@ -1274,24 +1274,76 @@ class Agent:
             # Approval engine: HITL.
             if decision == "require_hitl" and approval is not None:
                 approval_result = await approval.request(call, context=run_ctx)
-                if getattr(approval_result, "status", None) != "approved":
-                    decision = "deny"
-                else:
-                    decision = "allow"
-                    run_ctx.approvals.append(
-                        getattr(approval_result, "approval_id", "unknown")
+                approval_id = getattr(approval_result, "approval_id", None)
+                approval_status = getattr(approval_result, "status", None)
+                status_value = (
+                    approval_status.value
+                    if hasattr(approval_status, "value")
+                    else approval_status
+                )
+                # Keep this exact Agent.run invocation suspended at the
+                # permission boundary. Do not deny PENDING or regenerate the
+                # tool call; the in-process event is signalled by a trusted
+                # approval decision route. Deadline expiry fails closed.
+                if status_value == "pending" and approval_id:
+                    approval_result = await approval.wait_for_decision(approval_id)
+                    approval_status = getattr(approval_result, "status", None)
+                    status_value = (
+                        approval_status.value
+                        if hasattr(approval_status, "value")
+                        else approval_status
                     )
-                    # H-01: the approval engine UPGRADED the verdict from
-                    # ``require_hitl`` (allowed=False) to ``allow``
-                    # (allowed=True). The original ``authorization``
-                    # verdict object (a PolicyVerdict with
-                    # decision=require_hitl) still carries ``allowed=False``
-                    # — handing it to ToolExecutor would cause the executor
-                    # to refuse the call (H-02 gate). We construct a
-                    # synthetic allow verdict that captures the upgrade so
-                    # the executor's gate passes. The approval_id is
-                    # already recorded on ``run_ctx.approvals`` above for
-                    # auditability.
+                if status_value != "approved":
+                    decision = "deny"
+                    run_ctx.warnings.append(
+                        f"tool call not dispatched: HITL status={status_value}"
+                    )
+                else:
+                    # Approval is not a permanent authorization. Re-check
+                    # live policy and firewall/kill-switch immediately before
+                    # allowing dispatch. A deny, unavailable gate, or
+                    # exception overrides the human approval.
+                    revalidation_ok = True
+                    if policy is not None and hasattr(policy, "evaluate"):
+                        try:
+                            refreshed = await policy.evaluate(
+                                call,
+                                context=run_ctx,
+                                actor_roles=actor_roles,
+                                actor_id=actor_id,
+                            )
+                            refreshed_decision = getattr(refreshed, "decision", None)
+                            refreshed_value = (
+                                refreshed_decision.value
+                                if hasattr(refreshed_decision, "value")
+                                else refreshed_decision
+                            )
+                            revalidation_ok = refreshed_value in {
+                                "allow", "require_hitl"
+                            }
+                            if not revalidation_ok:
+                                run_ctx.warnings.append(
+                                    f"tool call denied after HITL policy revalidation: {call.tool_name}"
+                                )
+                        except Exception:  # noqa: BLE001
+                            revalidation_ok = False
+                    if firewall is not None:
+                        try:
+                            refreshed_firewall = await firewall.check(
+                                call, context=run_ctx
+                            )
+                            if not getattr(refreshed_firewall, "allowed", False):
+                                revalidation_ok = False
+                                run_ctx.warnings.append(
+                                    f"tool call denied after HITL firewall revalidation: {call.tool_name}"
+                                )
+                        except Exception:  # noqa: BLE001
+                            revalidation_ok = False
+                    if not revalidation_ok:
+                        decision = "deny"
+                    else:
+                        decision = "allow"
+                        run_ctx.approvals.append(approval_id or "unknown")
                     try:
                         from albra_seed.policy.engine import PolicyVerdict
                         from albra_seed.core.types import PolicyDecision
