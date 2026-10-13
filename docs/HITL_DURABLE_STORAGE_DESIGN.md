@@ -1,6 +1,6 @@
 # Durable HITL storage and cross-worker resume design
 
-Status: SQLite storage primitives, ApprovalEngine integration for durable approval decisions/polling/claims, API storage-scope reporting, and regression tests are implemented on the draft branch. Full Agent.run recovery after the originating process dies is NOT implemented: the suspended coroutine and live authorization context are not serialized, and must not be reconstructed from an approval row alone.
+Status: SQLite storage primitives, ApprovalEngine integration for durable approval decisions/polling/claims, API storage-scope reporting, and regression tests are implemented on the draft branch. CI passed for commit `3c7b3035`: HITL Regression (933 passed, 14 skipped) and Clean-Room Verification on Python 3.10, 3.11, and 3.12. Full Agent.run recovery after the originating process dies is NOT implemented: the suspended coroutine and live authorization context are not serialized, and must not be reconstructed from an approval row alone.
 
 ## Goals and non-goals
 
@@ -118,7 +118,7 @@ Each decision request still requires a verified non-anonymous principal, an expl
 2. Implement SQLite schema/migrations and transactional CAS tests.
 3. [Implemented, partial recovery only] Wire configurable SQLite storage into ApprovalEngine; expose cross-worker decisions, polling, atomic claims, and API storage scope.
 4. [Implemented primitives] Add pending-record recovery/polling and one-shot worker claims; never reclaim ambiguous dispatch claims automatically.
-5. [In progress] Add crash/fault-injection integration tests and rerun the complete Python 3.10–3.12 matrix.
+5. [Tests passed for current coordinator boundary] Crash-window/no-reclaim, independent OS-process claims, and the complete Python 3.10–3.12 Clean-Room matrix pass; end-to-end Agent.run restart/fault-injection tests remain outstanding.
 6. [Partial] Expose configured backend scope; end-to-end process restart recovery and operator reconciliation API remain outstanding.
 
 Related: issue #5; draft PR #3 contains the current process-local lifecycle.
