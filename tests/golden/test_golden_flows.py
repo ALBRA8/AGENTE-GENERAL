@@ -31,6 +31,7 @@ from typing import Any
 
 import pytest
 
+from albra_seed.approvals import ApprovalEngine
 from albra_seed.approvals.engine import ApprovalResult
 from albra_seed.core.base import LLMProvider, MemoryRecord
 from albra_seed.core.identity import AgentIdentity
@@ -81,15 +82,11 @@ from albra_seed.workflows.step import RetryPolicy, WorkflowStep, WorkflowStepTyp
 # =====================================================================
 
 
-class _AutoApprovalEngine:
-    """Stub approval engine that auto-approves every request immediately.
-
-    The real ApprovalEngine creates PENDING requests; this stub demonstrates
-    the "approval granted" branch of the HITL golden flow without
-    introducing real-world approver latency.
-    """
+class _AutoApprovalEngine(ApprovalEngine):
+    """Real in-memory approval engine with an immediate test-only approver."""
 
     def __init__(self) -> None:
+        super().__init__()
         self.requests: list[Any] = []
 
     async def request(
@@ -100,11 +97,15 @@ class _AutoApprovalEngine:
         **kwargs: Any,
     ) -> ApprovalResult:
         self.requests.append((action, context))
-        return ApprovalResult(
-            approval_id=new_id("appr"),
-            status=ApprovalStatus.APPROVED,
-            decided_by="auto-approver",
+        pending = await super().request(
+            action,
+            context=context,
+            deadline=deadline,
+            actor=kwargs.get("actor"),
+            scope=kwargs.get("scope", "single"),
+            evidence_ids=kwargs.get("evidence_ids"),
         )
+        return await super().approve(pending.approval_id, approver="auto-approver")
 
 
 class _ProviderCallingTool(LLMProvider):
@@ -288,8 +289,28 @@ async def test_golden_tool_requires_approval() -> None:
     approval = _AutoApprovalEngine()
     runtime.register("approval_engine", approval)
 
+    from albra_seed.security.auth import AuthPrincipal, Authenticator
+
+    class _GoldenAuthenticator(Authenticator):
+        name = "golden-hitl"
+
+        async def authenticate(self, credentials: Any) -> AuthPrincipal:
+            return AuthPrincipal(
+                kind="user", identity="golden-requester", roles=["user"],
+                auth_method=self.name, is_anonymous=False,
+            )
+
+        async def verify(self, token: str | None) -> AuthPrincipal | None:
+            if token != "golden-token":
+                return None
+            return AuthPrincipal(
+                kind="user", identity="golden-requester", roles=["user"],
+                auth_method=self.name, is_anonymous=False,
+            )
+
+    runtime.register("authenticator", _GoldenAuthenticator())
     agent = Agent(_identity(autonomy=AutonomyLevel.L1_RECOMMEND), runtime)
-    response = await agent.run("run dangerous op")
+    response = await agent.run("run dangerous op", token="golden-token")
 
     # The auto-approver was consulted.
     assert len(approval.requests) == 1
