@@ -22,6 +22,12 @@ the request is already approved and the action name, call ID, argument digest,
 and execution context all match. Canonical key ordering is accepted; changed
 argument values or a different execution are rejected.
 
+The engine also exposes `claim_approved_tool_call()`, a synchronous
+check-and-set that permits a bound approved call to be claimed only once per
+execution within one process/event loop. It rejects pending, mismatched, and
+past-deadline requests. This is process-local at-most-once protection only;
+it does not survive restarts or coordinate multiple workers.
+
 This helper is defense in depth for a future coordinator, not a dispatch
 authorization by itself. The caller must still re-check current policy and
 principal authorization. The approval engine remains in-memory, and the
