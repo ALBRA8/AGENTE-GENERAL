@@ -1,6 +1,6 @@
 # Durable HITL storage and cross-worker resume design
 
-Status: proposal for issue #5. The existing process-local lifecycle remains the current supported implementation; this document does not claim durable recovery is implemented.
+Status: SQLite storage primitives and regression tests are now implemented on the draft branch. The existing ApprovalEngine/Agent.run lifecycle is still process-local and is not yet wired to this backend; therefore end-to-end execution recovery after a process restart is NOT complete and must not be advertised as supported.
 
 ## Goals and non-goals
 
@@ -12,6 +12,30 @@ Goals:
 
 Non-goals:
 - Claim universal exactly-once execution for arbitrary external tools. A process can crash after an external side effect succeeds but before its result is durably recorded. Exactly-once effects require tool-side idempotency or a transactional downstream system.
+
+## Implemented in the current branch
+
+`src/albra_seed/approvals/sqlite_store.py` adds a file-backed
+`SQLiteSuspendedExecutionCoordinator` with durable bound approval records,
+transactional terminal decisions, atomic one-shot resume claims, restart reads,
+pending-record enumeration, polling for decisions made by another worker, and
+a one-time dispatch-outcome audit record. It stores the canonical arguments
+digest rather than raw tool arguments or credentials. SQLite storage errors
+fail closed; a claim is never automatically reclaimed.
+
+The new tests in `tests/security/test_hitl_sqlite_store.py` cover coordinator
+restart, independent-worker decision/claim races, deadline expiry, corrupt
+storage, binding/authorization rejection, polling, and an ambiguous dispatch
+crash window.
+
+**Remaining integration boundary:** `ApprovalEngine` still owns in-memory
+`ApprovalRequest` objects and asyncio decision events, and `Agent.run()` still
+holds the suspended coroutine in process memory. This new SQLite coordinator
+is an explicit API and is not silently substituted into that lifecycle. A
+restart can recover the durable coordinator record, but cannot yet reconstruct
+the complete original cognitive-loop state and resume the real agent execution.
+That integration and its end-to-end restart tests remain required before issue
+#5 or production-grade durable HITL can be marked complete.
 
 ## Storage boundary
 
