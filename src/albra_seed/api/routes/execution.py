@@ -214,6 +214,7 @@ def build_public_execution_router(ctx: RequestContext) -> Any:
         if engine is None or not hasattr(engine, "list_pending"):
             raise HTTPException(status_code=503, detail="approval engine is not configured")
         return {
+            "storage_scope": "process-local",
             "approvals": [
                 {
                     "approval_id": item.approval_id,
@@ -221,7 +222,7 @@ def build_public_execution_router(ctx: RequestContext) -> Any:
                     "deadline": item.deadline.isoformat() if item.deadline else None,
                     "execution_id": (item.context_ref or {}).get("execution_id"),
                     "correlation_id": (item.context_ref or {}).get("correlation_id"),
-                    "status": getattr(item.status, "value", item.status),
+                    "status": "awaiting_approval",
                 }
                 for item in engine.list_pending()
             ]
