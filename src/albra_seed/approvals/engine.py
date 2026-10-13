@@ -110,16 +110,7 @@ thread-safety, cross-process coordination, or durable execution resumption.
         # canonical digest of its arguments. A future resume coordinator can
         # compare this trusted binding before dispatch; the digest is not an
         # authorization token and does not replace policy revalidation.
-        canonical_arguments = json.dumps(
-            arguments,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=False,
-            allow_nan=False,
-        )
-        arguments_sha256 = hashlib.sha256(
-            canonical_arguments.encode("utf-8")
-        ).hexdigest()
+        arguments_sha256 = self._arguments_digest(arguments)
         req = ApprovalRequest(
             action=action_name,
             actor=actor or (
@@ -407,6 +398,51 @@ thread-safety, cross-process coordination, or durable execution resumption.
         event = self._decision_events.get(approval_id)
         if event is not None:
             event.set()
+
+    @staticmethod
+    def _arguments_digest(arguments: dict[str, Any]) -> str:
+        """Return a stable digest for JSON-compatible tool arguments."""
+        canonical_arguments = json.dumps(
+            arguments,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+        return hashlib.sha256(canonical_arguments.encode("utf-8")).hexdigest()
+
+    def matches_approved_tool_call(
+        self,
+        approval_id: str,
+        action: ToolCall,
+        context: RunContext | None = None,
+    ) -> bool:
+        """Fail closed unless this exact tool call has an approved binding.
+
+        This is a binding check only. Callers must still revalidate current
+        policy and principal authorization immediately before dispatch.
+        """
+        req = self._requests.get(approval_id)
+        if req is None or req.status != ApprovalStatus.APPROVED:
+            return False
+        binding = req.context_ref or {}
+        try:
+            digest = self._arguments_digest(action.arguments)
+        except (TypeError, ValueError):
+            return False
+        return bool(
+            req.action == action.tool_name
+            and binding.get("tool_call_id") == action.id
+            and binding.get("arguments_sha256") == digest
+            and binding.get("execution_id") == (
+                context.execution_id if context else None
+            )
+            and binding.get("correlation_id") == (
+                context.correlation_id if context else None
+            )
+            and binding.get("agent_id") == (context.agent_id if context else None)
+            and binding.get("session_id") == (context.session_id if context else None)
+        )
 
     def get(self, approval_id: str) -> ApprovalRequest | None:
         return self._requests.get(approval_id)
