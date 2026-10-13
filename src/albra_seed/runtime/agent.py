@@ -1443,7 +1443,7 @@ class Agent:
         # iterations. In the legacy linear-loop path it is absent — we
         # fall back to an empty set, which means "no calls have been
         # executed yet" (the historical behavior).
-        executed_call_ids: set[str] = ctx.get("executed_call_ids") or set()
+        executed_call_ids: set[tuple[str, str]] = ctx.get("executed_call_ids") or set()
 
         # Re-fetch the firewall (which owns the kill switch + cooldown) so
         # we can re-check at the execution point. If the firewall was
