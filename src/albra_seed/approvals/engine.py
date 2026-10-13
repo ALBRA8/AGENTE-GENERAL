@@ -247,6 +247,7 @@ class ApprovalEngine:
             # Auto-expire when cap hit.
             req.mark_expired()
             self._record_evidence(req)
+            self._signal_decision(approval_id)
             log.warning(
                 "approvals.escalation_cap_exceeded",
                 approval_id=approval_id,
@@ -367,6 +368,7 @@ class ApprovalEngine:
             approval_id=approval_id,
             status=current.status,
             decided_by=current.decided_by,
+            reason=current.reason,
         )
 
     def _signal_decision(self, approval_id: str) -> None:
