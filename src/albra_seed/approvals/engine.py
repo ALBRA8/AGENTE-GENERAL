@@ -340,7 +340,7 @@ class ApprovalEngine:
                 approval_id=approval_id,
                 status=req.status,
                 decided_by=req.decided_by,
-                reason="already_terminal",
+                reason=req.reason or "already_terminal",
             )
 
         event = self._decision_events.setdefault(approval_id, asyncio.Event())
