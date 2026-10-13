@@ -1,5 +1,6 @@
-"""Regression tests for approval decisions arriving after their deadline."""
+"""Regression tests for approval deadlines and decision waiters."""
 
+import asyncio
 from datetime import timedelta
 
 import pytest
@@ -34,5 +35,39 @@ async def test_late_rejection_expires_instead_of_mutating_request() -> None:
 
     assert result.status == ApprovalStatus.EXPIRED
     assert result.reason == "deadline_passed"
+    assert engine.get(pending.approval_id).status == ApprovalStatus.EXPIRED
+    assert engine.verify_evidence_chain()
+
+
+
+@pytest.mark.asyncio
+async def test_wait_for_decision_wakes_after_approval() -> None:
+    engine = ApprovalEngine()
+    pending = await engine.request(
+        "tool.external.http",
+        deadline=utc_now() + timedelta(seconds=2),
+    )
+    waiter = asyncio.create_task(engine.wait_for_decision(pending.approval_id))
+    await asyncio.sleep(0)
+
+    decided = await engine.approve(pending.approval_id, approver="human:test")
+    observed = await asyncio.wait_for(waiter, timeout=1)
+
+    assert decided.status == ApprovalStatus.APPROVED
+    assert observed.status == ApprovalStatus.APPROVED
+    assert observed.decided_by == "human:test"
+
+
+@pytest.mark.asyncio
+async def test_wait_for_decision_expires_at_deadline() -> None:
+    engine = ApprovalEngine()
+    pending = await engine.request(
+        "tool.external.http",
+        deadline=utc_now() + timedelta(milliseconds=20),
+    )
+
+    observed = await engine.wait_for_decision(pending.approval_id)
+
+    assert observed.status == ApprovalStatus.EXPIRED
     assert engine.get(pending.approval_id).status == ApprovalStatus.EXPIRED
     assert engine.verify_evidence_chain()
