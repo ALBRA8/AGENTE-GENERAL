@@ -160,7 +160,7 @@ class SQLiteSuspendedExecutionCoordinator:
 
     def get(self, approval_id: str) -> SuspendedExecution | None:
         try:
-            with self._connect() as connection:
+            with self._connection() as connection:
                 row = connection.execute(
                     "SELECT * FROM hitl_suspended_executions WHERE approval_id = ?",
                     (approval_id,),
@@ -200,7 +200,7 @@ class SQLiteSuspendedExecutionCoordinator:
             deadline=deadline.astimezone(timezone.utc),
         )
         try:
-            with self._connect() as connection:
+            with self._connection() as connection:
                 connection.execute("BEGIN IMMEDIATE")
                 try:
                     connection.execute(
@@ -250,7 +250,7 @@ class SQLiteSuspendedExecutionCoordinator:
             else SuspendedExecutionState.REJECTED
         )
         try:
-            with self._connect() as connection:
+            with self._connection() as connection:
                 connection.execute("BEGIN IMMEDIATE")
                 try:
                     record = self._from_row(connection.execute(
@@ -435,7 +435,7 @@ class SQLiteSuspendedExecutionCoordinator:
     ) -> SuspendedExecution:
         current = self._now(now)
         try:
-            with self._connect() as connection:
+            with self._connection() as connection:
                 connection.execute("BEGIN IMMEDIATE")
                 try:
                     record = self._from_row(connection.execute(
