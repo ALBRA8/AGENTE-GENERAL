@@ -2,33 +2,33 @@
 
 > **Canonical single source of truth for ALBRA SEED certification state.**
 
-**Last verified:** 2026-10-14
+**Last verified:** 2026-10-13 (UTC)
 **Status:** `AUDIT_CANDIDATE` — pending independent audit. NOT `READY_TO_FREEZE`.
 
 ---
 
 ## SHA registry (auditor's reference)
 
-This section records every SHA relevant to the certification. The
-auditor can verify each one directly in GitHub via `git ls-remote`
-or the GitHub UI.
+Every SHA below is verifiable in GitHub via `git ls-remote origin` or
+the GitHub UI. The auditor should treat the **Audited code candidate**
+as the SHA to review against `main`.
 
 | SHA role | Full SHA | Branch | Notes |
 |---|---|---|---|
-| **Audited code candidate** | `16441eb` (full SHA resolved after publish) | `feat/albra-universal-core` | Commit that contains all code + test fixes (M-01/M-02/M-03 + Bloqueantes 1-3). This is the SHA the auditor should review against `main`. |
-| **PR HEAD** | (resolved after publish) | `feat/albra-universal-core` | The tip of the PR #2 branch — includes this doc commit on top of the audited code candidate. |
-| **CI run SHA** | matches PR HEAD | `feat/albra-universal-core` | GitHub Actions runs on the PR HEAD; CI verdict applies to the same SHA. |
+| **Audited code candidate** | `2e2c64f68c49790e01d4755b6c4986a8820029e4` | `feat/albra-universal-core` | Commit that contains all code + test fixes through Tareas 1-2 (M-01/M-02/M-03 + Bloqueantes 1-3 + B-SEC-AUTONOMY + REQUIRE_HITL semantics + execution boundary). This is the SHA the auditor reviews against `main`. |
+| **PR HEAD** | (resolved after publish — see GitHub) | `feat/albra-universal-core` | The tip of PR #2 — includes any doc-only commit on top of the audited candidate. |
+| **CI run SHA** | matches PR HEAD | `feat/albra-universal-core` | GitHub Actions runs on the PR HEAD; CI verdict applies to that SHA. |
 | `main` (base) | `43563c81c7a77bb9a762921037fd7f91414cb212` | `main` | Untouched baseline. |
 | PR #1 candidate | `f0ca9e3d24fd84c0a0a9e5579816545cea983a7e` | `fix/memory-hardening-phase-2` | Sub-PR whose hardening commits were cherry-picked into PR #2 (Bloqueante 1). |
 
-> **Note on the "SHA document refers to itself" problem:** a doc
-> commit that records its own SHA does not exist yet at the time the
-> doc is written. The convention used here: the **audited code
-> candidate** SHA is `16441eb` (a code+test commit, not a doc commit).
-> Any doc commit ON TOP of `16441eb` that records `16441eb` as the
-> audited candidate is correct — the auditor should verify `16441eb`
-> directly in GitHub and review the diff between `43563c8` (main)
-> and `16441eb`.
+> **Note on the "SHA document refers to itself" problem:** a doc commit
+> that records its own SHA does not exist yet at the time the doc is
+> written. The convention used here: the **audited code candidate** is
+> `2e2c64f68c49790e01d4755b6c4986a8820029e4` (a code+test commit, not
+> a doc commit). Any doc commit ON TOP of `2e2c64f` that records
+> `2e2c64f` as the audited candidate is correct. The auditor should
+> verify `2e2c64f` directly in GitHub and review the diff between
+> `43563c8` (main) and `2e2c64f` (audited candidate).
 
 ---
 
@@ -38,19 +38,19 @@ or the GitHub UI.
 |---|---|---|
 | Universal DNA components | 106 | `src/albra_seed/parity/dna.py` |
 | Audit matrix probes | 40 | `scripts/audit_matrix.py` |
-| Total tests (local, with z-ai CLI) | 934 | `pytest --collect-only -q` |
-| Total tests (CI, without z-ai CLI) | 929 passed + 1 skipped | GitHub Actions |
+| Total tests (local, with z-ai CLI) | 962 | `pytest --collect-only -q` |
+| Total tests (CI, without z-ai CLI) | 957 passed + 1 skipped | GitHub Actions |
 | A2A tests | 72 | `tests/a2a/` |
 | Golden flows | 13 | `tests/golden/` |
-| Security tests | ~142 | `tests/security/` (includes 11 M-01/M-02, 3 B2, 14 B3) |
+| Security tests | ~157 | `tests/security/` (incl. 11 M-01/M-02, 3 B2, 14 B3, 13 B-SEC-AUTONOMY, 7 REQUIRE_HITL semantics, 8 REQUIRE_HITL execution boundary) |
 | Cognitive cycle tests | 31 | `tests/unit/test_cognitive_*.py` |
 
 ## Gate Results
 
 | Gate | Result | Evidence |
 |---|---|---|
-| Tests (local) | PASS | 934 passed, 1 warning (asyncio ResourceWarning) |
-| Tests (CI) | PASS | 929 passed + 1 skipped (z-ai module), 3/3 jobs success |
+| Tests (local) | PASS | 962 passed, 1 warning (asyncio ResourceWarning) |
+| Tests (CI) | PASS | 957 passed + 1 skipped (z-ai module), 3/3 jobs success |
 | Audit Matrix | PASS | 40/40 VERIFIED |
 | Genetic Parity | PASS | exit 0, 106/106 DNA, is_pure_seed=True |
 | Genetic Contamination | PASS | exit 0, is_clean=True |
@@ -68,9 +68,9 @@ CI runs on every push to `feat/albra-universal-core` via PR #2 trigger.
 
 ## Test count reconciliation
 
-- **Local (with z-ai CLI):** 934 passed + 1 warning (asyncio ResourceWarning, not our code)
-- **CI (without z-ai CLI):** 929 passed + 1 skipped (`tests/llm_real/` module-level skip)
-- **Formula:** 934 local − 5 `tests/llm_real/` tests = 929 passed + 1 module-level skip
+- **Local (with z-ai CLI):** 962 passed + 1 warning (asyncio ResourceWarning, not our code)
+- **CI (without z-ai CLI):** 957 passed + 1 skipped (`tests/llm_real/` module-level skip)
+- **Formula:** 962 local − 5 `tests/llm_real/` tests = 957 passed + 1 module-level skip
 
 ## Limitations and known gaps
 
@@ -120,6 +120,17 @@ CI runs on every push to `feat/albra-universal-core` via PR #2 trigger.
    redactor. If the auditor requires per-field ACLs, that is a
    separate finding.
 
+9. **REQUIRE_HITL can be upgraded by HITL — by design.** A human
+   approval CAN convert a REQUIRE_HITL verdict (autonomy_insufficient)
+   to ALLOW. This is the standard HITL semantics. The engine returns
+   DENY (not REQUIRE_HITL) for absolute restrictions: a DENY rule, a
+   missing permission, or an unverifiable autonomy level (manager
+   raised). The current `PolicyRule` model has no
+   `absolute_restriction` field — DENY rules are the mechanism for
+   "never executable regardless of HITL". See
+   `tests/security/test_require_hitl_semantics.py` for the full
+   semantics documentation.
+
 ## Status
 
 `AUDIT_CANDIDATE` — CI green on the audited candidate. Ready for
@@ -128,12 +139,12 @@ independent audit. NOT approved. NOT frozen.
 The candidate is NOT `READY_TO_FREEZE` — it is `AUDIT_CANDIDATE`
 pending independent audit approval.
 
-## Integration history (2026-10-13 / 2026-10-14)
+## Integration history
 
 This branch integrates the following fixes via cherry-pick and direct
 commits, resolving all blockers identified by the independent audit:
 
-- **H-18** (doc-only): `docs/CERTIFICATION.md` SHA reconciliation.
+- **H-18** (doc-only): SHA reconciliation in this document.
 - **Bloqueante 1** (M-01/M-02/M-03): Memory hardening — `Role.TOOL`
   for untrusted retrieved content, response redaction, restored
   assertions. Cherry-picked from `fix/memory-hardening-phase-2`.
@@ -147,3 +158,17 @@ commits, resolving all blockers identified by the independent audit:
 - **Bloqueante 4**: This document reconciled with audited SHA, counts,
   and limitations.
 - **Bloqueante 5**: CI green on Python 3.10, 3.11, 3.12.
+- **B-SEC-AUTONOMY** (fail-closed authorization): `PolicyEngine.evaluate()`
+  now defaults `autonomy_ok = False` (fail-closed). Missing
+  `autonomy_manager` → inline comparison (check is NEVER skipped).
+  Manager exception → DENY (not REQUIRE_HITL — cannot escalate
+  unverifiable gate). 13 new tests (5 reproducing the bug + 8 edge
+  cases).
+- **Tarea 1** (REQUIRE_HITL semantics): 7 tests covering valid
+  approval, rejection, expiration, engine error, action binding,
+  absolute restriction (DENY rule), and permission-priority over HITL.
+- **Tarea 2** (execution boundary): 8 integration tests with a spy
+  tool that counts actual `execute()` invocations. Verifies DENY and
+  REQUIRE_HITL verdicts do NOT execute the tool without a valid
+  AuthorizationToken. Covers token binding, expiry, revocation, and
+  forged principal.
