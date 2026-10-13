@@ -42,7 +42,7 @@ def _runtime_has_security_perimeter(runtime: Any) -> bool:
 
 def build_public_execution_router(ctx: RequestContext) -> Any:
     """Return a FastAPI APIRouter for the public execution endpoints."""
-    from fastapi import APIRouter, HTTPException  # lazy
+    from fastapi import APIRouter, Header, HTTPException  # lazy
 
     router = APIRouter(tags=["execution"])
 
@@ -55,7 +55,18 @@ def build_public_execution_router(ctx: RequestContext) -> Any:
             503: {"model": ErrorResponse},
         },
     )
-    async def execute(req: ExecutionRequest) -> Any:
+    async def execute(
+        req: ExecutionRequest,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> Any:
+        # Forward bearer credentials to Agent.run(), where the Runtime's
+        # Authenticator verifies them. Never treat the raw header as identity.
+        token: str | None = None
+        if authorization is not None:
+            scheme, separator, credential = authorization.partition(" ")
+            if not separator or scheme.lower() != "bearer" or not credential.strip():
+                raise HTTPException(status_code=401, detail="invalid authorization header")
+            token = credential.strip()
         agent = ctx.get_agent(req.agent_id)
         if agent is None:
             raise HTTPException(
@@ -78,6 +89,7 @@ def build_public_execution_router(ctx: RequestContext) -> Any:
             response = await agent.run(
                 req.input,
                 timeout_seconds=req.timeout_seconds,
+                token=token,
             )
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(
