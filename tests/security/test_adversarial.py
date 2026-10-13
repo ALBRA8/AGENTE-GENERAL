@@ -62,6 +62,7 @@ from albra_seed.security.auth import (
     AuthPrincipal,
     NoopAuthenticator,
 )
+from albra_seed.security.trusted_principal import TrustedPrincipal, TrustedPrincipalIssuer
 from albra_seed.security.auth_token import (
     AuthorizationIssuer,
     AuthorizationVerifier,
@@ -665,12 +666,12 @@ class TestForgedPrincipal:
                 agent_id=agent.identity.agent_id,
                 task="echo hi",
             )
-            ctx.verified_principal = AuthPrincipal(
+            ctx.verified_principal = TrustedPrincipalIssuer().seal(AuthPrincipal(
                 kind="user",
                 identity="alice",
                 roles=["admin"],
                 is_anonymous=False,
-            )
+            ))
             response = await agent.run("echo hi", context=ctx)
         finally:
             await runtime.shutdown()
@@ -759,9 +760,9 @@ class TestDirectExecutorBypass:
         verifier = AuthorizationVerifier(issuer)
         executor = ToolExecutor(registry, auth_verifier=verifier)
         ctx = RunContext(agent_id="test", task="t", execution_id="exec-1", context_id="ctx-1")
-        ctx.verified_principal = AuthPrincipal(
+        ctx.verified_principal = TrustedPrincipalIssuer().seal(AuthPrincipal(
             identity="alice", is_anonymous=False
-        )
+        ))
         token = issuer.issue(
             tool_name="echo",
             principal_id="alice",
@@ -1199,9 +1200,9 @@ class TestTimeout:
         verifier = AuthorizationVerifier(issuer)
         executor = ToolExecutor(registry, auth_verifier=verifier)
         ctx = RunContext(agent_id="test", task="t", execution_id="exec-1", context_id="ctx-1")
-        ctx.verified_principal = AuthPrincipal(
+        ctx.verified_principal = TrustedPrincipalIssuer().seal(AuthPrincipal(
             identity="alice", is_anonymous=False
-        )
+        ))
         token = issuer.issue(
             tool_name="slow",
             principal_id="alice",
@@ -1319,9 +1320,9 @@ class TestRetry:
         verifier = AuthorizationVerifier(issuer)
         executor = ToolExecutor(registry, auth_verifier=verifier)
         ctx = RunContext(agent_id="test", task="t", execution_id="exec-1", context_id="ctx-1")
-        ctx.verified_principal = AuthPrincipal(
+        ctx.verified_principal = TrustedPrincipalIssuer().seal(AuthPrincipal(
             identity="alice", is_anonymous=False
-        )
+        ))
         token = issuer.issue(
             tool_name="echo",
             principal_id="alice",
@@ -1474,7 +1475,7 @@ class TestNoEffectOnDenial:
         assert run_ctx.verified_principal is not None
         # The principal is the ANONYMOUS one (NoopAuthenticator).
         assert run_ctx.verified_principal.is_anonymous is True
-        assert run_ctx.verified_principal.roles == []
+        assert run_ctx.verified_principal.roles == ()
         # The principal was NOT mutated to admin — denial is not an escalation.
         assert "admin" not in run_ctx.verified_principal.roles
         # EFFECT: tool NEVER executed.

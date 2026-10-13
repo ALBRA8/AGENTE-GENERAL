@@ -196,26 +196,32 @@ class ToolExecutor:
             
             if self._auth_verifier is not None:
                 # SECURE MODE: verify the AuthorizationToken cryptographically.
-                # principal_id and context_id are MANDATORY — if the
-                # RunContext has no verified_principal or no context_id,
-                # the execution is REJECTED (fail-closed). No optional
-                # checks — every field must be present and match.
+                # principal_id and context_id are MANDATORY. The principal_id
+                # must come from a TrustedPrincipal (sealed by IdentityResolver),
+                # NOT from a caller-set AuthPrincipal.
                 exec_id = context.execution_id if context else "unknown"
                 
-                # Resolve principal_id from verified_principal — NOT from
-                # caller-settable metadata. If verified_principal is None
-                # (no Authenticator configured, or authentication failed),
-                # principal_id is None → token verification will FAIL
-                # because matches() rejects None principal_id.
+                # Resolve TrustedPrincipal from verified_principal.
+                # If verified_principal is not a TrustedPrincipal (e.g. a raw
+                # AuthPrincipal set by a caller), REJECT — only sealed
+                # TrustedPrincipals are accepted.
                 principal_id = None
                 if context is not None and hasattr(context, 'verified_principal'):
                     vp = context.verified_principal
                     if vp is not None:
-                        principal_id = getattr(vp, 'identity', None) or getattr(vp, 'principal_id', None)
+                        # Check if this is a TrustedPrincipal (sealed)
+                        from albra_seed.security.trusted_principal import TrustedPrincipal
+                        if isinstance(vp, TrustedPrincipal):
+                            principal_id = vp.principal_id
+                        else:
+                            # Caller set a raw AuthPrincipal — REJECT
+                            return ToolResult(
+                                call_id=call_id or new_id("tc"),
+                                success=False,
+                                error="not authorized: verified_principal is not a sealed TrustedPrincipal (forged identity rejected)",
+                                output={"not_authorized": True, "reason": "unsealed_principal"},
+                            )
                 
-                # context_id is MANDATORY — if the RunContext has no
-                # context_id (None), the token's context_id (which is
-                # "" for None) will NOT match None → verification FAILS.
                 ctx_id = context.context_id if context else None
                 
                 # If principal_id or context_id cannot be resolved, REJECT

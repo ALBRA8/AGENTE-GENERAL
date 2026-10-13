@@ -31,6 +31,7 @@ from albra_seed.security.auth_token import (
     AuthorizationToken, AuthorizationIssuer, AuthorizationVerifier,
 )
 from albra_seed.security.auth import AuthPrincipal
+from albra_seed.security.trusted_principal import TrustedPrincipal, TrustedPrincipalIssuer
 from albra_seed.core.base import ToolContract
 
 
@@ -107,7 +108,7 @@ class TestForgedAuthorization:
             decision = "allow"
 
         ctx = RunContext(agent_id="test", task="t")
-        ctx.verified_principal = AuthPrincipal(identity="alice", roles=["admin"], is_anonymous=False)
+        ctx.verified_principal = TrustedPrincipalIssuer().seal(AuthPrincipal(identity="alice", roles=["admin"], is_anonymous=False))
 
         result = await executor.execute(
             "spy", {"message": "hi"},
@@ -130,7 +131,7 @@ class TestForgedAuthorization:
         executor = ToolExecutor(registry, auth_verifier=verifier)
 
         ctx = RunContext(agent_id="test", task="t", execution_id="exec-1", context_id="ctx-1")
-        ctx.verified_principal = AuthPrincipal(identity="alice", roles=["admin"], is_anonymous=False)
+        ctx.verified_principal = TrustedPrincipalIssuer().seal(AuthPrincipal(identity="alice", roles=["admin"], is_anonymous=False))
 
         token = issuer.issue(
             tool_name="spy",
@@ -158,7 +159,7 @@ class TestForgedAuthorization:
         executor = ToolExecutor(registry, auth_verifier=verifier)
 
         ctx = RunContext(agent_id="test", task="t", execution_id="exec-1", context_id="ctx-1")
-        ctx.verified_principal = AuthPrincipal(identity="alice", is_anonymous=False)
+        ctx.verified_principal = TrustedPrincipalIssuer().seal(AuthPrincipal(identity="alice", is_anonymous=False))
 
         token = issuer.issue(
             tool_name="spy",
@@ -187,7 +188,7 @@ class TestForgedAuthorization:
         executor = ToolExecutor(registry, auth_verifier=verifier)
 
         ctx = RunContext(agent_id="test", task="t", execution_id="exec-1", context_id="ctx-1")
-        ctx.verified_principal = AuthPrincipal(identity="alice", is_anonymous=False)
+        ctx.verified_principal = TrustedPrincipalIssuer().seal(AuthPrincipal(identity="alice", is_anonymous=False))
 
         # Issue token for "echo" but try to execute "spy"
         token = issuer.issue(
@@ -215,7 +216,7 @@ class TestForgedAuthorization:
         executor = ToolExecutor(registry, auth_verifier=verifier)
 
         ctx = RunContext(agent_id="test", task="t", execution_id="exec-A")
-        ctx.verified_principal = AuthPrincipal(identity="alice", is_anonymous=False)
+        ctx.verified_principal = TrustedPrincipalIssuer().seal(AuthPrincipal(identity="alice", is_anonymous=False))
 
         # Issue token for exec-B but try to execute in exec-A
         token = issuer.issue(
@@ -243,7 +244,7 @@ class TestForgedAuthorization:
         executor = ToolExecutor(registry, auth_verifier=verifier)
 
         ctx = RunContext(agent_id="test", task="t", execution_id="exec-1", context_id="ctx-1")
-        ctx.verified_principal = AuthPrincipal(identity="bob", is_anonymous=False)
+        ctx.verified_principal = TrustedPrincipalIssuer().seal(AuthPrincipal(identity="bob", is_anonymous=False))
 
         # Issue token for alice but execute as bob
         token = issuer.issue(
@@ -271,7 +272,7 @@ class TestForgedAuthorization:
         executor = ToolExecutor(registry, auth_verifier=verifier)
 
         ctx = RunContext(agent_id="test", task="t", execution_id="exec-1", context_id="ctx-1")
-        ctx.verified_principal = AuthPrincipal(identity="alice", is_anonymous=False)
+        ctx.verified_principal = TrustedPrincipalIssuer().seal(AuthPrincipal(identity="alice", is_anonymous=False))
 
         token = issuer.issue(
             tool_name="spy",

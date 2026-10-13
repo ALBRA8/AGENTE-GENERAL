@@ -105,6 +105,7 @@ def test_tool_executor_applies_timeout():
     # against — so the gate opens and the tool is actually invoked,
     # after which its 2-second sleep blows past the 1-second timeout.
     from albra_seed.security.auth import AuthPrincipal
+    from albra_seed.security.trusted_principal import TrustedPrincipal, TrustedPrincipalIssuer
     from albra_seed.security.auth_token import (
         AuthorizationIssuer,
         AuthorizationVerifier,
@@ -114,9 +115,9 @@ def test_tool_executor_applies_timeout():
     verifier = AuthorizationVerifier(issuer)
     executor = ToolExecutor(reg, auth_verifier=verifier)
     ctx = RunContext(agent_id="test", task="t", execution_id="exec-1", context_id="ctx-1")
-    ctx.verified_principal = AuthPrincipal(
+    ctx.verified_principal = TrustedPrincipalIssuer().seal(AuthPrincipal(
         identity="alice", is_anonymous=False
-    )
+    ))
     token = issuer.issue(
         tool_name="slow",
         principal_id="alice",

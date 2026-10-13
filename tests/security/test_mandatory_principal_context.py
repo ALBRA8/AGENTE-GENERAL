@@ -18,6 +18,7 @@ from albra_seed.security.auth_token import (
     AuthorizationToken, AuthorizationIssuer, AuthorizationVerifier,
 )
 from albra_seed.security.auth import AuthPrincipal
+from albra_seed.security.trusted_principal import TrustedPrincipal, TrustedPrincipalIssuer
 
 
 class _SpyTool(EchoTool):
@@ -66,7 +67,7 @@ class TestMandatoryPrincipalValidation:
         """Token for alice, context principal is bob → REJECTED."""
         registry, spy, issuer, _, executor = _setup()
         ctx = RunContext(agent_id="a", task="t", execution_id="exec-1", context_id="ctx-1")
-        ctx.verified_principal = AuthPrincipal(identity="bob", is_anonymous=False)
+        ctx.verified_principal = TrustedPrincipalIssuer().seal(AuthPrincipal(identity="bob", is_anonymous=False))
         token = issuer.issue(tool_name="spy", principal_id="alice", execution_id="exec-1", context_id="ctx-1")
         result = await executor.execute("spy", {"message": "hi"}, context=ctx, authorization=token)
         assert result.success is False
@@ -81,7 +82,7 @@ class TestMandatoryContextValidation:
         """Token valid but context has no context_id → REJECTED."""
         registry, spy, issuer, _, executor = _setup()
         ctx = RunContext(agent_id="a", task="t", execution_id="exec-1")
-        ctx.verified_principal = AuthPrincipal(identity="alice", is_anonymous=False)
+        ctx.verified_principal = TrustedPrincipalIssuer().seal(AuthPrincipal(identity="alice", is_anonymous=False))
         token = issuer.issue(tool_name="spy", principal_id="alice", execution_id="exec-1", context_id="ctx-1")
         result = await executor.execute("spy", {"message": "hi"}, context=ctx, authorization=token)
         assert result.success is False
@@ -92,7 +93,7 @@ class TestMandatoryContextValidation:
         """Token for ctx-1, context has ctx-2 → REJECTED."""
         registry, spy, issuer, _, executor = _setup()
         ctx = RunContext(agent_id="a", task="t", execution_id="exec-1", context_id="ctx-2")
-        ctx.verified_principal = AuthPrincipal(identity="alice", is_anonymous=False)
+        ctx.verified_principal = TrustedPrincipalIssuer().seal(AuthPrincipal(identity="alice", is_anonymous=False))
         token = issuer.issue(tool_name="spy", principal_id="alice", execution_id="exec-1", context_id="ctx-1")
         result = await executor.execute("spy", {"message": "hi"}, context=ctx, authorization=token)
         assert result.success is False
@@ -103,7 +104,7 @@ class TestMandatoryContextValidation:
         """Token for exec-1, context has exec-2 → REJECTED."""
         registry, spy, issuer, _, executor = _setup()
         ctx = RunContext(agent_id="a", task="t", execution_id="exec-2", context_id="ctx-1")
-        ctx.verified_principal = AuthPrincipal(identity="alice", is_anonymous=False)
+        ctx.verified_principal = TrustedPrincipalIssuer().seal(AuthPrincipal(identity="alice", is_anonymous=False))
         token = issuer.issue(tool_name="spy", principal_id="alice", execution_id="exec-1", context_id="ctx-1")
         result = await executor.execute("spy", {"message": "hi"}, context=ctx, authorization=token)
         assert result.success is False
@@ -118,7 +119,7 @@ class TestForgedOrAlteredToken:
         """Token with tampered signature → REJECTED."""
         registry, spy, issuer, _, executor = _setup()
         ctx = RunContext(agent_id="a", task="t", execution_id="exec-1", context_id="ctx-1")
-        ctx.verified_principal = AuthPrincipal(identity="alice", is_anonymous=False)
+        ctx.verified_principal = TrustedPrincipalIssuer().seal(AuthPrincipal(identity="alice", is_anonymous=False))
         token = issuer.issue(tool_name="spy", principal_id="alice", execution_id="exec-1", context_id="ctx-1")
         # Tamper with the signature
         import dataclasses
@@ -132,7 +133,7 @@ class TestForgedOrAlteredToken:
         """A non-AuthorizationToken object → REJECTED."""
         registry, spy, issuer, _, executor = _setup()
         ctx = RunContext(agent_id="a", task="t", execution_id="exec-1", context_id="ctx-1")
-        ctx.verified_principal = AuthPrincipal(identity="alice", is_anonymous=False)
+        ctx.verified_principal = TrustedPrincipalIssuer().seal(AuthPrincipal(identity="alice", is_anonymous=False))
         class _Fake:
             allowed = True
             decision = "allow"
@@ -149,7 +150,7 @@ class TestLegitimateExecution:
         """All fields match → tool executes exactly once."""
         registry, spy, issuer, _, executor = _setup()
         ctx = RunContext(agent_id="a", task="t", execution_id="exec-1", context_id="ctx-1")
-        ctx.verified_principal = AuthPrincipal(identity="alice", is_anonymous=False)
+        ctx.verified_principal = TrustedPrincipalIssuer().seal(AuthPrincipal(identity="alice", is_anonymous=False))
         token = issuer.issue(tool_name="spy", principal_id="alice", execution_id="exec-1", context_id="ctx-1")
         result = await executor.execute("spy", {"message": "hi"}, context=ctx, authorization=token, call_id="c1")
         assert result.success is True

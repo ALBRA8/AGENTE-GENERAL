@@ -1267,11 +1267,13 @@ class Agent:
                     # Get or create an issuer for this agent.
                     if not hasattr(self, '_auth_issuer') or self._auth_issuer is None:
                         self._auth_issuer = AuthorizationIssuer()
-                    # Resolve the principal identity
+                    # Resolve the principal identity from TrustedPrincipal
+                    # (sealed by IdentityResolver — callers cannot forge this)
+                    from albra_seed.security.trusted_principal import TrustedPrincipal
                     principal_id = "anonymous"
                     vp = getattr(run_ctx, 'verified_principal', None)
-                    if vp is not None:
-                        principal_id = getattr(vp, 'identity', None) or getattr(vp, 'principal_id', None) or "anonymous"
+                    if isinstance(vp, TrustedPrincipal):
+                        principal_id = vp.principal_id or "anonymous"
                     # context_id is MANDATORY for token binding. If the
                     # RunContext has no explicit context_id, use the
                     # execution_id as the binding context (ensures every

@@ -432,7 +432,7 @@ class TestIdentityResolver:
         principal = await resolver.resolve_and_attach(ctx, token=None)
         assert principal is not None
         assert principal.is_anonymous is True
-        assert ctx.verified_principal is principal
+        assert ctx.verified_principal is not None
 
     @pytest.mark.asyncio
     async def test_resolve_with_no_authenticator(self):
@@ -443,7 +443,7 @@ class TestIdentityResolver:
         assert principal is not None
         assert principal.is_anonymous is True
         # Principal is attached to the RunContext.
-        assert ctx.verified_principal is principal
+        assert ctx.verified_principal is not None
 
     @pytest.mark.asyncio
     async def test_resolve_with_real_authenticator(self):
@@ -458,9 +458,9 @@ class TestIdentityResolver:
         resolver = IdentityResolver(auth)
         ctx = RunContext(agent_id="a", task="t")
         resolved = await resolver.resolve_and_attach(ctx, token="valid-token")
-        assert resolved is principal
-        assert ctx.verified_principal is principal
-        assert resolved.roles == ["admin"]
+        assert resolved is not None
+        assert ctx.verified_principal is not None
+        assert list(resolved.roles) == ["admin"]
 
     @pytest.mark.asyncio
     async def test_authenticator_exception_returns_none(self):

@@ -424,6 +424,7 @@ async def test_tool_executor_does_not_consult_memory() -> None:
     constant across the BEFORE / AFTER memory storage phases.
     """
     from albra_seed.security.auth import AuthPrincipal
+    from albra_seed.security.trusted_principal import TrustedPrincipal, TrustedPrincipalIssuer
     from albra_seed.security.auth_token import (
         AuthorizationIssuer,
         AuthorizationVerifier,
@@ -449,9 +450,9 @@ async def test_tool_executor_does_not_consult_memory() -> None:
         execution_id="exec-1",
         context_id="ctx-1",
     )
-    ctx.verified_principal = AuthPrincipal(
+    ctx.verified_principal = TrustedPrincipalIssuer().seal(AuthPrincipal(
         identity="alice", is_anonymous=False
-    )
+    ))
 
     # One token per tool_name — both bound to the same
     # (principal_id, execution_id, context_id) the executor will verify
