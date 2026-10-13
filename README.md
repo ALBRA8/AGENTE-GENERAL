@@ -59,7 +59,7 @@ python scripts/clean_room_verify.py     # 17/17 required + 2/2 optional PASS
 python scripts/audit_matrix.py          # 40/40 VERIFIED
 python scripts/parity_check.py          # exit 0, 106/106 DNA
 python scripts/contamination_scan.py    # exit 0, is_clean=True
-python -m pytest tests/ -q              # 901 passed
+python -m pytest tests/ -q              # 906 passed
 ```
 
 Expected last line of clean_room: `CLEAN-ROOM: PASS` (17/17 required + 2/2 optional).
@@ -212,7 +212,7 @@ python scripts/contamination_scan.py
 - 5 baseline security tests (secrets, firewall, tamper detection) — counted in the 83 above
 - 17 genetic parity tests (106 DNA entries verified)
 - 12 genetic contamination tests (249 files scanned, 0 critical)
-- **Total: 901 tests passing in ~20s**
+- **Total: 906 tests passing in ~20s**
 
 > The test count grows as the universal security perimeter and the
 > cognitive/memory subsystems are tightened. See
@@ -370,7 +370,7 @@ MIT — see [LICENSE](LICENSE).
 | Universal DNA entries         | **106** (`src/albra_seed/parity/dna.py`)   |
 | A2A helper modules (NOT DNA)| **3** (`a2a.wire` / `a2a.exposition` / `a2a.observers`) |
 | Allowed specializations       | 8                                         |
-| Total tests                   | **901** (368 unit incl. 31 RBAC perimeter + 13 decision memory + 15 learning + 9 decision/learning integration + 38 sanitizer + 15 cognitive cycle + 16 cognitive modes H-09 + 81 a2a incl. 9 sec perimeter + 13 golden + 8 integration + 4 contracts + 83 security incl. 21 adversarial H-10 + 17 parity + 12 contamination) |
+| Total tests                   | **906** (368 unit incl. 31 RBAC perimeter + 13 decision memory + 15 learning + 9 decision/learning integration + 38 sanitizer + 15 cognitive cycle + 16 cognitive modes H-09 + 81 a2a incl. 9 sec perimeter + 13 golden + 8 integration + 4 contracts + 83 security incl. 21 adversarial H-10 + 17 parity + 12 contamination) |
 | A2A tests                    | 81 (28 main + 16 wire + 10 routes + 18 interop + 9 security perimeter) |
 | Clean-room                   | PASS (17/17 required + 2/2 optional; 16 real gates + 1 informational scope-doc R) |
 | Genetic parity               | PASS (`is_pure_seed=True`, 106/106 DNA)   |

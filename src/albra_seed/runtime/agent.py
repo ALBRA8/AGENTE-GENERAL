@@ -124,6 +124,7 @@ class Agent:
         runtime: Runtime,
         *,
         cognitive_loop_config: CognitiveLoopConfig | None = None,
+        auth_issuer: Any = None,  # AuthorizationIssuer | None
         auth_verifier: Any = None,  # AuthorizationVerifier | None
     ) -> None:
         self.identity = identity
@@ -131,41 +132,28 @@ class Agent:
         self.state = AgentState(agent_id=identity.agent_id)
         runtime.register_agent_state(self.state)
         self._cancel_events: dict[str, asyncio.Event] = {}
-        # COGNITIVE-CYCLE: limits for the tool-reasoning loop. When ``None``
-        # (the default), the agent runs the LEGACY LINEAR loop — REASON →
-        # PLAN → CHECK_PERMISSIONS → EXECUTE → OBSERVE → VALIDATE → RECORD
-        # → RESPOND, exactly once, with no re-reasoning. This preserves
-        # backward compatibility for the 708 existing tests, all CLI flows,
-        # and any caller that constructs ``Agent(identity, runtime)`` without
-        # opting into the cognitive loop.
-        #
-        # When a non-None config is supplied, the cognitive loop is ACTIVE:
-        # the REASON → PLAN → CHECK_PERMISSIONS → EXECUTE → OBSERVE phases
-        # repeat as long as the provider's draft response contains
-        # ``tool_calls`` and the budget limits are not exceeded. Tool
-        # observations from prior iterations are surfaced to the provider
-        # as clearly-delimited SYSTEM messages (DATA, never INSTRUCTIONS).
-        #
-        # A caller can pass ``CognitiveLoopConfig()`` (with the spec
-        # defaults max_iterations=5, max_tool_calls=20, max_time_seconds=
-        # 120.0, max_context_messages=50, max_calls_per_tool=5) to opt
-        # into the loop with sane non-zero limits. Passing a custom
-        # config (e.g. ``CognitiveLoopConfig(max_iterations=1)``) lets
-        # the caller tighten or relax the limits per-Agent.
         self.cognitive_loop_config: CognitiveLoopConfig | None = cognitive_loop_config
-        # H-01/H-08: lazily-constructed ToolExecutor wrapping a
-        # ToolRegistry built from the runtime's registered tools. Cached
-        # on the Agent instance so its idempotency set (``_executed_calls``)
-        # persists across cognitive-loop iterations AND across multiple
-        # ``run()`` invocations — a retried call_id from a prior run is
-        # suppressed just like a retry within a single run.
         self._tool_executor: Any = None  # ToolExecutor | None
-        # DEFECT 1: AuthorizationVerifier for non-forgeable tokens.
-        # When provided, the ToolExecutor verifies AuthorizationTokens
-        # cryptographically (not just `allowed=True` on any object).
-        # When None, falls back to legacy mode (accept any object with
-        # allowed=True — backward compatible but less secure).
+        # H-16: AuthorizationIssuer + AuthorizationVerifier must share the
+        # same cryptographic authority (same HMAC-SHA256 key). Callers who
+        # need external cryptographic control provide BOTH auth_issuer and
+        # auth_verifier derived from the same issuer:
+        #
+        #   issuer = AuthorizationIssuer()
+        #   verifier = AuthorizationVerifier(issuer)
+        #   agent = Agent(identity, runtime, auth_issuer=issuer, auth_verifier=verifier)
+        #
+        # If neither is provided, the agent creates its own pair internally.
+        # If only auth_verifier is provided without auth_issuer, the agent
+        # FAILS CLOSED — it cannot issue tokens that the verifier would
+        # accept (the verifier's signing key is unknown).
+        # If only auth_issuer is provided, a verifier is derived from it.
+        self._auth_issuer = auth_issuer
         self._auth_verifier = auth_verifier
+        # If issuer provided but no verifier, derive one from the issuer.
+        if self._auth_issuer is not None and self._auth_verifier is None:
+            from albra_seed.security.auth_token import AuthorizationVerifier
+            self._auth_verifier = AuthorizationVerifier(self._auth_issuer)
         # Cached IdentityResolver — holds the TrustedPrincipalIssuer with
         # a per-Agent secret key. Cached so the SAME issuer (and thus the
         # SAME verifier) is used across ALL cognitive-loop iterations.
