@@ -1271,9 +1271,24 @@ class Agent:
             if require_hitl:
                 decision = "require_hitl"
 
-            # Approval engine: HITL.
-            if decision == "require_hitl" and approval is not None:
-                approval_result = await approval.request(call, context=run_ctx)
+            # Approval engine: HITL. Human approval is only meaningful for a
+            # verified, non-anonymous requester and a configured engine.
+            if decision == "require_hitl" and (
+                principal is None or getattr(principal, "is_anonymous", True)
+            ):
+                decision = "deny"
+                run_ctx.warnings.append(
+                    f"tool call denied: HITL requires a verified principal ({call.tool_name})"
+                )
+            elif decision == "require_hitl" and approval is None:
+                decision = "deny"
+                run_ctx.warnings.append(
+                    f"tool call denied: approval engine is not configured ({call.tool_name})"
+                )
+            elif decision == "require_hitl" and approval is not None:
+                approval_result = await approval.request(
+                    call, context=run_ctx, actor=f"principal:{actor_id}"
+                )
                 approval_id = getattr(approval_result, "approval_id", None)
                 approval_status = getattr(approval_result, "status", None)
                 status_value = (
@@ -1339,8 +1354,36 @@ class Agent:
                                 )
                         except Exception:  # noqa: BLE001
                             revalidation_ok = False
+                    # Verify that the approved request is still bound to this
+                    # exact call and requesting principal, then atomically claim
+                    # it before issuing the dispatch authorization. Missing
+                    # binding/claim support is a hard denial.
+                    if revalidation_ok:
+                        try:
+                            approved_request = approval.get(approval_id) if hasattr(approval, "get") else None
+                            binding_matches = (
+                                approved_request is not None
+                                and getattr(approved_request, "actor", None) == f"principal:{actor_id}"
+                                and hasattr(approval, "matches_approved_tool_call")
+                                and approval.matches_approved_tool_call(
+                                    approval_id, call, context=run_ctx
+                                )
+                            )
+                            claimed = (
+                                binding_matches
+                                and hasattr(approval, "claim_approved_tool_call")
+                                and approval.claim_approved_tool_call(
+                                    approval_id, call, context=run_ctx
+                                )
+                            )
+                            revalidation_ok = bool(claimed)
+                        except Exception:  # noqa: BLE001
+                            revalidation_ok = False
                     if not revalidation_ok:
                         decision = "deny"
+                        run_ctx.warnings.append(
+                            f"tool call denied: HITL binding/claim validation failed ({call.tool_name})"
+                        )
                     else:
                         decision = "allow"
                         run_ctx.approvals.append(approval_id or "unknown")
