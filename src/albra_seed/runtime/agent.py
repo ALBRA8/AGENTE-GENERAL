@@ -1479,15 +1479,14 @@ class Agent:
                     f"prior iteration"
                 )
                 continue
-            # Mark this call as executed BEFORE invoking the tool — if
-            # the tool raises, we still want the dedup set to reflect
-            # that we attempted execution (so a retry in a later iteration
-            # is suppressed; the failure result already explains what
-            # happened).
-            executed_call_ids.add(call.id)
-            # Persist the (possibly mutated) set back into ctx_dict so
-            # the next cognitive-loop iteration sees the update.
-            ctx["executed_call_ids"] = executed_call_ids
+            # H-14: Do NOT mark as executed until authorization passes.
+            # A denied/blocked/budget-exhausted call is NOT "executed" —
+            # it must not contaminate the dedup set. If the same call_id
+            # appears in a later iteration with valid authorization, it
+            # should be allowed to execute.
+            #
+            # The mark is now placed AFTER all gates pass (below, just
+            # before dispatching to the ToolExecutor).
 
             if decision["decision"] != "allow":
                 results.append(ToolResult(
@@ -1611,6 +1610,13 @@ class Agent:
                         f"tool blocked by cooldown (re-checked): {call.tool_name}"
                     )
                     continue
+
+            # H-14: NOW mark as executed — all gates have passed
+            # (decision==allow, budget reserved, kill switch clear,
+            # cooldown clear). Only authorized+dispatched calls are
+            # marked; denied/blocked calls are NOT in the set.
+            executed_call_ids.add(call.id)
+            ctx["executed_call_ids"] = executed_call_ids
 
             # H-01: route through ToolExecutor (NOT tool.execute directly).
             # The executor re-validates the authorization verdict (H-02),

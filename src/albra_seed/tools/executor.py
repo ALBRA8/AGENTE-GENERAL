@@ -122,7 +122,7 @@ class ToolExecutor:
         # OR failed-but-attempted) executions so a retry with the same
         # call_id is a no-op. Lives for the lifetime of this executor
         # instance — typically one per Runtime.
-        self._executed_calls: set[str] = set()
+        self._executed_calls: set[tuple[str, str, str, str]] = set()
 
     # ------------------------------------------------------------------
     async def execute(
@@ -166,20 +166,18 @@ class ToolExecutor:
             already been executed by this executor, the call is
             short-circuited with a no-op success result.
         """
-        # ----- IDEMPOTENCY GATE (H-08) ---------------------------------
-        # A repeated call_id (across retries / replays / cognitive-loop
-        # iterations) is short-circuited. We check this BEFORE the
-        # authorization gate so a duplicate attempt cannot even reach
-        # the verdict check — duplicate calls are, by definition,
-        # already authorized-by-virtue-of-having-run-once. The set is
-        # populated AFTER the first execution completes (success OR
-        # failure-but-attempted) below.
-        if call_id is not None and call_id in self._executed_calls:
-            return ToolResult(
-                call_id=call_id,
-                success=True,
-                output={"idempotent_skip": True},
-            )
+        # ----- PRE-COMPUTE IDEMPOTENCY KEY (H-13) — SCOPED ---------------
+        # The idempotency key is (call_id, tool_name, execution_id,
+        # principal_id) — NOT just call_id. We compute it here but
+        # do NOT check it until AFTER the authorization gate — an
+        # unauthorized duplicate must NOT get idempotent_skip success.
+        _idem_exec_id = context.execution_id if context else "unknown"
+        _idem_principal = ""
+        if context is not None and hasattr(context, 'verified_principal'):
+            vp = context.verified_principal
+            if vp is not None:
+                _idem_principal = getattr(vp, 'principal_id', '') or getattr(vp, 'identity', '') or ""
+        _idem_key = (call_id or "", name, _idem_exec_id, _idem_principal)
 
         # ----- AUTHORIZATION GATE (CRITICAL) — FAIL-CLOSED ----------------
         # Non-dry-run execution requires a valid AuthorizationToken verified
@@ -340,15 +338,24 @@ class ToolExecutor:
                 },
             )
 
+        # ----- IDEMPOTENCY CHECK (H-13) — POST-AUTHORIZATION -------------
+        # Only check idempotency AFTER authorization passes — an unauthorized
+        # duplicate must NOT get idempotent_skip success.
+        if call_id is not None and _idem_key in self._executed_calls:
+            return ToolResult(
+                call_id=call_id,
+                success=True,
+                output={"idempotent_skip": True},
+            )
+
         # ----- mark as executed (idempotency set) ----------------------
-        # We add to the set BEFORE invoking the tool so a duplicate
-        # concurrent / retried call with the same call_id is suppressed
-        # even if this call is still in flight. For executions with no
-        # call_id we skip idempotency (the legacy behavior — every call
-        # is fresh). The set is bounded by the lifetime of the executor
-        # instance, which is typically one per Runtime.
+        # We add the SCOPED key (call_id, tool_name, execution_id,
+        # principal_id) to the set BEFORE invoking the tool so a
+        # duplicate concurrent / retried call with the same scoped
+        # key is suppressed. A call_id reused in a different execution
+        # or principal does NOT match → the call proceeds normally.
         if call_id is not None:
-            self._executed_calls.add(call_id)
+            self._executed_calls.add(_idem_key)
 
         try:
             tool = self.registry.get(name)

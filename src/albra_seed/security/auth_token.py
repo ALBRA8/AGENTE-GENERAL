@@ -132,7 +132,27 @@ class AuthorizationIssuer:
         expires_at: float,
         token_id: str,
     ) -> str:
-        return f"{tool_name}|{principal_id}|{execution_id}|{context_id}|{issued_at}|{expires_at}|{token_id}"
+        """Canonical representation for HMAC signing.
+        
+        Uses JSON serialization with sorted keys to guarantee:
+        1. No separator collisions (JSON escapes special characters)
+        2. Deterministic ordering (sorted keys)
+        3. Type-ambiguous fields are unambiguous (JSON strings, numbers)
+        
+        This prevents attacks like:
+        - tool_name="a|b" colliding with tool_name="a", principal_id="b"
+        - context_id="" colliding with a missing field
+        """
+        import json
+        return json.dumps({
+            "tool_name": tool_name,
+            "principal_id": principal_id,
+            "execution_id": execution_id,
+            "context_id": context_id,
+            "issued_at": issued_at,
+            "expires_at": expires_at,
+            "token_id": token_id,
+        }, sort_keys=True, separators=(",", ":"))
 
     def issue(
         self,
