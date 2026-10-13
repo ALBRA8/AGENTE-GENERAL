@@ -618,7 +618,7 @@ class Agent:
         # Dedup set for tool_call.id — prevents the same call from being
         # executed twice across iterations (e.g. if the provider re-emits
         # the same id). Read by ``_phase_execute``.
-        ctx_dict["executed_call_ids"]: set[str] = set()
+        ctx_dict["executed_call_ids"]: set[tuple[str, str]] = set()
 
         # H-07: per-tool call-count tracker. ``cognitive_tool_call_counts``
         # on RunContext maps ``tool_name → count``. ``_phase_execute``
@@ -1460,15 +1460,15 @@ class Agent:
         executor = self._get_tool_executor()
 
         for call, decision in zip(plan, decisions):
-            # COGNITIVE-CYCLE dedup: if this exact ``call.id`` was
-            # already executed in a prior iteration, do NOT re-execute.
-            # The tool's side effects have already happened; re-running
-            # could double-charge a billing counter, double-write a row,
-            # double-send an email, etc. We record a no-op result so the
-            # OBSERVE phase sees the call "returned" without re-running
-            # the tool. We also leave a warning so audit/replay can see
-            # the dedup happened.
-            if call.id in executed_call_ids:
+            # COGNITIVE-CYCLE dedup: if this exact (call.id, tool_name)
+            # pair was already executed in a prior iteration, do NOT
+            # re-execute. The dedup is scoped to (call_id, tool_name)
+            # — a call_id reused with a DIFFERENT tool is NOT a
+            # duplicate (it's a new operation that happens to share
+            # an ID, e.g. the provider reusing an ID for a different
+            # tool after observing the first tool's results).
+            _dedup_key = (call.id, call.tool_name)
+            if _dedup_key in executed_call_ids:
                 results.append(ToolResult(
                     call_id=call.id, success=True,
                     output="duplicate_call_skipped",
@@ -1644,7 +1644,7 @@ class Agent:
             # a retry in a later iteration with valid authorization can
             # still execute.
             if result.success:
-                executed_call_ids.add(call.id)
+                executed_call_ids.add(_dedup_key)
                 ctx["executed_call_ids"] = executed_call_ids
             results.append(result)
             # H-01: the executor catches tool-level exceptions and returns

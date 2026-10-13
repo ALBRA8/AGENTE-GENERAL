@@ -3,7 +3,7 @@
 > **Canonical single source of truth for ALBRA SEED certification state.**
 
 **Last verified:** 2026-10-13
-**Commit: `d6e4c11576dbdf643c2416e88338380acfa4832f`
+**Commit:** `<will-be-set-after-commit>`
 **Status:** `AUDIT_CANDIDATE` — pending independent audit. NOT READY_TO_FREEZE.
 
 ---
@@ -14,25 +14,25 @@
 |---|---|---|
 | Universal DNA components | 106 | `src/albra_seed/parity/dna.py` |
 | Audit matrix probes | 40 | `scripts/audit_matrix.py` |
-| Total tests (local, with z-ai CLI) | 893 | `pytest --collect-only -q` |
-| Total tests (CI, without z-ai CLI) | 887 passed + 1 skipped | GitHub Actions |
+| Total tests (local, with z-ai CLI) | 894 | `pytest --collect-only -q` |
+| Total tests (CI, without z-ai CLI) | 888 passed + 1 skipped | GitHub Actions |
 | A2A tests | 72 | `tests/a2a/` |
 | Golden flows | 13 | `tests/golden/` |
-| Security tests | ~130 | `tests/security/` |
+| Security tests | ~135 | `tests/security/` |
 | Cognitive cycle tests | 31 | `tests/unit/test_cognitive_*.py` |
 
 ## Gate Results
 
 | Gate | Result | Evidence |
 |---|---|---|
-| Tests (local) | PASS | 893 passed, 1 warning (asyncio ResourceWarning) |
-| Tests (CI) | PASS | 887 passed + 1 skipped (z-ai module), 3/3 jobs success |
+| Tests (local) | PASS | 894 passed, 1 warning (asyncio ResourceWarning) |
+| Tests (CI) | PASS | 888 passed + 1 skipped (z-ai module), 3/3 jobs success |
 | Audit Matrix | PASS | 40/40 VERIFIED |
 | Genetic Parity | PASS | exit 0, 106/106 DNA, is_pure_seed=True |
 | Genetic Contamination | PASS | exit 0, is_clean=True |
 | Clean-room | PASS | 17/17 + 2/2 |
 
-## CI GitHub Actions — VERIFIED GREEN
+## CI GitHub Actions
 
 | Job | Status | Conclusion |
 |---|---|---|
@@ -44,9 +44,9 @@ CI runs on every push to `feat/albra-universal-core` via PR #2 trigger.
 
 ## Test count reconciliation
 
-- **Local (with z-ai CLI):** 893 passed + 1 warning (asyncio ResourceWarning, not our code)
-- **CI (without z-ai CLI):** 887 passed + 1 skipped (`tests/llm_real/` module-level skip)
-- **Formula:** 893 local - 5 llm_real tests + 1 module-level skip = 887 + 1 skip
+- **Local (with z-ai CLI):** 894 passed + 1 warning (asyncio ResourceWarning, not our code)
+- **CI (without z-ai CLI):** 888 passed + 1 skipped (`tests/llm_real/` module-level skip)
+- **Formula:** 894 local - 5 llm_real tests + 1 module-level skip = 888 + 1 skip
 
 ## Limitations
 

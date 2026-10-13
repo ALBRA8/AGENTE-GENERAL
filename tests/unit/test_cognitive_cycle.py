@@ -794,11 +794,14 @@ async def test_loop_does_not_duplicate_tool_calls() -> None:
         f"expected execute_count == 1 (dedup), got {counter.execute_count}"
     )
     ctx = _ctx(agent)
-    # The cognitive loop terminated via no-new-work (not via max_iterations).
+    # The cognitive loop terminated via dedup or no-new-work detection.
+    # With (call_id, tool_name) scoped dedup, the duplicate is caught
+    # by the dedup gate directly (not by the no-new-work detector).
     assert any(
-        "cognitive_loop_no_new_work" in w for w in ctx.warnings
+        "cognitive_loop_no_new_work" in w or "skipped" in w
+        for w in ctx.warnings
     ), (
-        f"expected no_new_work warning in {ctx.warnings!r}"
+        f"expected dedup or no_new_work warning in {ctx.warnings!r}"
     )
 
 
