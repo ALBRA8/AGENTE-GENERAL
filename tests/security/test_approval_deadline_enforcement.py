@@ -250,3 +250,39 @@ async def test_concurrent_threads_only_claim_approved_call_once() -> None:
         )
 
     assert sum(outcomes) == 1
+
+
+@pytest.mark.asyncio
+async def test_concurrent_conflicting_decisions_have_one_terminal_winner() -> None:
+    engine = ApprovalEngine()
+    pending = await engine.request(
+        "tool.external.http",
+        deadline=utc_now() + timedelta(seconds=2),
+    )
+
+    approved, rejected = await asyncio.gather(
+        engine.approve(pending.approval_id, approver="human:approve"),
+        engine.reject(
+            pending.approval_id,
+            approver="human:reject",
+            reason="conflicting decision",
+        ),
+    )
+
+    terminal_statuses = {approved.status, rejected.status}
+    assert len(terminal_statuses) == 1
+    winner = engine.get(pending.approval_id)
+    assert winner.status in {ApprovalStatus.APPROVED, ApprovalStatus.REJECTED}
+    assert approved.status == winner.status
+    assert rejected.status == winner.status
+    # A subsequent conflicting decision must return the terminal state
+    # without appending a contradictory transition to the evidence chain.
+    evidence_count = len(engine.evidence.list_for(pending.approval_id))
+    repeated = await engine.reject(
+        pending.approval_id,
+        approver="human:late",
+        reason="late conflict",
+    )
+    assert repeated.status == winner.status
+    assert len(engine.evidence.list_for(pending.approval_id)) == evidence_count
+    assert engine.verify_evidence_chain()
