@@ -34,20 +34,36 @@ principal authorization. The approval engine remains in-memory, and the
 runtime still lacks the authenticated suspend/resume coordinator described
 below.
 
-## Coordinator primitive added (not yet runtime-integrated)
+## Current in-process suspension and HTTP decision lifecycle
 
-`src/albra_seed/approvals/suspension.py` now defines a bound suspended-execution
-record and a process-local coordinator. Registration binds the approval, execution,
+`src/albra_seed/approvals/suspension.py` defines a bound suspended-execution
+record and process-local coordinator. Registration binds approval, execution,
 correlation, tool-call, tool-name, principal, deadline, and canonical argument
-digest. A lock serializes terminal decisions and resume claims; tests cover missing
-identity/authorization, deadline expiry, binding changes, conflicting decisions,
+digest. Its lock serializes terminal decisions and resume claims; unit tests cover
+missing identity/authorization, expiry, binding changes, conflicting decisions,
 and concurrent duplicate claims.
 
-This is intentionally not advertised as end-to-end suspension/resumption: no
-runtime loop or HTTP route calls this coordinator yet. The caller must derive
-identity and authorization from trusted security components, then revalidate
-current policy and firewall state before dispatch. State is volatile and scoped
-to one process; multi-worker safety and restart recovery are not provided.
+The runtime permission phase now waits on the approval engine's decision event
+when a HITL request is pending. This keeps the original `Agent.run()` coroutine
+at the permission boundary rather than regenerating the tool call. The decision
+route signals that event through `ApprovalEngine.approve/reject`; deadline
+expiry and every non-approved outcome fail closed. After approval, policy and
+firewall are rechecked before the tool can be dispatched.
+
+The HTTP API exposes `GET /api/v1/approvals/pending` and
+`POST /api/v1/approvals/{approval_id}/decision`. Both require a verified
+non-anonymous Bearer principal. They also require explicit PolicyEngine rules
+allowing `approval:list` and `approval:decide`; missing policy or denied verdicts
+return 403. The approver identity is taken from the verified principal, not from
+request JSON. `GET /api/v1/execution/{execution_id}` likewise requires a verified
+principal and checks the stable authenticated owner identity and kind stored at
+execution creation; anonymous traces are not retrievable through that endpoint.
+
+These guarantees remain process-local. The approval engine, decision events,
+and trace cache are volatile; they do not survive restart or coordinate multiple
+workers. A production deployment still needs durable storage, atomic cross-worker
+compare-and-set, recovery semantics, and end-to-end tests covering concurrent
+decision/resume races before claiming production-grade HITL.
 
 ## Required lifecycle
 
