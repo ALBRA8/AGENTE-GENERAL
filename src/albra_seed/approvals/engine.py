@@ -130,14 +130,7 @@ class ApprovalEngine:
         approval_id: str,
         approver: str,
     ) -> ApprovalResult:
-        """Approve a PENDING request. Returns False result if not PENDING."""
-        req = self._get_pending(approval_id)
-        if req is None:
-            return ApprovalResult(
-                approval_id=approval_id,
-                status=self._status_of(approval_id),
-                reason="not_pending_or_missing",
-            )
+        """Approve a pending request, expiring it if the deadline has passed."""
         req = self._get_pending(approval_id)
         if req is None:
             return ApprovalResult(
@@ -171,7 +164,7 @@ class ApprovalEngine:
         approver: str,
         reason: str,
     ) -> ApprovalResult:
-        """Reject a PENDING request with a reason (recorded)."""
+        """Reject a pending request, expiring it if the deadline has passed."""
         req = self._get_pending(approval_id)
         if req is None:
             return ApprovalResult(
