@@ -586,6 +586,38 @@ not provide cross-process coordination or durable execution resumption.
             request.mark_expired()
             request.reason = reason or "deadline_passed"
 
+    def record_dispatch_outcome(
+        self,
+        approval_id: str,
+        action: ToolCall,
+        context: RunContext,
+        *,
+        outcome: str,
+        detail: str = "",
+    ) -> bool:
+        """Persist the observed outcome for this engine's claimed bound call.
+
+        A failed/ambiguous outcome is audit information only; it never releases
+        the durable claim or enables an automatic retry.
+        """
+        if self._suspension_store is None:
+            return False
+        request = self._requests.get(approval_id)
+        if request is None or request.status != ApprovalStatus.APPROVED:
+            return False
+        if not self.matches_approved_tool_call(approval_id, action, context):
+            return False
+        try:
+            self._suspension_store.record_dispatch_outcome(
+                approval_id, outcome=outcome, detail=detail
+            )
+            return True
+        except Exception:
+            # The external action may already have happened. Do not retry or
+            # downgrade the durable CLAIMED state when outcome persistence fails.
+            log.exception("approvals.dispatch_outcome_persist_failed", approval_id=approval_id)
+            return False
+
     @property
     def storage_scope(self) -> str:
         return "durable_sqlite" if self._suspension_store is not None else "process-local"
