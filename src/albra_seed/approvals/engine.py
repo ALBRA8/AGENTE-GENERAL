@@ -22,6 +22,7 @@ CRITICAL INVARIANTS:
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -69,6 +70,9 @@ class ApprovalEngine:
         default_deadline_seconds: float = 3600.0,
     ) -> None:
         self._requests: dict[str, ApprovalRequest] = {}
+        # In-process notification primitives for coordinators waiting on a
+        # human decision. These do not make execution state durable.
+        self._decision_events: dict[str, asyncio.Event] = {}
         self.evidence: ApprovalEvidenceStore = evidence_store or ApprovalEvidenceStore()
         self.escalation_policy: EscalationPolicy = (
             escalation_policy or EscalationPolicy()
@@ -113,6 +117,7 @@ class ApprovalEngine:
             evidence_ids=list(evidence_ids or []),
         )
         self._requests[req.approval_id] = req
+        self._decision_events[req.approval_id] = asyncio.Event()
         log.info(
             "approvals.request",
             approval_id=req.approval_id,
@@ -143,6 +148,7 @@ class ApprovalEngine:
         if req.is_expired():
             req.mark_expired()
             self._record_evidence(req)
+            self._signal_decision(approval_id)
             log.info("approvals.expire_before_approve", approval_id=approval_id)
             return ApprovalResult(
                 approval_id=approval_id,
@@ -151,6 +157,7 @@ class ApprovalEngine:
             )
         req.mark_approved(by=approver)
         self._record_evidence(req, decided_by=approver)
+        self._signal_decision(approval_id)
         log.info("approvals.approve", approval_id=approval_id, approver=approver)
         return ApprovalResult(
             approval_id=approval_id,
@@ -177,6 +184,7 @@ class ApprovalEngine:
         if req.is_expired():
             req.mark_expired()
             self._record_evidence(req)
+            self._signal_decision(approval_id)
             log.info("approvals.expire_before_reject", approval_id=approval_id)
             return ApprovalResult(
                 approval_id=approval_id,
@@ -185,6 +193,7 @@ class ApprovalEngine:
             )
         req.mark_rejected(by=approver, reason=reason)
         self._record_evidence(req, decided_by=approver)
+        self._signal_decision(approval_id)
         log.info(
             "approvals.reject",
             approval_id=approval_id,
@@ -209,6 +218,7 @@ class ApprovalEngine:
             )
         req.mark_expired()
         self._record_evidence(req)
+        self._signal_decision(approval_id)
         log.info("approvals.expire", approval_id=approval_id)
         return ApprovalResult(
             approval_id=approval_id,
@@ -251,6 +261,7 @@ class ApprovalEngine:
         # Mark parent ESCALATED, then spawn the child request.
         req.mark_escalated()
         self._record_evidence(req)
+        self._signal_decision(approval_id)
 
         child = ApprovalRequest(
             action=req.action,
@@ -268,6 +279,7 @@ class ApprovalEngine:
             },
         )
         self._requests[child.approval_id] = child
+        self._decision_events[child.approval_id] = asyncio.Event()
         log.info(
             "approvals.escalate",
             parent=approval_id,
@@ -307,6 +319,61 @@ class ApprovalEngine:
     # ------------------------------------------------------------------
     # Lookups
     # ------------------------------------------------------------------
+
+    async def wait_for_decision(self, approval_id: str) -> ApprovalResult:
+        """Wait until a pending request is decided or its deadline expires.
+
+        This is an in-process primitive for a future execution coordinator;
+        it does not itself suspend/resume Agent.run() or provide durable
+        cross-process notification.
+        """
+        req = self._requests.get(approval_id)
+        if req is None:
+            return ApprovalResult(
+                approval_id=approval_id,
+                status=ApprovalStatus.EXPIRED,
+                reason="not_pending_or_missing",
+            )
+        if req.status != ApprovalStatus.PENDING:
+            return ApprovalResult(
+                approval_id=approval_id,
+                status=req.status,
+                decided_by=req.decided_by,
+                reason="already_terminal",
+            )
+
+        event = self._decision_events.setdefault(approval_id, asyncio.Event())
+        remaining = (req.deadline - utc_now()).total_seconds()
+        if remaining <= 0:
+            return await self.expire(approval_id)
+        try:
+            await asyncio.wait_for(event.wait(), timeout=remaining)
+        except asyncio.TimeoutError:
+            # A concurrent decision may have won at the deadline boundary.
+            current = self._requests.get(approval_id)
+            if current is not None and current.status == ApprovalStatus.PENDING:
+                return await self.expire(approval_id)
+
+        current = self._requests.get(approval_id)
+        if current is None:
+            return ApprovalResult(
+                approval_id=approval_id,
+                status=ApprovalStatus.EXPIRED,
+                reason="not_pending_or_missing",
+            )
+        if current.status == ApprovalStatus.PENDING and current.is_expired():
+            return await self.expire(approval_id)
+        return ApprovalResult(
+            approval_id=approval_id,
+            status=current.status,
+            decided_by=current.decided_by,
+        )
+
+    def _signal_decision(self, approval_id: str) -> None:
+        """Wake any in-process waiter after a terminal state transition."""
+        event = self._decision_events.get(approval_id)
+        if event is not None:
+            event.set()
 
     def get(self, approval_id: str) -> ApprovalRequest | None:
         return self._requests.get(approval_id)
