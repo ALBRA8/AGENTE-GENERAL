@@ -1319,6 +1319,29 @@ class Agent:
                     # allowing dispatch. A deny, unavailable gate, or
                     # exception overrides the human approval.
                     revalidation_ok = True
+                    # Re-verify the original bearer credential after the
+                    # human wait. Revocation/expiry or changed principal
+                    # attributes must cancel dispatch even if approval won.
+                    try:
+                        current_authenticator = self.runtime.get_component("authenticator")
+                        current_principal = (
+                            await current_authenticator.verify(ctx.get("token"))
+                            if current_authenticator is not None
+                            else None
+                        )
+                        revalidation_ok = bool(
+                            current_principal is not None
+                            and not getattr(current_principal, "is_anonymous", True)
+                            and getattr(current_principal, "identity", None) == actor_id
+                            and getattr(current_principal, "kind", None) == getattr(principal, "kind", None)
+                            and tuple(getattr(current_principal, "roles", []) or []) == tuple(actor_roles or [])
+                        )
+                        if not revalidation_ok:
+                            run_ctx.warnings.append(
+                                f"tool call denied after HITL principal revalidation: {call.tool_name}"
+                            )
+                    except Exception:  # noqa: BLE001
+                        revalidation_ok = False
                     if policy is not None and hasattr(policy, "evaluate"):
                         try:
                             refreshed = await policy.evaluate(
@@ -1333,7 +1356,7 @@ class Agent:
                                 if hasattr(refreshed_decision, "value")
                                 else refreshed_decision
                             )
-                            revalidation_ok = refreshed_value in {
+                            revalidation_ok = revalidation_ok and refreshed_value in {
                                 "allow", "require_hitl"
                             }
                             if not revalidation_ok:
