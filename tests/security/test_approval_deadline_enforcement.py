@@ -6,7 +6,7 @@ from datetime import timedelta
 import pytest
 
 from albra_seed.approvals import ApprovalEngine
-from albra_seed.core.types import ApprovalStatus, utc_now
+from albra_seed.core.types import ApprovalStatus, RunContext, ToolCall, utc_now
 
 
 @pytest.mark.asyncio
@@ -119,3 +119,35 @@ async def test_terminal_approval_cannot_be_reversed_by_rejection() -> None:
     assert repeated.status == ApprovalStatus.APPROVED
     assert engine.get(pending.approval_id).status == ApprovalStatus.APPROVED
     assert engine.verify_evidence_chain()
+
+
+@pytest.mark.asyncio
+async def test_tool_approval_binds_call_id_and_canonical_arguments_digest() -> None:
+    engine = ApprovalEngine()
+    context = RunContext(agent_id="agent:test", task="approve tool")
+    call = ToolCall(
+        id="tc-bound-123",
+        tool_name="tool.external.http",
+        arguments={"url": "https://example.invalid", "method": "GET"},
+    )
+
+    pending = await engine.request(call, context=context)
+    request = engine.get(pending.approval_id)
+    binding = request.context_ref
+
+    import hashlib
+    import json
+
+    expected = hashlib.sha256(
+        json.dumps(
+            call.arguments,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    assert binding["execution_id"] == context.execution_id
+    assert binding["correlation_id"] == context.correlation_id
+    assert binding["tool_call_id"] == call.id
+    assert binding["arguments_sha256"] == expected
