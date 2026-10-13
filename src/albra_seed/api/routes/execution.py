@@ -46,6 +46,40 @@ def build_public_execution_router(ctx: RequestContext) -> Any:
 
     router = APIRouter(tags=["execution"])
 
+    async def verified_principal(authorization: str | None) -> Any:
+        """Return a trusted authenticated principal or fail closed."""
+        if not authorization:
+            raise HTTPException(status_code=401, detail="bearer authentication required")
+        scheme, separator, credential = authorization.partition(" ")
+        if not separator or scheme.lower() != "bearer" or not credential.strip():
+            raise HTTPException(status_code=401, detail="invalid authorization header")
+        authenticator = ctx.runtime.get_component("authenticator")
+        if authenticator is None:
+            raise HTTPException(status_code=503, detail="bearer authentication is not configured")
+        try:
+            principal = await authenticator.verify(credential.strip())
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=401, detail="invalid bearer credential") from exc
+        if principal is None or getattr(principal, "is_anonymous", True):
+            raise HTTPException(status_code=401, detail="invalid bearer credential")
+        return principal
+
+    async def require_approval_permission(principal: Any, action: str) -> None:
+        """Approval API is default-deny unless a policy explicitly allows it."""
+        policy = ctx.runtime.get_component("policy_engine")
+        if policy is None or not hasattr(policy, "evaluate"):
+            raise HTTPException(status_code=403, detail="approval authorization is not configured")
+        try:
+            verdict = await policy.evaluate(
+                action,
+                actor_roles=list(getattr(principal, "roles", []) or []),
+                actor_id=getattr(principal, "identity", None),
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=403, detail="approval authorization failed") from exc
+        if not getattr(verdict, "allowed", False):
+            raise HTTPException(status_code=403, detail="approval action is not authorized")
+
     @router.post(
         "/execution",
         response_model=ExecutionResponse,
@@ -60,32 +94,12 @@ def build_public_execution_router(ctx: RequestContext) -> Any:
         req: ExecutionRequest,
         authorization: str | None = Header(default=None, alias="Authorization"),
     ) -> Any:
-        # Forward bearer credentials to Agent.run(), where the Runtime's
-        # Authenticator verifies them. Never treat the raw header as identity.
+        # Forward only a verified Bearer credential to Agent.run().
         token: str | None = None
+        principal: Any = None
         if authorization is not None:
-            scheme, separator, credential = authorization.partition(" ")
-            if not separator or scheme.lower() != "bearer" or not credential.strip():
-                raise HTTPException(status_code=401, detail="invalid authorization header")
-            token = credential.strip()
-            # A supplied credential must be verifiable at the HTTP boundary.
-            # The runtime verifies it again when resolving the trusted principal;
-            # this early check prevents invalid/unsupported credentials from
-            # being silently treated as anonymous requests.
-            authenticator = ctx.runtime.get_component("authenticator")
-            if authenticator is None:
-                raise HTTPException(
-                    status_code=503,
-                    detail="bearer authentication is not configured",
-                )
-            try:
-                principal = await authenticator.verify(token)
-            except Exception as exc:  # noqa: BLE001
-                raise HTTPException(
-                    status_code=401, detail="invalid bearer credential"
-                ) from exc
-            if principal is None or getattr(principal, "is_anonymous", True):
-                raise HTTPException(status_code=401, detail="invalid bearer credential")
+            principal = await verified_principal(authorization)
+            token = authorization.partition(" ")[2].strip()
         agent = ctx.get_agent(req.agent_id)
         if agent is None:
             raise HTTPException(
@@ -125,6 +139,10 @@ def build_public_execution_router(ctx: RequestContext) -> Any:
                 "correlation_id": response.correlation_id,
                 "trace": trace_steps,
                 "metadata": trace_meta,
+                # Stable owner identity comes only from the trusted authenticator.
+                # Anonymous executions are never retrievable through GET.
+                "owner_identity": getattr(principal, "identity", None),
+                "owner_kind": getattr(principal, "kind", None),
             },
         )
         return ExecutionResponse(
@@ -144,21 +162,85 @@ def build_public_execution_router(ctx: RequestContext) -> Any:
     @router.get(
         "/execution/{execution_id}",
         response_model=TraceResponse,
-        responses={404: {"model": ErrorResponse}},
+        responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}, 404: {"model": ErrorResponse}},
     )
-    async def get_execution(execution_id: str) -> Any:
+    async def get_execution(
+        execution_id: str,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> Any:
+        principal = await verified_principal(authorization)
         trace = ctx.get_trace(execution_id)
         if trace is None:
             raise HTTPException(
                 status_code=404,
                 detail=f"no execution trace cached for id={execution_id}",
             )
+        if (
+            not trace.get("owner_identity")
+            or trace.get("owner_identity") != getattr(principal, "identity", None)
+            or trace.get("owner_kind") != getattr(principal, "kind", None)
+        ):
+            raise HTTPException(status_code=403, detail="execution trace access denied")
         return TraceResponse(
             execution_id=execution_id,
             found=True,
             trace=list(trace.get("trace", [])),
             metadata=ctx.redacted(trace.get("metadata", {})),
         )
+
+    @router.get("/approvals/pending")
+    async def list_pending_approvals(
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> Any:
+        principal = await verified_principal(authorization)
+        await require_approval_permission(principal, "approval:list")
+        engine = ctx.runtime.get_component("approval_engine")
+        if engine is None or not hasattr(engine, "list_pending"):
+            raise HTTPException(status_code=503, detail="approval engine is not configured")
+        return {
+            "approvals": [
+                {
+                    "approval_id": item.approval_id,
+                    "action": item.action,
+                    "deadline": item.deadline.isoformat() if item.deadline else None,
+                    "execution_id": (item.context_ref or {}).get("execution_id"),
+                    "correlation_id": (item.context_ref or {}).get("correlation_id"),
+                    "status": getattr(item.status, "value", item.status),
+                }
+                for item in engine.list_pending()
+            ]
+        }
+
+    @router.post("/approvals/{approval_id}/decision")
+    async def decide_approval(
+        approval_id: str,
+        payload: dict[str, Any],
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> Any:
+        principal = await verified_principal(authorization)
+        await require_approval_permission(principal, "approval:decide")
+        engine = ctx.runtime.get_component("approval_engine")
+        if engine is None:
+            raise HTTPException(status_code=503, detail="approval engine is not configured")
+        decision = payload.get("decision")
+        if decision not in {"approve", "reject"}:
+            raise HTTPException(status_code=400, detail="decision must be approve or reject")
+        request = engine.get(approval_id) if hasattr(engine, "get") else None
+        if request is None:
+            raise HTTPException(status_code=404, detail="approval not found")
+        reason = payload.get("reason", "")
+        if not isinstance(reason, str) or len(reason) > 1000:
+            raise HTTPException(status_code=400, detail="reason must be a string of at most 1000 characters")
+        if decision == "approve":
+            result = await engine.approve(approval_id, approver=principal.identity)
+        else:
+            result = await engine.reject(approval_id, approver=principal.identity, reason=reason)
+        return {
+            "approval_id": result.approval_id,
+            "status": getattr(result.status, "value", result.status),
+            "decided_by": result.decided_by,
+            "reason": result.reason,
+        }
 
     return router
 
