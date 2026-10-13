@@ -314,6 +314,54 @@ def test_approval_endpoints_fail_closed_without_verified_identity(client: TestCl
     ).status_code == 401
 
 
+def test_authorized_approval_decision_uses_verified_identity(runtime: Runtime) -> None:
+    """An approved decision uses the authenticator principal, never body-supplied approver."""
+    from albra_seed.approvals import ApprovalEngine
+    from albra_seed.core.types import AutonomyLevel, PolicyDecision, RiskLevel
+    from albra_seed.policy import PolicyEngine, PolicyRule, PolicyRuleSet
+    from albra_seed.security.auth import AuthPrincipal, Authenticator
+
+    class ApproverAuthenticator(Authenticator):
+        name = "approver-test"
+
+        async def authenticate(self, credentials: Any) -> AuthPrincipal:
+            return AuthPrincipal(kind="user", identity="reviewer-1", roles=["reviewer"], auth_method=self.name, is_anonymous=False)
+
+        async def verify(self, token: str | None) -> AuthPrincipal | None:
+            if token != "reviewer-token":
+                return None
+            return AuthPrincipal(kind="user", identity="reviewer-1", roles=["reviewer"], auth_method=self.name, is_anonymous=False)
+
+    policy = PolicyEngine(rule_set=PolicyRuleSet())
+    policy.add_rule(PolicyRule(
+        name="allow_approval_decisions",
+        action_pattern="approval:decide",
+        actor_pattern="*",
+        risk_threshold=RiskLevel.UNKNOWN,
+        autonomy_required=AutonomyLevel.L0_OBSERVE,
+        decision=PolicyDecision.ALLOW,
+        priority=100,
+    ))
+    engine = ApprovalEngine()
+    runtime.register("authenticator", ApproverAuthenticator())
+    runtime.register("policy_engine", policy)
+    runtime.register("approval_engine", engine)
+    pending = asyncio.run(engine.request("tool.sample"))
+    app = create_app(runtime)
+
+    with TestClient(app) as client:
+        response = client.post(
+            f"/api/v1/approvals/{pending.approval_id}/decision",
+            headers={"Authorization": "Bearer reviewer-token"},
+            json={"decision": "approve", "approver": "forged-admin"},
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "approved"
+    assert response.json()["decided_by"] == "reviewer-1"
+    assert engine.get(pending.approval_id).decided_by == "reviewer-1"
+
+
 # =====================================================================
 # Internal diagnostics endpoint returns a DiagnosticReport
 # =====================================================================
