@@ -44,6 +44,11 @@ def test_second_engine_can_decide_and_originating_engine_resumes_same_waiter(tmp
         assert origin.get(requested.approval_id).status is ApprovalStatus.APPROVED
         assert origin.matches_approved_tool_call(requested.approval_id, call, context)
         assert origin.claim_approved_tool_call(requested.approval_id, call, context)
+        assert origin.record_dispatch_outcome(
+            requested.approval_id, call, context,
+            outcome="succeeded", detail="test_dispatch_completed",
+        )
+        assert origin_store.get_dispatch_outcome(requested.approval_id).outcome == "succeeded"
         # A different engine/worker cannot claim the same dispatch a second time.
         assert not reviewer.claim_approved_tool_call(requested.approval_id, call, context)
         persisted = reviewer_store.get(requested.approval_id)
