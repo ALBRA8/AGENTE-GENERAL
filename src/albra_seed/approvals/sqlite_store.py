@@ -26,13 +26,6 @@ from albra_seed.approvals.suspension import (
 
 
 _SCHEMA_VERSION = 1
-_TERMINAL_OR_CLAIMED = {
-    SuspendedExecutionState.REJECTED,
-    SuspendedExecutionState.EXPIRED,
-    SuspendedExecutionState.CLAIMED,
-}
-
-
 @dataclass(frozen=True)
 class DispatchOutcome:
     """Observation for operators; never used to automatically retry dispatch."""
