@@ -19,6 +19,7 @@ CRITICAL: every test runs with NO external credentials.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from albra_seed.audit.normal import AuditLog
@@ -390,6 +391,127 @@ async def test_workflow_engine_with_hitl_resume() -> None:
     assert "approve" in state.visited
     assert "publish" in state.visited
     assert artifacts == ["drafted", "published"]
+
+
+
+# =====================================================================
+# 6. Agent HITL suspend/approve/resume lifecycle
+# =====================================================================
+
+
+async def test_agent_suspends_and_resumes_same_bound_tool_call_once() -> None:
+    """A pending approval suspends the original run and dispatches once after approval."""
+    from albra_seed.approvals import ApprovalEngine
+    from albra_seed.core.types import ApprovalStatus
+    from albra_seed.policy import PolicyEngine, PolicyRule, PolicyRuleSet
+    from albra_seed.security.auth import AuthPrincipal, Authenticator
+
+    class _IntegrationAuthenticator(Authenticator):
+        name = "hitl-integration"
+
+        async def authenticate(self, credentials: Any) -> AuthPrincipal:
+            return AuthPrincipal(
+                kind="user", identity="requester-1", roles=["user"],
+                auth_method=self.name, is_anonymous=False,
+            )
+
+        async def verify(self, token: str | None) -> AuthPrincipal | None:
+            if token != "requester-token":
+                return None
+            return AuthPrincipal(
+                kind="user", identity="requester-1", roles=["user"],
+                auth_method=self.name, is_anonymous=False,
+            )
+
+    class _CountingEcho(EchoTool):
+        def __init__(self) -> None:
+            super().__init__()
+            self.execute_count = 0
+
+        async def execute(self, *args: Any, **kwargs: Any):
+            self.execute_count += 1
+            return await super().execute(*args, **kwargs)
+
+    runtime = Runtime()
+    await runtime.startup()
+    provider = _RouterCallingMock(echo_message="approved-once")
+    runtime.register_provider(provider)
+    tool = _CountingEcho()
+    runtime.register_tool(tool)
+
+    firewall = ActionFirewall(rules=[
+        FirewallRule(
+            name="allow_echo",
+            action_pattern="echo",
+            actor_pattern="*",
+            risk_threshold=RiskLevel.UNKNOWN,
+            decision=PolicyDecision.ALLOW,
+            autonomy_required=0,
+        )
+    ])
+    runtime.register("firewall", firewall)
+
+    policy = PolicyEngine(rule_set=PolicyRuleSet())
+    policy.add_rule(PolicyRule(
+        name="echo_requires_human",
+        action_pattern="echo",
+        actor_pattern="*",
+        risk_threshold=RiskLevel.UNKNOWN,
+        autonomy_required=AutonomyLevel.L3_EXECUTE_EXTERNAL,
+        decision=PolicyDecision.ALLOW,
+        priority=100,
+    ))
+    runtime.register("policy_engine", policy)
+    approvals = ApprovalEngine(default_deadline_seconds=5)
+    runtime.register("approval_engine", approvals)
+    runtime.register("authenticator", _IntegrationAuthenticator())
+
+    identity = AgentIdentity(
+        name="hitl-integration-agent",
+        autonomy_level=AutonomyLevel.L0_OBSERVE,
+        providers=["router_mock"],
+        permissions=["tool.echo"],
+    )
+    agent = Agent(identity, runtime)
+    pending_run = asyncio.create_task(agent.run("perform echo", token="requester-token"))
+
+    try:
+        pending = None
+        for _ in range(200):
+            items = approvals.list_pending()
+            if items:
+                pending = items[0]
+                break
+            await asyncio.sleep(0.005)
+        assert pending is not None, "Agent.run did not suspend on a pending approval"
+        assert not pending_run.done(), "Agent.run returned instead of suspending"
+        assert tool.execute_count == 0, "tool ran before human approval"
+
+        decision = await approvals.approve(pending.approval_id, approver="reviewer-1")
+        assert decision.status == ApprovalStatus.APPROVED
+        response = await asyncio.wait_for(pending_run, timeout=5)
+
+        assert response.execution_id == pending.context_ref["execution_id"]
+        assert tool.execute_count == 1, "approved tool call must dispatch exactly once"
+        assert response.tool_results and response.tool_results[0].success
+        assert response.tool_results[0].output["message"] == "approved-once"
+        assert approvals.claim_approved_tool_call(
+            pending.approval_id,
+            ToolCall(
+                id=pending.context_ref["tool_call_id"],
+                tool_name="echo",
+                arguments=pending.context_ref["arguments"],
+            ),
+            context=agent.state.current_context,
+        ) is False, "the approved call must remain claimed after dispatch"
+    finally:
+        if not pending_run.done():
+            pending_run.cancel()
+            try:
+                await pending_run
+            except asyncio.CancelledError:
+                pass
+        await runtime.shutdown()
 
 
 # =====================================================================
