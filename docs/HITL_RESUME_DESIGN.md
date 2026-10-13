@@ -13,6 +13,21 @@ It does not retain a resumable execution state, and that cache is process-local.
 Adding an unauthenticated `approve` endpoint would turn the approval API into
 a privilege-escalation path; this design must not do that.
 
+## Implemented binding primitive (not a resume lifecycle)
+
+Tool approval requests now retain the execution/correlation identity, agent and
+session IDs, original tool-call ID, and a SHA-256 digest over canonical JSON
+arguments. `ApprovalEngine.matches_approved_tool_call()` fails closed unless
+the request is already approved and the action name, call ID, argument digest,
+and execution context all match. Canonical key ordering is accepted; changed
+argument values or a different execution are rejected.
+
+This helper is defense in depth for a future coordinator, not a dispatch
+authorization by itself. The caller must still re-check current policy and
+principal authorization. The approval engine remains in-memory, and the
+runtime still lacks the authenticated suspend/resume coordinator described
+below.
+
 ## Required lifecycle
 
 1. **Create a bound approval.** Persist the approval ID together with the
