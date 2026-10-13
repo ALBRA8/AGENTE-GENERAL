@@ -71,6 +71,9 @@ def test_create_app_returns_fastapi(runtime: Runtime) -> None:
     assert "/api/v1/agent/info" in routes
     assert "/api/v1/agent/capabilities" in routes
     assert "/api/v1/execution" in routes
+    assert "/api/v1/execution/{execution_id}" in routes
+    assert "/api/v1/approvals/pending" in routes
+    assert "/api/v1/approvals/{approval_id}/decision" in routes
     assert "/internal/diagnostics" in routes
 
 
@@ -299,6 +302,16 @@ def test_execution_endpoint_rejects_malformed_authorization_header(
         json={"input": "hello"},
     )
     assert response.status_code == 401
+
+
+
+def test_approval_endpoints_fail_closed_without_verified_identity(client: TestClient) -> None:
+    """Approval discovery and decisions must not accept anonymous callers."""
+    assert client.get("/api/v1/approvals/pending").status_code == 401
+    assert client.post(
+        "/api/v1/approvals/example/decision",
+        json={"decision": "approve", "approver": "forged-admin"},
+    ).status_code == 401
 
 
 # =====================================================================
