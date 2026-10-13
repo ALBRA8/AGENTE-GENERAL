@@ -15,6 +15,7 @@ from albra_seed.approvals.engine import ApprovalEngine, ApprovalResult
 from albra_seed.approvals.evidence import ApprovalEvidence, ApprovalEvidenceStore
 from albra_seed.approvals.escalation import EscalationPolicy
 from albra_seed.approvals.request import ApprovalRequest
+from albra_seed.approvals.sqlite_store import SQLiteSuspendedExecutionCoordinator
 from albra_seed.approvals.suspension import (
     SuspendedExecution,
     SuspendedExecutionCoordinator,
@@ -33,4 +34,5 @@ __all__ = [
     "SuspendedExecutionCoordinator",
     "SuspendedExecutionError",
     "SuspendedExecutionState",
+    "SQLiteSuspendedExecutionCoordinator",
 ]
