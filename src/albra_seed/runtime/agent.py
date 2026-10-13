@@ -124,6 +124,7 @@ class Agent:
         runtime: Runtime,
         *,
         cognitive_loop_config: CognitiveLoopConfig | None = None,
+        auth_verifier: Any = None,  # AuthorizationVerifier | None
     ) -> None:
         self.identity = identity
         self.runtime = runtime
@@ -159,6 +160,12 @@ class Agent:
         # ``run()`` invocations — a retried call_id from a prior run is
         # suppressed just like a retry within a single run.
         self._tool_executor: Any = None  # ToolExecutor | None
+        # DEFECT 1: AuthorizationVerifier for non-forgeable tokens.
+        # When provided, the ToolExecutor verifies AuthorizationTokens
+        # cryptographically (not just `allowed=True` on any object).
+        # When None, falls back to legacy mode (accept any object with
+        # allowed=True — backward compatible but less secure).
+        self._auth_verifier = auth_verifier
 
     # =====================================================================
     # PUBLIC API
@@ -555,12 +562,10 @@ class Agent:
             # Run all 10 phases in order via the original AgentLoop.run().
             # We still annotate RunContext with single-iteration values so
             # the cognitive-budget fields are populated consistently.
+            # DEFECT 3: cognitive_tool_calls is now incremented inside
+            # _phase_execute, so we don't set it here.
             trace = await loop.run(phase_fns, ctx_dict)
             run_ctx.cognitive_iterations = 1
-            plan_tool_calls_count = len(
-                ctx_dict.get("PLAN", {}).get("tool_calls", []) or []
-            )
-            run_ctx.cognitive_tool_calls = plan_tool_calls_count
             return trace
 
         # ----- COGNITIVE LOOP (opt-in via cognitive_loop_config) --------
@@ -708,10 +713,14 @@ class Agent:
 
             # ----- budget bookkeeping AFTER the iteration completes -----
             run_ctx.cognitive_iterations += 1
-            plan_tool_calls: list[ToolCall] = (
-                ctx_dict.get("PLAN", {}).get("tool_calls", []) or []
-            )
-            run_ctx.cognitive_tool_calls += len(plan_tool_calls)
+            # DEFECT 3: cognitive_tool_calls is now incremented INSIDE
+            # _phase_execute (before each dispatch), not here. This
+            # prevents a plan with more calls than the budget from
+            # executing excess calls — the reservation happens per-call,
+            # not per-iteration.
+            # The old line `run_ctx.cognitive_tool_calls += len(plan_tool_calls)`
+            # was removed because it double-counted with _phase_execute's
+            # per-call increment.
 
             # Accumulate observations for the NEXT iteration's REASON.
             exec_results: list[ToolResult] = (
@@ -748,7 +757,7 @@ class Agent:
             # it, the post-EXECUTE set would always contain the current
             # iteration's ids, and the subset check would always pass —
             # terminating after iter 1 on every test (false positive).
-            new_plan_ids = {tc.id for tc in plan_tool_calls}
+            new_plan_ids = {tc.id for tc in (ctx_dict.get("PLAN", {}).get("tool_calls", []) or [])}
             if new_plan_ids and new_plan_ids.issubset(pre_iteration_executed):
                 run_ctx.warnings.append(
                     "cognitive_loop_no_new_work: provider re-emitted "
@@ -1337,6 +1346,15 @@ class Agent:
             if cognitive_config is not None
             else None
         )
+        # DEFECT 3: read the TOTAL call cap. When the cognitive loop is
+        # active, max_tool_calls is the hard budget. We RESERVE before
+        # each dispatch — a plan with more calls than the budget allows
+        # will NOT execute the excess calls.
+        max_tool_calls: int | None = (
+            cognitive_config.max_tool_calls
+            if cognitive_config is not None
+            else None
+        )
 
         # H-06: read the remaining wall-clock budget. Refreshed at the
         # top of every cognitive-loop iteration by ``_run_cognitive_cycle``.
@@ -1401,6 +1419,34 @@ class Agent:
                     error=f"blocked: {decision['decision']}",
                 ))
                 continue
+
+            # DEFECT 3: RESERVE budget BEFORE dispatch. If max_tool_calls
+            # is set and the running total (run_ctx.cognitive_tool_calls)
+            # has already reached the cap, this call is rejected WITHOUT
+            # invoking the tool. The reservation is atomic: we increment
+            # cognitive_tool_calls BEFORE dispatching, so concurrent or
+            # re-entrant calls see the updated count.
+            if max_tool_calls is not None:
+                if run_ctx.cognitive_tool_calls >= max_tool_calls:
+                    results.append(ToolResult(
+                        call_id=call.id, success=False,
+                        error="tool_call_budget_exhausted",
+                        output={
+                            "budget_exhausted": True,
+                            "max_tool_calls": max_tool_calls,
+                            "current_count": run_ctx.cognitive_tool_calls,
+                        },
+                    ))
+                    run_ctx.warnings.append(
+                        f"cognitive_loop: tool_call {call.id} "
+                        f"({call.tool_name}) skipped — total call budget "
+                        f"({max_tool_calls}) exhausted"
+                    )
+                    continue
+            # Always increment the counter (even in legacy mode with no cap)
+            # so the RunContext accurately reflects how many tool calls
+            # were dispatched.
+            run_ctx.cognitive_tool_calls += 1
 
             # H-06: time-budget check. If the cognitive loop's remaining
             # wall-clock budget is exhausted (or non-positive), short-
@@ -1984,7 +2030,7 @@ class Agent:
                     # the executor's ``execute()`` returns a not-found
                     # result for it, which is the correct behavior.
                     pass
-            self._tool_executor = ToolExecutor(registry)
+            self._tool_executor = ToolExecutor(registry, auth_verifier=self._auth_verifier)
             return self._tool_executor
 
         # Re-sync: any tools registered AFTER the executor was built must

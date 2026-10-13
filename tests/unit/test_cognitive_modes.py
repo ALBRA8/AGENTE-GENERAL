@@ -452,9 +452,10 @@ class TestCognitiveModeDefaults:
             "blocked" in (response.tool_results[0].error or "").lower()
         )
         ctx = _ctx(agent)
-        # Linear-loop annotation: 1 iteration, 1 tool_call produced.
+        # Linear-loop annotation: 1 iteration, 0 tool_calls dispatched
+        # (the tool was denied, so it was never dispatched).
         assert ctx.cognitive_iterations == 1
-        assert ctx.cognitive_tool_calls == 1
+        assert ctx.cognitive_tool_calls == 0  # denied → not dispatched
 
     @pytest.mark.asyncio
     async def test_cognitive_mode_denied_tool_still_iterates(self) -> None:

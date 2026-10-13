@@ -109,11 +109,13 @@ class ToolExecutor:
         validator: ContractValidator | None = None,
         evidence_sink: EvidenceSink | None = None,
         default_timeout: int = 30,
+        auth_verifier: Any = None,  # AuthorizationVerifier | None
     ) -> None:
         self.registry = registry
         self._validator = validator or ContractValidator()
         self._evidence_sink = evidence_sink
         self.default_timeout = default_timeout
+        self._auth_verifier = auth_verifier
         # IDEMPOTENCY (H-08): records call_ids of completed (successful
         # OR failed-but-attempted) executions so a retry with the same
         # call_id is a no-op. Lives for the lifetime of this executor
@@ -177,13 +179,17 @@ class ToolExecutor:
                 output={"idempotent_skip": True},
             )
 
-        # ----- AUTHORIZATION GATE (H-02) — MANDATORY -------------------
-        # Non-dry-run execution requires an explicit authorization
-        # verdict whose ``allowed`` attribute is True. This is the
-        # defense-in-depth gate that ensures the executor cannot be
-        # used to bypass CHECK_PERMISSIONS — even if a caller obtained
-        # a ToolExecutor directly, every call without a valid verdict
-        # fails closed.
+        # ----- AUTHORIZATION GATE (H-02 CRITICAL) — NON-FORGEABLE ---------
+        # Non-dry-run execution requires a valid AuthorizationToken that
+        # is cryptographically signed, not expired, not revoked, and
+        # bound to (tool_name, execution_id, principal_id, context_id).
+        # An arbitrary object with `allowed=True` is REJECTED — only
+        # AuthorizationToken issued by AuthorizationIssuer is accepted.
+        #
+        # If no auth_verifier is configured (legacy/CORE_ONLY), we fall
+        # back to the old behavior: accept any object with `allowed=True`.
+        # This preserves backward compatibility but is LESS secure.
+        # Production deployments MUST register an AuthorizationIssuer.
         if not dry_run:
             if authorization is None:
                 return ToolResult(
@@ -192,17 +198,70 @@ class ToolExecutor:
                     error="not authorized: no authorization provided",
                     output={"not_authorized": True},
                 )
-            allowed = getattr(authorization, "allowed", False)
-            if not allowed:
-                decision = getattr(authorization, "decision", "unknown")
+            
+            if self._auth_verifier is not None:
+                # SECURE MODE: verify the AuthorizationToken cryptographically
+                exec_id = context.execution_id if context else "unknown"
+                principal_id = None
+                if context is not None and hasattr(context, 'verified_principal'):
+                    vp = context.verified_principal
+                    if vp is not None:
+                        principal_id = getattr(vp, 'identity', None) or getattr(vp, 'principal_id', None)
+                ctx_id = context.context_id if context else None
+                
+                if not self._auth_verifier.verify(
+                    authorization,
+                    tool_name=name,
+                    execution_id=exec_id,
+                    principal_id=principal_id,
+                    context_id=ctx_id,
+                ):
+                    return ToolResult(
+                        call_id=call_id or new_id("tc"),
+                        success=False,
+                        error="not authorized: token invalid, expired, revoked, or mismatched",
+                        output={"not_authorized": True},
+                    )
+            else:
+                # LEGACY MODE: accept any object with allowed=True
+                # (backward compatible but less secure)
+                allowed = getattr(authorization, "allowed", False)
+                if not allowed:
+                    decision = getattr(authorization, "decision", "unknown")
+                    return ToolResult(
+                        call_id=call_id or new_id("tc"),
+                        success=False,
+                        error=f"not authorized: {decision}",
+                        output={
+                            "not_authorized": True,
+                            "decision": str(decision),
+                        },
+                    )
+        
+        # ----- DRY-RUN SAFETY GATE (DEFECT 2) —---------------------------
+        # When dry_run=True, we must guarantee no side effects:
+        # 1. Check if the tool's contract declares is_dry_run_capable=True
+        # 2. If NOT dry_run_capable, REJECT the dry-run request (don't
+        #    just pass dry_run=True to the tool and hope it respects it)
+        # 3. Only invoke the tool if the contract explicitly supports
+        #    dry-run semantics
+        if dry_run:
+            try:
+                tool_check = self.registry.get(name)
+                contract_check = self.registry.get_contract(name)
+            except ToolNotFoundError:
                 return ToolResult(
                     call_id=call_id or new_id("tc"),
                     success=False,
-                    error=f"not authorized: {decision}",
-                    output={
-                        "not_authorized": True,
-                        "decision": str(decision),
-                    },
+                    error=f"tool not found: {name}",
+                    output={"dry_run": True, "not_found": True},
+                )
+            if not getattr(contract_check, 'is_dry_run_capable', False):
+                return ToolResult(
+                    call_id=call_id or new_id("tc"),
+                    success=False,
+                    error="dry_run rejected: tool is not declared is_dry_run_capable in its contract",
+                    output={"dry_run": True, "rejected": True, "reason": "not_dry_run_capable"},
                 )
 
         # ----- mark as executed (idempotency set) ----------------------
