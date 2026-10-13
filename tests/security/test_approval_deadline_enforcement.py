@@ -202,3 +202,22 @@ async def test_approved_binding_rejects_changed_call_or_execution_context() -> N
     assert not engine.matches_approved_tool_call(
         pending.approval_id, call, other_context
     )
+
+
+
+@pytest.mark.asyncio
+async def test_approved_tool_call_can_be_claimed_only_once_per_execution() -> None:
+    engine = ApprovalEngine()
+    context = RunContext(agent_id="agent:test", task="claim tool call")
+    call = ToolCall(
+        id="tc-at-most-once",
+        tool_name="tool.external.http",
+        arguments={"url": "https://example.invalid"},
+    )
+    pending = await engine.request(call, context=context)
+
+    assert not engine.claim_approved_tool_call(pending.approval_id, call, context)
+    await engine.approve(pending.approval_id, approver="human:test")
+
+    assert engine.claim_approved_tool_call(pending.approval_id, call, context)
+    assert not engine.claim_approved_tool_call(pending.approval_id, call, context)
