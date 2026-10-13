@@ -1,6 +1,6 @@
 # Durable HITL storage and cross-worker resume design
 
-Status: SQLite storage primitives and regression tests are now implemented on the draft branch. The existing ApprovalEngine/Agent.run lifecycle is still process-local and is not yet wired to this backend; therefore end-to-end execution recovery after a process restart is NOT complete and must not be advertised as supported.
+Status: SQLite storage primitives, ApprovalEngine integration for durable approval decisions/polling/claims, API storage-scope reporting, and regression tests are implemented on the draft branch. Full Agent.run recovery after the originating process dies is NOT implemented: the suspended coroutine and live authorization context are not serialized, and must not be reconstructed from an approval row alone.
 
 ## Goals and non-goals
 
@@ -28,14 +28,16 @@ restart, independent-worker decision/claim races, deadline expiry, corrupt
 storage, binding/authorization rejection, polling, and an ambiguous dispatch
 crash window.
 
-**Remaining integration boundary:** `ApprovalEngine` still owns in-memory
-`ApprovalRequest` objects and asyncio decision events, and `Agent.run()` still
-holds the suspended coroutine in process memory. This new SQLite coordinator
-is an explicit API and is not silently substituted into that lifecycle. A
-restart can recover the durable coordinator record, but cannot yet reconstruct
-the complete original cognitive-loop state and resume the real agent execution.
-That integration and its end-to-end restart tests remain required before issue
-#5 or production-grade durable HITL can be marked complete.
+**Remaining recovery boundary:** `ApprovalEngine` can be configured with
+`suspension_store=SQLiteSuspendedExecutionCoordinator(path)`. With that
+configuration, independent approval workers can read pending rows, commit a
+decision, and observe/claim the decision using SQLite rather than a local
+`asyncio.Event`. The HTTP pending-approvals response reports `durable_sqlite`
+when this backend is configured. However, `Agent.run()` still holds the
+suspended coroutine, provider/cognitive-loop state, and live authorization
+context in process memory. If that process dies, the record survives but the
+agent run is not restarted or resumed automatically. Production-grade restart
+recovery and fault-injection testing remain outstanding.
 
 ## Storage boundary
 
@@ -114,9 +116,9 @@ Each decision request still requires a verified non-anonymous principal, an expl
 
 1. Land protocol and conformance tests while keeping the current in-memory backend behavior.
 2. Implement SQLite schema/migrations and transactional CAS tests.
-3. Wire configurable storage into ApprovalEngine and the suspension coordinator.
-4. Add recovery/polling and worker-claim semantics.
-5. Add crash/fault-injection integration tests and rerun the complete Python 3.10–3.12 matrix.
-6. Update API docs to accurately expose backend scope and uncertain-dispatch states.
+3. [Implemented, partial recovery only] Wire configurable SQLite storage into ApprovalEngine; expose cross-worker decisions, polling, atomic claims, and API storage scope.
+4. [Implemented primitives] Add pending-record recovery/polling and one-shot worker claims; never reclaim ambiguous dispatch claims automatically.
+5. [In progress] Add crash/fault-injection integration tests and rerun the complete Python 3.10–3.12 matrix.
+6. [Partial] Expose configured backend scope; end-to-end process restart recovery and operator reconciliation API remain outstanding.
 
 Related: issue #5; draft PR #3 contains the current process-local lifecycle.
