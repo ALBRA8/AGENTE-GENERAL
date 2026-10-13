@@ -151,3 +151,54 @@ async def test_tool_approval_binds_call_id_and_canonical_arguments_digest() -> N
     assert binding["correlation_id"] == context.correlation_id
     assert binding["tool_call_id"] == call.id
     assert binding["arguments_sha256"] == expected
+
+
+
+@pytest.mark.asyncio
+async def test_approved_binding_rejects_changed_call_or_execution_context() -> None:
+    engine = ApprovalEngine()
+    context = RunContext(agent_id="agent:test", task="approve tool")
+    call = ToolCall(
+        id="tc-binding-check",
+        tool_name="tool.external.http",
+        arguments={"url": "https://example.invalid", "method": "GET"},
+    )
+    pending = await engine.request(call, context=context)
+
+    # A pending request is never sufficient to authorize dispatch.
+    assert not engine.matches_approved_tool_call(pending.approval_id, call, context)
+
+    approved = await engine.approve(pending.approval_id, approver="human:test")
+    assert approved.status == ApprovalStatus.APPROVED
+    assert engine.matches_approved_tool_call(pending.approval_id, call, context)
+
+    # Canonical JSON makes key ordering irrelevant, but binds all values.
+    reordered = ToolCall(
+        id=call.id,
+        tool_name=call.tool_name,
+        arguments={"method": "GET", "url": "https://example.invalid"},
+    )
+    assert engine.matches_approved_tool_call(pending.approval_id, reordered, context)
+
+    changed_arguments = ToolCall(
+        id=call.id,
+        tool_name=call.tool_name,
+        arguments={"url": "https://attacker.invalid", "method": "GET"},
+    )
+    assert not engine.matches_approved_tool_call(
+        pending.approval_id, changed_arguments, context
+    )
+
+    changed_id = ToolCall(
+        id="tc-different",
+        tool_name=call.tool_name,
+        arguments=call.arguments,
+    )
+    assert not engine.matches_approved_tool_call(
+        pending.approval_id, changed_id, context
+    )
+
+    other_context = RunContext(agent_id="agent:other", task="different execution")
+    assert not engine.matches_approved_tool_call(
+        pending.approval_id, call, other_context
+    )
