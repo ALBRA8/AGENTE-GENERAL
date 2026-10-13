@@ -172,13 +172,6 @@ class ApprovalEngine:
                 status=self._status_of(approval_id),
                 reason="not_pending_or_missing",
             )
-        req = self._get_pending(approval_id)
-        if req is None:
-            return ApprovalResult(
-                approval_id=approval_id,
-                status=self._status_of(approval_id),
-                reason="not_pending_or_missing",
-            )
         # Rejection is also terminally recorded as EXPIRED when submitted late;
         # do not mutate a request after its deadline.
         if req.is_expired():
