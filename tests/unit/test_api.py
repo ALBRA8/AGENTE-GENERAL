@@ -320,6 +320,8 @@ def test_authorized_approval_decision_uses_verified_identity(runtime: Runtime) -
     from albra_seed.core.types import AutonomyLevel, PolicyDecision, RiskLevel
     from albra_seed.policy import PolicyEngine, PolicyRule, PolicyRuleSet
     from albra_seed.security.auth import AuthPrincipal, Authenticator
+    from albra_seed.security.permissions import PermissionRegistry
+    from albra_seed.security.roles import Role, RoleRegistry
 
     class ApproverAuthenticator(Authenticator):
         name = "approver-test"
@@ -332,13 +334,18 @@ def test_authorized_approval_decision_uses_verified_identity(runtime: Runtime) -
                 return None
             return AuthPrincipal(kind="user", identity="reviewer-1", roles=["reviewer"], auth_method=self.name, is_anonymous=False)
 
-    policy = PolicyEngine(rule_set=PolicyRuleSet())
+    roles = RoleRegistry()
+    roles.register(Role(role_id="reviewer", name="reviewer"))
+    permissions = PermissionRegistry(roles=roles)
+    permissions.grant("reviewer", "approval:decide")
+    policy = PolicyEngine(rule_set=PolicyRuleSet(), permission_registry=permissions)
     policy.add_rule(PolicyRule(
         name="allow_approval_decisions",
         action_pattern="approval:decide",
         actor_pattern="*",
         risk_threshold=RiskLevel.UNKNOWN,
         autonomy_required=AutonomyLevel.L0_OBSERVE,
+        required_permission="approval:decide",
         decision=PolicyDecision.ALLOW,
         priority=100,
     ))
