@@ -68,6 +68,24 @@ def build_public_execution_router(ctx: RequestContext) -> Any:
             if not separator or scheme.lower() != "bearer" or not credential.strip():
                 raise HTTPException(status_code=401, detail="invalid authorization header")
             token = credential.strip()
+            # A supplied credential must be verifiable at the HTTP boundary.
+            # The runtime verifies it again when resolving the trusted principal;
+            # this early check prevents invalid/unsupported credentials from
+            # being silently treated as anonymous requests.
+            authenticator = ctx.runtime.get_component("authenticator")
+            if authenticator is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail="bearer authentication is not configured",
+                )
+            try:
+                principal = await authenticator.verify(token)
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(
+                    status_code=401, detail="invalid bearer credential"
+                ) from exc
+            if principal is None or getattr(principal, "is_anonymous", True):
+                raise HTTPException(status_code=401, detail="invalid bearer credential")
         agent = ctx.get_agent(req.agent_id)
         if agent is None:
             raise HTTPException(
