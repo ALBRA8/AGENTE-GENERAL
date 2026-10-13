@@ -14,8 +14,8 @@
 |---|---|---|
 | Universal DNA components | 106 | `src/albra_seed/parity/dna.py` |
 | Audit matrix probes | 40 | `scripts/audit_matrix.py` |
-| Total tests (local, with z-ai CLI) | 894 | `pytest --collect-only -q` |
-| Total tests (CI, without z-ai CLI) | 888 passed + 1 skipped | GitHub Actions |
+| Total tests (local, with z-ai CLI) | 901 | `pytest --collect-only -q` |
+| Total tests (CI, without z-ai CLI) | 895 passed + 1 skipped | GitHub Actions |
 | A2A tests | 72 | `tests/a2a/` |
 | Golden flows | 13 | `tests/golden/` |
 | Security tests | ~135 | `tests/security/` |
@@ -25,8 +25,8 @@
 
 | Gate | Result | Evidence |
 |---|---|---|
-| Tests (local) | PASS | 894 passed, 1 warning (asyncio ResourceWarning) |
-| Tests (CI) | PASS | 888 passed + 1 skipped (z-ai module), 3/3 jobs success |
+| Tests (local) | PASS | 901 passed, 1 warning (asyncio ResourceWarning) |
+| Tests (CI) | PASS | 895 passed + 1 skipped (z-ai module), 3/3 jobs success |
 | Audit Matrix | PASS | 40/40 VERIFIED |
 | Genetic Parity | PASS | exit 0, 106/106 DNA, is_pure_seed=True |
 | Genetic Contamination | PASS | exit 0, is_clean=True |
@@ -44,9 +44,9 @@ CI runs on every push to `feat/albra-universal-core` via PR #2 trigger.
 
 ## Test count reconciliation
 
-- **Local (with z-ai CLI):** 894 passed + 1 warning (asyncio ResourceWarning, not our code)
-- **CI (without z-ai CLI):** 888 passed + 1 skipped (`tests/llm_real/` module-level skip)
-- **Formula:** 894 local - 5 llm_real tests + 1 module-level skip = 888 + 1 skip
+- **Local (with z-ai CLI):** 901 passed + 1 warning (asyncio ResourceWarning, not our code)
+- **CI (without z-ai CLI):** 895 passed + 1 skipped (`tests/llm_real/` module-level skip)
+- **Formula:** 901 local - 5 llm_real tests + 1 module-level skip = 895 + 1 skip
 
 ## Limitations
 

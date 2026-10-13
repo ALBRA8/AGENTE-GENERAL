@@ -1294,36 +1294,64 @@ class Agent:
             if decision == "allow":
                 try:
                     from albra_seed.security.auth_token import AuthorizationIssuer, AuthorizationVerifier
-                    # Get or create an issuer for this agent.
+                    # H-16: Ensure issuer and verifier share the same
+                    # cryptographic authority. If the caller provided an
+                    # external auth_verifier, we MUST NOT create a new
+                    # issuer with a different key — tokens issued by a
+                    # new issuer would be rejected by the external verifier.
+                    # Instead, we require the caller to also provide an
+                    # AuthorizationIssuer that corresponds to the verifier.
+                    # If no issuer exists and no external verifier was
+                    # provided, create BOTH from the same issuer.
                     if not hasattr(self, '_auth_issuer') or self._auth_issuer is None:
-                        self._auth_issuer = AuthorizationIssuer()
+                        if self._auth_verifier is not None:
+                            # External verifier provided but no issuer.
+                            # We CANNOT issue tokens — the verifier's key
+                            # is unknown. Fail-closed.
+                            decision = "deny"
+                            authorization = None
+                            run_ctx.warnings.append(
+                                f"tool call denied (external auth_verifier configured "
+                                f"but no matching AuthorizationIssuer — cannot issue "
+                                f"token): {call.tool_name}"
+                            )
+                            decisions.append({
+                                "tool": call.tool_name,
+                                "decision": decision,
+                                "authorization": authorization,
+                            })
+                            run_ctx.warnings.append(
+                                f"tool call denied: {call.tool_name}"
+                            )
+                            continue
+                        else:
+                            # No external verifier — create our own issuer
+                            # and derive a verifier from it.
+                            self._auth_issuer = AuthorizationIssuer()
+                            self._auth_verifier = AuthorizationVerifier(self._auth_issuer)
+                            if self._tool_executor is not None:
+                                self._tool_executor._auth_verifier = self._auth_verifier
                     # Resolve the principal identity from TrustedPrincipal
-                    # (sealed by IdentityResolver — callers cannot forge this)
                     from albra_seed.security.trusted_principal import TrustedPrincipal
                     principal_id = "anonymous"
                     vp = getattr(run_ctx, 'verified_principal', None)
                     if isinstance(vp, TrustedPrincipal):
                         principal_id = vp.principal_id or "anonymous"
-                    # context_id is MANDATORY for token binding. If the
-                    # RunContext has no explicit context_id, use the
-                    # execution_id as the binding context (ensures every
-                    # token is bound to a non-None context_id).
-                    ctx_id_for_token = run_ctx.context_id or run_ctx.execution_id
+                    # H-17: Normalize context_id — treat None and "" the
+                    # same way. Both are "unspecified" and must be replaced
+                    # with a non-empty binding value (execution_id).
+                    raw_ctx_id = run_ctx.context_id
+                    if raw_ctx_id is None or raw_ctx_id == "":
+                        ctx_id_for_token = run_ctx.execution_id
+                        run_ctx.context_id = ctx_id_for_token
+                    else:
+                        ctx_id_for_token = raw_ctx_id
                     authorization = self._auth_issuer.issue(
                         tool_name=call.tool_name,
                         principal_id=principal_id,
                         execution_id=run_ctx.execution_id,
                         context_id=ctx_id_for_token,
                     )
-                    # Also set the context_id on the RunContext so the
-                    # executor's verification can match it.
-                    if run_ctx.context_id is None:
-                        run_ctx.context_id = ctx_id_for_token
-                    # Register the verifier on the executor if not done
-                    if self._auth_verifier is None:
-                        self._auth_verifier = AuthorizationVerifier(self._auth_issuer)
-                        if self._tool_executor is not None:
-                            self._tool_executor._auth_verifier = self._auth_verifier
                 except Exception:
                     decision = "deny"
                     authorization = None
