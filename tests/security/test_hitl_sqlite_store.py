@@ -1,4 +1,5 @@
 """Cross-instance and restart regressions for durable HITL suspension."""
+import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
@@ -181,3 +182,41 @@ def test_duplicate_approval_id_is_rejected_durably(tmp_path):
             principal_id="principal-1",
             deadline=now + timedelta(minutes=5),
         )
+
+
+
+def test_dispatch_outcome_is_durable_and_not_overwritable(tmp_path):
+    path = tmp_path / "approvals.sqlite3"
+    coordinator, now = _registered(path)
+    _approve(coordinator, now)
+    _claim(coordinator, now)
+    outcome = coordinator.record_dispatch_outcome(
+        "approval-1", outcome="unknown", detail="worker died near external dispatch", observed_at=now
+    )
+    restarted = SQLiteSuspendedExecutionCoordinator(path)
+    assert restarted.get_dispatch_outcome("approval-1") == outcome
+    # An identical retry is idempotent; a contradictory outcome cannot overwrite audit state.
+    assert restarted.record_dispatch_outcome(
+        "approval-1", outcome="unknown", detail="worker died near external dispatch", observed_at=now
+    ) == outcome
+    with pytest.raises(SuspendedExecutionError, match="already recorded"):
+        restarted.record_dispatch_outcome(
+            "approval-1", outcome="succeeded", detail="conflicting report", observed_at=now
+        )
+
+
+def test_waiter_observes_decision_from_an_independent_worker(tmp_path):
+    path = tmp_path / "approvals.sqlite3"
+    coordinator, now = _registered(path)
+    independent_worker = SQLiteSuspendedExecutionCoordinator(path)
+
+    async def scenario():
+        waiter = asyncio.create_task(
+            coordinator.wait_for_decision("approval-1", timeout=2.0, poll_interval=0.01)
+        )
+        await asyncio.sleep(0.03)
+        _approve(independent_worker, now)
+        result = await waiter
+        assert result.state is SuspendedExecutionState.APPROVED
+
+    asyncio.run(scenario())
