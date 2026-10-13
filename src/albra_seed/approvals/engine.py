@@ -344,11 +344,14 @@ class ApprovalEngine:
             )
 
         event = self._decision_events.setdefault(approval_id, asyncio.Event())
-        remaining = (req.deadline - utc_now()).total_seconds()
-        if remaining <= 0:
-            return await self.expire(approval_id)
         try:
-            await asyncio.wait_for(event.wait(), timeout=remaining)
+            if req.deadline is None:
+                await event.wait()
+            else:
+                remaining = (req.deadline - utc_now()).total_seconds()
+                if remaining <= 0:
+                    return await self.expire(approval_id)
+                await asyncio.wait_for(event.wait(), timeout=remaining)
         except asyncio.TimeoutError:
             # A concurrent decision may have won at the deadline boundary.
             current = self._requests.get(approval_id)
