@@ -69,10 +69,6 @@ class ApprovalEngine:
         default_deadline_seconds: float = 3600.0,
     ) -> None:
         self._requests: dict[str, ApprovalRequest] = {}
-        # Per-request notification lets an in-flight agent await a human
-        # decision without polling. Requests remain fail-closed on timeout.
-        import asyncio
-        self._decision_events: dict[str, asyncio.Event] = {}
         self.evidence: ApprovalEvidenceStore = evidence_store or ApprovalEvidenceStore()
         self.escalation_policy: EscalationPolicy = (
             escalation_policy or EscalationPolicy()
@@ -117,8 +113,6 @@ class ApprovalEngine:
             evidence_ids=list(evidence_ids or []),
         )
         self._requests[req.approval_id] = req
-        import asyncio
-        self._decision_events[req.approval_id] = asyncio.Event()
         log.info(
             "approvals.request",
             approval_id=req.approval_id,
@@ -146,9 +140,6 @@ class ApprovalEngine:
             )
         req.mark_approved(by=approver)
         self._record_evidence(req, decided_by=approver)
-        event = self._decision_events.get(approval_id)
-        if event is not None:
-            event.set()
         log.info("approvals.approve", approval_id=approval_id, approver=approver)
         return ApprovalResult(
             approval_id=approval_id,
@@ -172,9 +163,6 @@ class ApprovalEngine:
             )
         req.mark_rejected(by=approver, reason=reason)
         self._record_evidence(req, decided_by=approver)
-        event = self._decision_events.get(approval_id)
-        if event is not None:
-            event.set()
         log.info(
             "approvals.reject",
             approval_id=approval_id,
@@ -199,9 +187,6 @@ class ApprovalEngine:
             )
         req.mark_expired()
         self._record_evidence(req)
-        event = self._decision_events.get(approval_id)
-        if event is not None:
-            event.set()
         log.info("approvals.expire", approval_id=approval_id)
         return ApprovalResult(
             approval_id=approval_id,
@@ -271,57 +256,6 @@ class ApprovalEngine:
             approval_id=child.approval_id,
             status=ApprovalStatus.PENDING,
             new_approval_id=child.approval_id,
-        )
-
-    async def wait_for_decision(self, approval_id: str) -> ApprovalResult:
-        """Wait until a human decides, or the request deadline expires.
-
-        This does not approve anything itself. Missing requests, terminal
-        requests, and deadlines all fail closed. Approval is signalled by
-        approve/reject/expire; no polling or busy-waiting is used.
-        """
-        import asyncio
-
-        req = self._requests.get(approval_id)
-        if req is None:
-            return ApprovalResult(
-                approval_id=approval_id,
-                status=ApprovalStatus.EXPIRED,
-                reason="request_missing",
-            )
-        if req.status != ApprovalStatus.PENDING:
-            return ApprovalResult(
-                approval_id=approval_id,
-                status=req.status,
-                decided_by=req.decided_by,
-                reason=req.reason,
-            )
-
-        event = self._decision_events.setdefault(approval_id, asyncio.Event())
-        remaining = None
-        if req.deadline is not None:
-            remaining = max(0.0, (req.deadline - utc_now()).total_seconds())
-        try:
-            if remaining is None:
-                await event.wait()
-            else:
-                await asyncio.wait_for(event.wait(), timeout=remaining)
-        except asyncio.TimeoutError:
-            await self.expire(approval_id)
-
-        # Re-read the canonical request state after the notification.
-        current = self._requests.get(approval_id)
-        if current is None:
-            return ApprovalResult(
-                approval_id=approval_id,
-                status=ApprovalStatus.EXPIRED,
-                reason="request_missing",
-            )
-        return ApprovalResult(
-            approval_id=approval_id,
-            status=current.status,
-            decided_by=current.decided_by,
-            reason=current.reason,
         )
 
     # ------------------------------------------------------------------
