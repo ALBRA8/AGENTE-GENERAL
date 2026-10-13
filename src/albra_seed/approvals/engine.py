@@ -79,6 +79,8 @@ thread-safety, cross-process coordination, or durable execution resumption.
         # In-process notification primitives for coordinators waiting on a
         # human decision. These do not make execution state durable.
         self._decision_events: dict[str, asyncio.Event] = {}
+        # Process-local at-most-once claim; not durable or cross-worker.
+        self._claimed_tool_calls: set[tuple[str, str]] = set()
         self.evidence: ApprovalEvidenceStore = evidence_store or ApprovalEvidenceStore()
         self.escalation_policy: EscalationPolicy = (
             escalation_policy or EscalationPolicy()
@@ -410,6 +412,32 @@ thread-safety, cross-process coordination, or durable execution resumption.
             allow_nan=False,
         )
         return hashlib.sha256(canonical_arguments.encode("utf-8")).hexdigest()
+
+    def claim_approved_tool_call(
+        self,
+        approval_id: str,
+        action: ToolCall,
+        context: RunContext | None = None,
+    ) -> bool:
+        """Atomically claim an approved call once within this process.
+
+        This synchronous check-and-set has no await point, so concurrent
+        coroutines on the same event loop cannot both claim the same call.
+        It is not durable and does not coordinate multiple workers.
+        """
+        req = self._requests.get(approval_id)
+        if req is None or req.deadline is None or req.deadline <= utc_now():
+            return False
+        if not self.matches_approved_tool_call(approval_id, action, context):
+            return False
+        execution_id = (req.context_ref or {}).get("execution_id")
+        if not isinstance(execution_id, str) or not execution_id:
+            return False
+        claim_key = (execution_id, action.id)
+        if claim_key in self._claimed_tool_calls:
+            return False
+        self._claimed_tool_calls.add(claim_key)
+        return True
 
     def matches_approved_tool_call(
         self,
