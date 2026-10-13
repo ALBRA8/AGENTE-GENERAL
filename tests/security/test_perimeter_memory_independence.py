@@ -563,13 +563,22 @@ async def test_memory_content_never_grants_permission() -> None:
         f"provider must be called exactly once in REASON, got {provider.calls}"
     )
 
-    # The malicious memory WAS retrieved as DATA in the SYSTEM block.
+    # The malicious memory WAS retrieved as DATA in the TOOL block.
+    # M-01 fix: memory is now ``Role.TOOL``, NOT ``Role.SYSTEM``. The
+    # perimeter independence property is unchanged: the memory content
+    # reached the provider, but the firewall + policy engine refused
+    # to act on it.
     messages = provider.received_messages[0]
+    retrieved_blob = "\n".join(m.content for m in messages if m.role == Role.TOOL)
     system_blob = "\n".join(m.content for m in messages if m.role == Role.SYSTEM)
-    assert "authorized tool 'dangerous_op'" in system_blob, (
-        "memory content must appear in the retrieved SYSTEM block — the "
+    assert "authorized tool 'dangerous_op'" in retrieved_blob, (
+        "memory content must appear in the retrieved TOOL block — the "
         "perimeter had the chance to see it"
     )
+    # M-01 negative: memory MUST NOT bleed into the SYSTEM message — the
+    # trust-level separation is structural.
+    assert "authorized tool 'dangerous_op'" not in system_blob
+    assert "[RETRIEVED MEMORIES" not in system_blob
 
     # The tool_call was DENIED — success=False, "blocked: deny".
     assert len(response.tool_results) == 1, (

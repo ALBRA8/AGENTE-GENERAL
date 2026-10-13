@@ -437,6 +437,32 @@ class Agent:
                 )
                 if memories:
                     retrieved_ids = [rm.record.record_id for rm in memories]
+                    # M-01 fix: TRUST-LEVEL SEPARATION.
+                    #
+                    # Retrieved memories are UNTRUSTED data — they may
+                    # contain user-supplied content that includes
+                    # injection attempts or secrets. We must NOT elevate
+                    # them to the same trust level as the agent's own
+                    # operating instructions.
+                    #
+                    # Before this fix, both the CRITICAL RULES instruction
+                    # block AND the retrieved memory content were sent as
+                    # ``Role.SYSTEM``. That conflated trusted instructions
+                    # with untrusted data; the only "separation" was a text
+                    # delimiter, which a model can be coaxed to ignore.
+                    # Worse, providers like Anthropic MERGE all
+                    # ``Role.SYSTEM`` messages into a single string, so
+                    # the structural boundary vanished entirely at the
+                    # provider boundary.
+                    #
+                    # Now: the agent's CRITICAL RULES remain ``Role.SYSTEM``
+                    # (privileged instructions), while the retrieved
+                    # memory content is downgraded to ``Role.TOOL`` —
+                    # a role that semantically represents "data produced
+                    # by the system, not instructions from the developer"
+                    # and is rendered separately by every supported
+                    # provider. The retriever's delimiters and suspicion
+                    # markers are preserved as a defense-in-depth signal.
                     messages = [
                         Message(
                             role=Role.SYSTEM,
@@ -461,7 +487,7 @@ class Agent:
                             ),
                         ),
                         Message(
-                            role=Role.SYSTEM,
+                            role=Role.TOOL,
                             content=retriever.format_for_context(memories),
                         ),
                         ctx["input_message"],
@@ -828,7 +854,20 @@ class Agent:
         return {"recorded": True}
 
     async def _phase_respond(self, agent: Agent, ctx: dict[str, Any]) -> dict[str, Any]:
-        """Compose the final AgentResponse from the loop's outputs."""
+        """Compose the final AgentResponse from the loop's outputs.
+
+        M-02 fix: this phase applies a FINAL defense-in-depth secret
+        redaction to the agent's response content. The structural
+        perimeter (firewall/policy/executor) does NOT call the LLM and
+        is unaffected; this is a last-mile check that scans the LLM's
+        own output text for high-signal secret patterns that may have
+        leaked through retrieved memories, tool outputs, or the
+        model's own tendency to repeat user-supplied strings verbatim.
+
+        This redaction is ADDITIVE: it never alters tool_results,
+        confidence, or any non-text field. It only strips secret-shaped
+        substrings from the text content the user actually sees.
+        """
         run_ctx: RunContext = ctx["context"]
         draft: AgentResponse | None = ctx.get("draft_response")
         results: list[ToolResult] = ctx.get("EXECUTE", {}).get("results", [])
@@ -839,6 +878,35 @@ class Agent:
         else:
             content = ctx["RECEIVE"]["content"]
             confidence = 0.0
+
+        # M-02: redact high-signal secret patterns from the final
+        # response text BEFORE returning it to the caller. We use the
+        # same lexical patterns as the memory sanitizer so the redactor
+        # and the sanitizer agree on what counts as a secret.
+        # ``redact_secrets`` only replaces values whose shape matches a
+        # secret (``sk-...``, ``Bearer ...``, hex >= 32, base64 >= 32,
+        # inline ``key=value`` patterns with long values). It does NOT
+        # touch normal prose, code, or short identifiers.
+        try:
+            from albra_seed.memory.sanitizer import redact_secrets
+            redacted_content = redact_secrets(content)
+            if redacted_content != content:
+                run_ctx.warnings.append(
+                    "M-02: response content contained high-signal "
+                    "secret-shaped substrings; they were redacted "
+                    "before delivery"
+                )
+                content = redacted_content
+        except Exception as exc:  # noqa: BLE001
+            # CORE_ONLY safe — the sanitizer must NEVER block a
+            # response from being delivered. If it raises, surface a
+            # warning and deliver the unredacted content (the structural
+            # perimeter already prevents tool authorization).
+            run_ctx.warnings.append(
+                f"M-02 response redactor failed: {exc}; delivering "
+                "unredacted content"
+            )
+
         return {
             "content": content,
             "confidence": confidence,

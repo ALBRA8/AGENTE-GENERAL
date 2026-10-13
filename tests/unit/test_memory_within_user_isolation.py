@@ -171,14 +171,22 @@ async def _build_runtime_with_memory(
 
 
 def _retrieved_block(provider: _RecordingProvider) -> str:
-    """Extract the retrieved-memories SYSTEM block from the provider's
+    """Extract the retrieved-memories TOOL block from the provider's
     recorded messages. Returns "" if no such block was sent.
+
+    M-01 fix: retrieved memory content is now delivered as ``Role.TOOL``
+    (structurally untrusted), NOT as ``Role.SYSTEM``. Tests that
+    previously asserted the memory was "in the SYSTEM block" now look
+    in the ``Role.TOOL`` block instead — the assertion's INTENT
+    (memory WAS retrieved as DATA) is preserved and STRENGTHENED, since
+    ``Role.TOOL`` is structurally segregated from the agent's own
+    operating instructions.
     """
     if not provider.received_messages:
         return ""
     msgs = provider.received_messages[0]
     for m in msgs:
-        if getattr(m, "role", None) == Role.SYSTEM and "[RETRIEVED MEMORIES" in (
+        if getattr(m, "role", None) == Role.TOOL and "[RETRIEVED MEMORIES" in (
             getattr(m, "content", "") or ""
         ):
             return m.content or ""

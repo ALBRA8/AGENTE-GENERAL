@@ -132,17 +132,28 @@ def redact_secrets(content: str) -> str:
     result = _INLINE_SECRET_PATTERN.sub(_replace_inline, result)
 
     # Redact standalone secret values (sk-..., Bearer ..., etc.).
-    # Split by whitespace and check each token.
-    tokens = result.split()
+    # We use ``re.finditer`` to locate candidate tokens IN-PLACE rather
+    # than ``str.split()`` — ``split()`` collapses all whitespace runs
+    # (including newlines) into single spaces, which would mangle the
+    # original text even when no secret was found. The M-02 response
+    # redactor relies on ``redact_secrets`` returning the ORIGINAL text
+    # unchanged when no secret is present so it can decide whether to
+    # emit a warning.
     # Strip surrounding quotes, brackets, braces, and trailing punctuation
     # so a value embedded in a JSON-serialized dict (e.g. ``"sk-..."}``)
     # is still caught.
     strip_chars = "\"'.,;:!?)[]{}"
-    for i, token in enumerate(tokens):
+    # ``\S+`` matches maximal non-whitespace runs — same tokens as
+    # ``str.split()`` would yield, but ``re.sub`` lets us replace them
+    # in-place without disturbing the surrounding whitespace structure.
+    def _redact_standalone(match: re.Match[str]) -> str:
+        token = match.group(0)
         stripped = token.strip(strip_chars)
         if _looks_like_secret_value(stripped):
-            tokens[i] = token.replace(stripped, _REDACTED_SECRET)
-    result = " ".join(tokens)
+            return token.replace(stripped, _REDACTED_SECRET)
+        return token
+
+    result = re.sub(r"\S+", _redact_standalone, result)
 
     return result
 
