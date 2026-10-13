@@ -31,7 +31,7 @@ from albra_seed.security.auth_token import (
     AuthorizationToken, AuthorizationIssuer, AuthorizationVerifier,
 )
 from albra_seed.security.auth import AuthPrincipal
-from albra_seed.security.trusted_principal import TrustedPrincipal, TrustedPrincipalIssuer
+from albra_seed.security.trusted_principal import TrustedPrincipal, TrustedPrincipalIssuer, TrustedPrincipalVerifier
 from albra_seed.core.base import ToolContract
 
 
@@ -100,7 +100,12 @@ class TestForgedAuthorization:
         registry, spy = _build_registry_with_spy()
         issuer = AuthorizationIssuer()
         verifier = AuthorizationVerifier(issuer)
-        executor = ToolExecutor(registry, auth_verifier=verifier)
+        tp_issuer = TrustedPrincipalIssuer()
+        executor = ToolExecutor(
+            registry,
+            auth_verifier=verifier,
+            trusted_principal_verifier=TrustedPrincipalVerifier(tp_issuer),
+        )
 
         # Forge an authorization object
         class _ForgedAuth:
@@ -108,7 +113,7 @@ class TestForgedAuthorization:
             decision = "allow"
 
         ctx = RunContext(agent_id="test", task="t")
-        ctx.verified_principal = TrustedPrincipalIssuer().seal(AuthPrincipal(identity="alice", roles=["admin"], is_anonymous=False))
+        ctx.verified_principal = tp_issuer.seal(AuthPrincipal(identity="alice", roles=["admin"], is_anonymous=False))
 
         result = await executor.execute(
             "spy", {"message": "hi"},
@@ -128,10 +133,15 @@ class TestForgedAuthorization:
         registry, spy = _build_registry_with_spy()
         issuer = AuthorizationIssuer()
         verifier = AuthorizationVerifier(issuer)
-        executor = ToolExecutor(registry, auth_verifier=verifier)
+        tp_issuer = TrustedPrincipalIssuer()
+        executor = ToolExecutor(
+            registry,
+            auth_verifier=verifier,
+            trusted_principal_verifier=TrustedPrincipalVerifier(tp_issuer),
+        )
 
         ctx = RunContext(agent_id="test", task="t", execution_id="exec-1", context_id="ctx-1")
-        ctx.verified_principal = TrustedPrincipalIssuer().seal(AuthPrincipal(identity="alice", roles=["admin"], is_anonymous=False))
+        ctx.verified_principal = tp_issuer.seal(AuthPrincipal(identity="alice", roles=["admin"], is_anonymous=False))
 
         token = issuer.issue(
             tool_name="spy",
@@ -156,10 +166,15 @@ class TestForgedAuthorization:
         registry, spy = _build_registry_with_spy()
         issuer = AuthorizationIssuer(ttl_seconds=0.01)
         verifier = AuthorizationVerifier(issuer)
-        executor = ToolExecutor(registry, auth_verifier=verifier)
+        tp_issuer = TrustedPrincipalIssuer()
+        executor = ToolExecutor(
+            registry,
+            auth_verifier=verifier,
+            trusted_principal_verifier=TrustedPrincipalVerifier(tp_issuer),
+        )
 
         ctx = RunContext(agent_id="test", task="t", execution_id="exec-1", context_id="ctx-1")
-        ctx.verified_principal = TrustedPrincipalIssuer().seal(AuthPrincipal(identity="alice", is_anonymous=False))
+        ctx.verified_principal = tp_issuer.seal(AuthPrincipal(identity="alice", is_anonymous=False))
 
         token = issuer.issue(
             tool_name="spy",
@@ -185,10 +200,15 @@ class TestForgedAuthorization:
         registry, spy = _build_registry_with_spy()
         issuer = AuthorizationIssuer()
         verifier = AuthorizationVerifier(issuer)
-        executor = ToolExecutor(registry, auth_verifier=verifier)
+        tp_issuer = TrustedPrincipalIssuer()
+        executor = ToolExecutor(
+            registry,
+            auth_verifier=verifier,
+            trusted_principal_verifier=TrustedPrincipalVerifier(tp_issuer),
+        )
 
         ctx = RunContext(agent_id="test", task="t", execution_id="exec-1", context_id="ctx-1")
-        ctx.verified_principal = TrustedPrincipalIssuer().seal(AuthPrincipal(identity="alice", is_anonymous=False))
+        ctx.verified_principal = tp_issuer.seal(AuthPrincipal(identity="alice", is_anonymous=False))
 
         # Issue token for "echo" but try to execute "spy"
         token = issuer.issue(
@@ -213,10 +233,15 @@ class TestForgedAuthorization:
         registry, spy = _build_registry_with_spy()
         issuer = AuthorizationIssuer()
         verifier = AuthorizationVerifier(issuer)
-        executor = ToolExecutor(registry, auth_verifier=verifier)
+        tp_issuer = TrustedPrincipalIssuer()
+        executor = ToolExecutor(
+            registry,
+            auth_verifier=verifier,
+            trusted_principal_verifier=TrustedPrincipalVerifier(tp_issuer),
+        )
 
         ctx = RunContext(agent_id="test", task="t", execution_id="exec-A")
-        ctx.verified_principal = TrustedPrincipalIssuer().seal(AuthPrincipal(identity="alice", is_anonymous=False))
+        ctx.verified_principal = tp_issuer.seal(AuthPrincipal(identity="alice", is_anonymous=False))
 
         # Issue token for exec-B but try to execute in exec-A
         token = issuer.issue(
@@ -241,10 +266,15 @@ class TestForgedAuthorization:
         registry, spy = _build_registry_with_spy()
         issuer = AuthorizationIssuer()
         verifier = AuthorizationVerifier(issuer)
-        executor = ToolExecutor(registry, auth_verifier=verifier)
+        tp_issuer = TrustedPrincipalIssuer()
+        executor = ToolExecutor(
+            registry,
+            auth_verifier=verifier,
+            trusted_principal_verifier=TrustedPrincipalVerifier(tp_issuer),
+        )
 
         ctx = RunContext(agent_id="test", task="t", execution_id="exec-1", context_id="ctx-1")
-        ctx.verified_principal = TrustedPrincipalIssuer().seal(AuthPrincipal(identity="bob", is_anonymous=False))
+        ctx.verified_principal = tp_issuer.seal(AuthPrincipal(identity="bob", is_anonymous=False))
 
         # Issue token for alice but execute as bob
         token = issuer.issue(
@@ -269,10 +299,15 @@ class TestForgedAuthorization:
         registry, spy = _build_registry_with_spy()
         issuer = AuthorizationIssuer()
         verifier = AuthorizationVerifier(issuer)
-        executor = ToolExecutor(registry, auth_verifier=verifier)
+        tp_issuer = TrustedPrincipalIssuer()
+        executor = ToolExecutor(
+            registry,
+            auth_verifier=verifier,
+            trusted_principal_verifier=TrustedPrincipalVerifier(tp_issuer),
+        )
 
         ctx = RunContext(agent_id="test", task="t", execution_id="exec-1", context_id="ctx-1")
-        ctx.verified_principal = TrustedPrincipalIssuer().seal(AuthPrincipal(identity="alice", is_anonymous=False))
+        ctx.verified_principal = tp_issuer.seal(AuthPrincipal(identity="alice", is_anonymous=False))
 
         token = issuer.issue(
             tool_name="spy",

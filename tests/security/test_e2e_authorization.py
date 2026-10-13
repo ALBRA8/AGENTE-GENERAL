@@ -33,7 +33,7 @@ from albra_seed.security.auth_token import (
     AuthorizationToken, AuthorizationIssuer, AuthorizationVerifier,
 )
 from albra_seed.security.auth import AuthPrincipal
-from albra_seed.security.trusted_principal import TrustedPrincipal, TrustedPrincipalIssuer
+from albra_seed.security.trusted_principal import TrustedPrincipal, TrustedPrincipalIssuer, TrustedPrincipalVerifier
 
 
 # =====================================================================
@@ -247,10 +247,15 @@ class TestEndToEndTokenLifecycle:
 
         issuer = AuthorizationIssuer(ttl_seconds=0.01)
         verifier = AuthorizationVerifier(issuer)
-        executor = ToolExecutor(registry, auth_verifier=verifier)
+        tp_issuer = TrustedPrincipalIssuer()
+        executor = ToolExecutor(
+            registry,
+            auth_verifier=verifier,
+            trusted_principal_verifier=TrustedPrincipalVerifier(tp_issuer),
+        )
 
         ctx = RunContext(agent_id="test", task="t", execution_id="exec-1", context_id="ctx-1")
-        ctx.verified_principal = TrustedPrincipalIssuer().seal(AuthPrincipal(identity="alice", is_anonymous=False))
+        ctx.verified_principal = tp_issuer.seal(AuthPrincipal(identity="alice", is_anonymous=False))
 
         token = issuer.issue(tool_name="echo", principal_id="alice", execution_id="exec-1")
         await asyncio.sleep(0.02)  # expire
@@ -268,10 +273,15 @@ class TestEndToEndTokenLifecycle:
 
         issuer = AuthorizationIssuer()
         verifier = AuthorizationVerifier(issuer)
-        executor = ToolExecutor(registry, auth_verifier=verifier)
+        tp_issuer = TrustedPrincipalIssuer()
+        executor = ToolExecutor(
+            registry,
+            auth_verifier=verifier,
+            trusted_principal_verifier=TrustedPrincipalVerifier(tp_issuer),
+        )
 
         ctx = RunContext(agent_id="test", task="t", execution_id="exec-1", context_id="ctx-1")
-        ctx.verified_principal = TrustedPrincipalIssuer().seal(AuthPrincipal(identity="alice", is_anonymous=False))
+        ctx.verified_principal = tp_issuer.seal(AuthPrincipal(identity="alice", is_anonymous=False))
 
         token = issuer.issue(tool_name="echo", principal_id="alice", execution_id="exec-1")
         issuer.revoke(token.token_id)
@@ -289,10 +299,15 @@ class TestEndToEndTokenLifecycle:
 
         issuer = AuthorizationIssuer()
         verifier = AuthorizationVerifier(issuer)
-        executor = ToolExecutor(registry, auth_verifier=verifier)
+        tp_issuer = TrustedPrincipalIssuer()
+        executor = ToolExecutor(
+            registry,
+            auth_verifier=verifier,
+            trusted_principal_verifier=TrustedPrincipalVerifier(tp_issuer),
+        )
 
         ctx = RunContext(agent_id="test", task="t", execution_id="exec-1", context_id="ctx-1")
-        ctx.verified_principal = TrustedPrincipalIssuer().seal(AuthPrincipal(identity="alice", is_anonymous=False))
+        ctx.verified_principal = tp_issuer.seal(AuthPrincipal(identity="alice", is_anonymous=False))
 
         # Token for "other_tool" but executing "echo"
         token = issuer.issue(tool_name="other_tool", principal_id="alice", execution_id="exec-1")
@@ -310,10 +325,15 @@ class TestEndToEndTokenLifecycle:
 
         issuer = AuthorizationIssuer()
         verifier = AuthorizationVerifier(issuer)
-        executor = ToolExecutor(registry, auth_verifier=verifier)
+        tp_issuer = TrustedPrincipalIssuer()
+        executor = ToolExecutor(
+            registry,
+            auth_verifier=verifier,
+            trusted_principal_verifier=TrustedPrincipalVerifier(tp_issuer),
+        )
 
         ctx = RunContext(agent_id="test", task="t", execution_id="exec-1", context_id="ctx-1")
-        ctx.verified_principal = TrustedPrincipalIssuer().seal(AuthPrincipal(identity="bob", is_anonymous=False))
+        ctx.verified_principal = tp_issuer.seal(AuthPrincipal(identity="bob", is_anonymous=False))
 
         # Token for alice but principal is bob
         token = issuer.issue(tool_name="echo", principal_id="alice", execution_id="exec-1")

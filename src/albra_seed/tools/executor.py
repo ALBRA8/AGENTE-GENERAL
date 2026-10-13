@@ -110,12 +110,14 @@ class ToolExecutor:
         evidence_sink: EvidenceSink | None = None,
         default_timeout: int = 30,
         auth_verifier: Any = None,  # AuthorizationVerifier | None
+        trusted_principal_verifier: Any = None,  # TrustedPrincipalVerifier | None
     ) -> None:
         self.registry = registry
         self._validator = validator or ContractValidator()
         self._evidence_sink = evidence_sink
         self.default_timeout = default_timeout
         self._auth_verifier = auth_verifier
+        self._trusted_principal_verifier = trusted_principal_verifier
         # IDEMPOTENCY (H-08): records call_ids of completed (successful
         # OR failed-but-attempted) executions so a retry with the same
         # call_id is a no-op. Lives for the lifetime of this executor
@@ -202,18 +204,17 @@ class ToolExecutor:
                 exec_id = context.execution_id if context else "unknown"
                 
                 # Resolve TrustedPrincipal from verified_principal.
-                # If verified_principal is not a TrustedPrincipal (e.g. a raw
-                # AuthPrincipal set by a caller), REJECT — only sealed
-                # TrustedPrincipals are accepted.
+                # The TrustedPrincipal must be:
+                # 1. An instance of TrustedPrincipal (not a raw AuthPrincipal)
+                # 2. Cryptographically verified by a TrustedPrincipalVerifier
+                #    that corresponds to the same issuer that sealed it.
+                # If the verifier is missing or the seal is invalid, REJECT.
                 principal_id = None
                 if context is not None and hasattr(context, 'verified_principal'):
                     vp = context.verified_principal
                     if vp is not None:
-                        # Check if this is a TrustedPrincipal (sealed)
                         from albra_seed.security.trusted_principal import TrustedPrincipal
-                        if isinstance(vp, TrustedPrincipal):
-                            principal_id = vp.principal_id
-                        else:
+                        if not isinstance(vp, TrustedPrincipal):
                             # Caller set a raw AuthPrincipal — REJECT
                             return ToolResult(
                                 call_id=call_id or new_id("tc"),
@@ -221,6 +222,29 @@ class ToolExecutor:
                                 error="not authorized: verified_principal is not a sealed TrustedPrincipal (forged identity rejected)",
                                 output={"not_authorized": True, "reason": "unsealed_principal"},
                             )
+                        # CRYPTOGRAPHIC SEAL VERIFICATION:
+                        # Even if the object IS a TrustedPrincipal, we must
+                        # verify its seal is valid and was issued by the
+                        # trusted issuer (not fabricated by the caller).
+                        if self._trusted_principal_verifier is not None:
+                            if not self._trusted_principal_verifier.verify(vp):
+                                # Seal is invalid — forged or tampered
+                                return ToolResult(
+                                    call_id=call_id or new_id("tc"),
+                                    success=False,
+                                    error="not authorized: TrustedPrincipal seal verification failed (forged or tampered identity)",
+                                    output={"not_authorized": True, "reason": "invalid_seal"},
+                                )
+                        else:
+                            # No trusted_principal_verifier configured →
+                            # FAIL-CLOSED: cannot verify the seal → reject.
+                            return ToolResult(
+                                call_id=call_id or new_id("tc"),
+                                success=False,
+                                error="not authorized: no trusted_principal_verifier configured (fail-closed)",
+                                output={"not_authorized": True, "reason": "no_tp_verifier"},
+                            )
+                        principal_id = vp.principal_id
                 
                 ctx_id = context.context_id if context else None
                 

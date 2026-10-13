@@ -424,7 +424,7 @@ async def test_tool_executor_does_not_consult_memory() -> None:
     constant across the BEFORE / AFTER memory storage phases.
     """
     from albra_seed.security.auth import AuthPrincipal
-    from albra_seed.security.trusted_principal import TrustedPrincipal, TrustedPrincipalIssuer
+    from albra_seed.security.trusted_principal import TrustedPrincipal, TrustedPrincipalIssuer, TrustedPrincipalVerifier
     from albra_seed.security.auth_token import (
         AuthorizationIssuer,
         AuthorizationVerifier,
@@ -432,6 +432,7 @@ async def test_tool_executor_does_not_consult_memory() -> None:
 
     issuer = AuthorizationIssuer()
     verifier = AuthorizationVerifier(issuer)
+    tp_issuer = TrustedPrincipalIssuer()
 
     store = InMemoryMemoryStore()
     mgr = MemoryManager(store=store)
@@ -440,7 +441,11 @@ async def test_tool_executor_does_not_consult_memory() -> None:
     # Registry with ONE registered tool: EchoTool.
     registry = ToolRegistry()
     registry.register(EchoTool())
-    executor = ToolExecutor(registry=registry, auth_verifier=verifier)
+    executor = ToolExecutor(
+        registry=registry,
+        auth_verifier=verifier,
+        trusted_principal_verifier=TrustedPrincipalVerifier(tp_issuer),
+    )
 
     ctx = RunContext(
         agent_id=agent_id,
@@ -450,7 +455,7 @@ async def test_tool_executor_does_not_consult_memory() -> None:
         execution_id="exec-1",
         context_id="ctx-1",
     )
-    ctx.verified_principal = TrustedPrincipalIssuer().seal(AuthPrincipal(
+    ctx.verified_principal = tp_issuer.seal(AuthPrincipal(
         identity="alice", is_anonymous=False
     ))
 

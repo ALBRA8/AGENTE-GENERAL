@@ -18,7 +18,7 @@ from albra_seed.security.auth_token import (
     AuthorizationToken, AuthorizationIssuer, AuthorizationVerifier,
 )
 from albra_seed.security.auth import AuthPrincipal
-from albra_seed.security.trusted_principal import TrustedPrincipal, TrustedPrincipalIssuer
+from albra_seed.security.trusted_principal import TrustedPrincipal, TrustedPrincipalIssuer, TrustedPrincipalVerifier
 
 
 class _SpyTool(EchoTool):
@@ -38,14 +38,19 @@ class _SpyTool(EchoTool):
         return await super().execute(arguments, context=context, dry_run=dry_run)
 
 
-def _setup() -> tuple[ToolRegistry, _SpyTool, AuthorizationIssuer, AuthorizationVerifier, ToolExecutor]:
+def _setup() -> tuple[ToolRegistry, _SpyTool, AuthorizationIssuer, AuthorizationVerifier, ToolExecutor, TrustedPrincipalIssuer]:
     registry = ToolRegistry()
     spy = _SpyTool()
     registry.register(spy)
     issuer = AuthorizationIssuer()
     verifier = AuthorizationVerifier(issuer)
-    executor = ToolExecutor(registry, auth_verifier=verifier)
-    return registry, spy, issuer, verifier, executor
+    tp_issuer = TrustedPrincipalIssuer()
+    executor = ToolExecutor(
+        registry,
+        auth_verifier=verifier,
+        trusted_principal_verifier=TrustedPrincipalVerifier(tp_issuer),
+    )
+    return registry, spy, issuer, verifier, executor, tp_issuer
 
 
 class TestMandatoryPrincipalValidation:
@@ -54,7 +59,7 @@ class TestMandatoryPrincipalValidation:
     @pytest.mark.asyncio
     async def test_valid_token_with_principal_absent_in_context(self):
         """Token valid but context has no verified_principal → REJECTED."""
-        registry, spy, issuer, _, executor = _setup()
+        registry, spy, issuer, _, executor, _tp_issuer = _setup()
         ctx = RunContext(agent_id="a", task="t", execution_id="exec-1", context_id="ctx-1")
         # NO verified_principal set
         token = issuer.issue(tool_name="spy", principal_id="alice", execution_id="exec-1", context_id="ctx-1")
@@ -65,9 +70,9 @@ class TestMandatoryPrincipalValidation:
     @pytest.mark.asyncio
     async def test_valid_token_with_different_principal(self):
         """Token for alice, context principal is bob → REJECTED."""
-        registry, spy, issuer, _, executor = _setup()
+        registry, spy, issuer, _, executor, tp_issuer = _setup()
         ctx = RunContext(agent_id="a", task="t", execution_id="exec-1", context_id="ctx-1")
-        ctx.verified_principal = TrustedPrincipalIssuer().seal(AuthPrincipal(identity="bob", is_anonymous=False))
+        ctx.verified_principal = tp_issuer.seal(AuthPrincipal(identity="bob", is_anonymous=False))
         token = issuer.issue(tool_name="spy", principal_id="alice", execution_id="exec-1", context_id="ctx-1")
         result = await executor.execute("spy", {"message": "hi"}, context=ctx, authorization=token)
         assert result.success is False
@@ -80,9 +85,9 @@ class TestMandatoryContextValidation:
     @pytest.mark.asyncio
     async def test_valid_token_with_context_id_absent(self):
         """Token valid but context has no context_id → REJECTED."""
-        registry, spy, issuer, _, executor = _setup()
+        registry, spy, issuer, _, executor, tp_issuer = _setup()
         ctx = RunContext(agent_id="a", task="t", execution_id="exec-1")
-        ctx.verified_principal = TrustedPrincipalIssuer().seal(AuthPrincipal(identity="alice", is_anonymous=False))
+        ctx.verified_principal = tp_issuer.seal(AuthPrincipal(identity="alice", is_anonymous=False))
         token = issuer.issue(tool_name="spy", principal_id="alice", execution_id="exec-1", context_id="ctx-1")
         result = await executor.execute("spy", {"message": "hi"}, context=ctx, authorization=token)
         assert result.success is False
@@ -91,9 +96,9 @@ class TestMandatoryContextValidation:
     @pytest.mark.asyncio
     async def test_valid_token_with_different_context_id(self):
         """Token for ctx-1, context has ctx-2 → REJECTED."""
-        registry, spy, issuer, _, executor = _setup()
+        registry, spy, issuer, _, executor, tp_issuer = _setup()
         ctx = RunContext(agent_id="a", task="t", execution_id="exec-1", context_id="ctx-2")
-        ctx.verified_principal = TrustedPrincipalIssuer().seal(AuthPrincipal(identity="alice", is_anonymous=False))
+        ctx.verified_principal = tp_issuer.seal(AuthPrincipal(identity="alice", is_anonymous=False))
         token = issuer.issue(tool_name="spy", principal_id="alice", execution_id="exec-1", context_id="ctx-1")
         result = await executor.execute("spy", {"message": "hi"}, context=ctx, authorization=token)
         assert result.success is False
@@ -102,9 +107,9 @@ class TestMandatoryContextValidation:
     @pytest.mark.asyncio
     async def test_valid_token_with_different_execution_id(self):
         """Token for exec-1, context has exec-2 → REJECTED."""
-        registry, spy, issuer, _, executor = _setup()
+        registry, spy, issuer, _, executor, tp_issuer = _setup()
         ctx = RunContext(agent_id="a", task="t", execution_id="exec-2", context_id="ctx-1")
-        ctx.verified_principal = TrustedPrincipalIssuer().seal(AuthPrincipal(identity="alice", is_anonymous=False))
+        ctx.verified_principal = tp_issuer.seal(AuthPrincipal(identity="alice", is_anonymous=False))
         token = issuer.issue(tool_name="spy", principal_id="alice", execution_id="exec-1", context_id="ctx-1")
         result = await executor.execute("spy", {"message": "hi"}, context=ctx, authorization=token)
         assert result.success is False
@@ -117,9 +122,9 @@ class TestForgedOrAlteredToken:
     @pytest.mark.asyncio
     async def test_altered_token_signature_rejected(self):
         """Token with tampered signature → REJECTED."""
-        registry, spy, issuer, _, executor = _setup()
+        registry, spy, issuer, _, executor, tp_issuer = _setup()
         ctx = RunContext(agent_id="a", task="t", execution_id="exec-1", context_id="ctx-1")
-        ctx.verified_principal = TrustedPrincipalIssuer().seal(AuthPrincipal(identity="alice", is_anonymous=False))
+        ctx.verified_principal = tp_issuer.seal(AuthPrincipal(identity="alice", is_anonymous=False))
         token = issuer.issue(tool_name="spy", principal_id="alice", execution_id="exec-1", context_id="ctx-1")
         # Tamper with the signature
         import dataclasses
@@ -131,9 +136,9 @@ class TestForgedOrAlteredToken:
     @pytest.mark.asyncio
     async def test_non_token_object_rejected(self):
         """A non-AuthorizationToken object → REJECTED."""
-        registry, spy, issuer, _, executor = _setup()
+        registry, spy, issuer, _, executor, tp_issuer = _setup()
         ctx = RunContext(agent_id="a", task="t", execution_id="exec-1", context_id="ctx-1")
-        ctx.verified_principal = TrustedPrincipalIssuer().seal(AuthPrincipal(identity="alice", is_anonymous=False))
+        ctx.verified_principal = tp_issuer.seal(AuthPrincipal(identity="alice", is_anonymous=False))
         class _Fake:
             allowed = True
             decision = "allow"
@@ -148,9 +153,9 @@ class TestLegitimateExecution:
     @pytest.mark.asyncio
     async def test_legitimate_execution_succeeds(self):
         """All fields match → tool executes exactly once."""
-        registry, spy, issuer, _, executor = _setup()
+        registry, spy, issuer, _, executor, tp_issuer = _setup()
         ctx = RunContext(agent_id="a", task="t", execution_id="exec-1", context_id="ctx-1")
-        ctx.verified_principal = TrustedPrincipalIssuer().seal(AuthPrincipal(identity="alice", is_anonymous=False))
+        ctx.verified_principal = tp_issuer.seal(AuthPrincipal(identity="alice", is_anonymous=False))
         token = issuer.issue(tool_name="spy", principal_id="alice", execution_id="exec-1", context_id="ctx-1")
         result = await executor.execute("spy", {"message": "hi"}, context=ctx, authorization=token, call_id="c1")
         assert result.success is True

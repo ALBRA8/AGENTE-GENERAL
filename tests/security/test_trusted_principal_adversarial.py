@@ -46,7 +46,11 @@ def _setup():
     auth_issuer = AuthorizationIssuer()
     auth_verifier = AuthorizationVerifier(auth_issuer)
     tp_issuer = TrustedPrincipalIssuer()
-    executor = ToolExecutor(registry, auth_verifier=auth_verifier)
+    executor = ToolExecutor(
+        registry,
+        auth_verifier=auth_verifier,
+        trusted_principal_verifier=TrustedPrincipalVerifier(tp_issuer),
+    )
     return registry, spy, auth_issuer, auth_verifier, executor, tp_issuer
 
 

@@ -166,6 +166,14 @@ class Agent:
         # When None, falls back to legacy mode (accept any object with
         # allowed=True — backward compatible but less secure).
         self._auth_verifier = auth_verifier
+        # Cached IdentityResolver — holds the TrustedPrincipalIssuer with
+        # a per-Agent secret key. Cached so the SAME issuer (and thus the
+        # SAME verifier) is used across ALL cognitive-loop iterations.
+        # Without caching, _phase_check_permissions would create a NEW
+        # resolver per iteration, re-sealing verified_principal with a
+        # different key each time — and the executor's verifier (set
+        # once) would reject every iteration after the first.
+        self._identity_resolver: Any = None  # IdentityResolver | None
 
     # =====================================================================
     # PUBLIC API
@@ -1089,9 +1097,31 @@ class Agent:
         # anonymous principal (NoopAuthenticator) or None (a real
         # Authenticator that refuses unauthenticated callers).
         auth = self.runtime.get_component("authenticator")
-        resolver = IdentityResolver(auth)
+        # Cache the IdentityResolver on the Agent so the SAME issuer (and
+        # thus the SAME TrustedPrincipalVerifier) is used across ALL
+        # cognitive-loop iterations. Each iteration's
+        # _phase_check_permissions re-seals verified_principal — without
+        # caching, a new resolver (new secret key) would re-seal it
+        # every iteration, and the executor's verifier (set once from
+        # the first resolver) would reject every iteration after the
+        # first with "invalid_seal".
+        if self._identity_resolver is None:
+            self._identity_resolver = IdentityResolver(auth)
+        resolver = self._identity_resolver
         token: str | None = ctx.get("token")
         principal = await resolver.resolve_and_attach(run_ctx, token=token)
+        
+        # Connect the TrustedPrincipalVerifier from the resolver to the
+        # ToolExecutor. This ensures the executor can cryptographically
+        # verify the seal on verified_principal — not just check isinstance.
+        # The verifier corresponds to the SAME issuer that sealed the
+        # principal in resolve_and_attach(). Because the resolver is
+        # cached, this verifier is stable across iterations.
+        tp_verifier = resolver.trusted_verifier
+        executor = self._get_tool_executor()
+        if executor is not None and getattr(executor, '_trusted_principal_verifier', None) is None:
+            executor._trusted_principal_verifier = tp_verifier
+        
         actor_roles: list[str] | None = (
             list(principal.roles) if principal is not None else None
         )
