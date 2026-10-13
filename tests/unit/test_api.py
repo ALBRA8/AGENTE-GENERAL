@@ -367,3 +367,12 @@ def test_execution_endpoint_passes_bearer_to_registered_authenticator(
 
     assert response.status_code == 200, response.text
     assert "valid-test-token" in authenticator.seen_tokens
+
+    with TestClient(app) as client:
+        rejected = client.post(
+            "/api/v1/execution",
+            headers={"Authorization": "Bearer invalid-test-token"},
+            json={"input": "should not run"},
+        )
+    assert rejected.status_code == 401
+    assert "invalid-test-token" in authenticator.seen_tokens
