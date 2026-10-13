@@ -3,7 +3,7 @@
 > **Canonical single source of truth for ALBRA SEED certification state.**
 
 **Last verified:** 2026-10-13
-**Commit: `a2a8dbd820791ccf83a0adeb2c48e56d7d991dbd`
+**Commit: `4d3afcd0fa586404c1724a039994850c78e757a8`
 **Status:** `AUDIT_CANDIDATE` — pending independent audit. NOT READY_TO_FREEZE.
 
 ---
