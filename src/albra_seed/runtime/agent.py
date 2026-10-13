@@ -1152,6 +1152,7 @@ class Agent:
         )
 
         for call in plan:
+            hitl_approval_id: str | None = None
             # DEFAULT-DENY: a Tool call requires AT LEAST ONE active gate
             # (firewall OR policy engine). If BOTH are absent, DENY.
             # The decision only becomes "allow" if an active gate explicitly
@@ -1290,6 +1291,7 @@ class Agent:
                     call, context=run_ctx, actor=f"principal:{actor_id}"
                 )
                 approval_id = getattr(approval_result, "approval_id", None)
+                hitl_approval_id = approval_id
                 approval_status = getattr(approval_result, "status", None)
                 status_value = (
                     approval_status.value
@@ -1505,6 +1507,7 @@ class Agent:
                 "tool": call.tool_name,
                 "decision": decision,
                 "authorization": authorization,
+                "approval_id": hitl_approval_id if decision == "allow" else None,
             })
             if decision == "deny":
                 run_ctx.warnings.append(
@@ -1793,6 +1796,18 @@ class Agent:
                     call_id=call.id,
                 )
             except Exception as exc:  # noqa: BLE001
+                # The external effect may have happened before an executor
+                # infrastructure error surfaced. Persist UNKNOWN and retain
+                # the one-shot claim; never automatically retry this call.
+                approval_id = decision.get("approval_id")
+                approval_engine = self.runtime.get_component(COMPONENT_APPROVAL_ENGINE)
+                if approval_id and approval_engine is not None and hasattr(
+                    approval_engine, "record_dispatch_outcome"
+                ):
+                    approval_engine.record_dispatch_outcome(
+                        approval_id, call, run_ctx, outcome="unknown",
+                        detail="tool_executor_raised",
+                    )
                 # The executor itself raised (NOT the tool — tool
                 # exceptions are caught inside the executor and returned
                 # as failed ToolResults). This is an infrastructure error
@@ -1806,6 +1821,19 @@ class Agent:
                     f"tool {call.tool_name} failed: {exc}"
                 )
                 continue
+            # Persist a terminal observation for durable HITL calls. A failed
+            # ToolResult is recorded as UNKNOWN because the tool may have
+            # performed a side effect before returning/raising an error.
+            approval_id = decision.get("approval_id")
+            approval_engine = self.runtime.get_component(COMPONENT_APPROVAL_ENGINE)
+            if approval_id and approval_engine is not None and hasattr(
+                approval_engine, "record_dispatch_outcome"
+            ):
+                approval_engine.record_dispatch_outcome(
+                    approval_id, call, run_ctx,
+                    outcome="succeeded" if result.success else "unknown",
+                    detail="tool_executor_success" if result.success else "tool_returned_failure",
+                )
             # H-14: Only mark as executed AFTER the executor successfully
             # dispatched the call. If the executor rejected (auth failure,
             # no tp_verifier, invalid token), the call_id is NOT marked —
