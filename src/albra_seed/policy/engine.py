@@ -168,16 +168,88 @@ class PolicyEngine:
                 except Exception:  # noqa: BLE001
                     has_permission = False  # fail-closed
 
-        # Pre-check autonomy (DEFAULT-DENY when required autonomy not met).
-        autonomy_ok = True
-        if (
-            matched_rule is not None
-            and self.autonomy_manager is not None
-            and run_autonomy is not None
-        ):
-            autonomy_ok = self.autonomy_manager.can_perform(
-                run_autonomy, matched_rule.autonomy_required
-            )
+        # Pre-check autonomy (FAIL-CLOSED).
+        #
+        # SECURITY INVARIANT (B-SEC-AUTONOMY):
+        # An ALLOW rule with ``autonomy_required > L0_OBSERVE`` MUST NOT
+        # pass without explicit verification. The previous code
+        # initialized ``autonomy_ok = True`` and only ran the check
+        # when ALL of (matched_rule, autonomy_manager, run_autonomy)
+        # were present — a missing manager or missing context silently
+        # bypassed the check, allowing a high-autonomy action to be
+        # authorized without verification. That is fail-open.
+        #
+        # New semantics (fail-closed):
+        #   * If ``matched_rule`` is None → autonomy check is
+        #     irrelevant (``default_decision`` applies; no rule to
+        #     enforce autonomy on). ``autonomy_ok`` stays False but is
+        #     not consulted (the rule decision won't be ALLOW).
+        #   * If ``matched_rule.autonomy_required == L0_OBSERVE`` →
+        #     everyone passes (L0 is the floor; no autonomy gate).
+        #   * Otherwise (rule requires L1+):
+        #       - Resolve ``run_autonomy``: None → ``L0_OBSERVE``
+        #         (most restrictive, per auditor instruction).
+        #       - If ``autonomy_manager`` is available, call
+        #         ``can_perform`` wrapped in try/except — fail-closed
+        #         on exception.
+        #       - If ``autonomy_manager`` is None, perform the inline
+        #         comparison ``int(agent) >= int(required)`` (same
+        #         semantics as ``AutonomyManager.can_perform``; the
+        #         manager is a thin wrapper over this comparison, so
+        #         omitting it does NOT weaken the check).
+        #       - ``autonomy_ok`` is True ONLY if the comparison
+        #         succeeds.
+        #
+        # Post-check distinction (DENY vs REQUIRE_HITL):
+        #   * ALLOW + ``autonomy_ok=False`` + ``autonomy_verifiable=True``
+        #     → ``REQUIRE_HITL`` (the level IS verifiable, just
+        #     insufficient; a human can approve at a higher level).
+        #   * ALLOW + ``autonomy_ok=False`` + ``autonomy_verifiable=False``
+        #     → ``DENY`` (we could NOT verify — manager raised an
+        #     exception; fail-closed; do not let the action wait for
+        #     HITL on an unverifiable gate).
+        autonomy_ok = False
+        autonomy_verifiable = False
+        if matched_rule is not None:
+            required = matched_rule.autonomy_required
+            if required == AutonomyLevel.L0_OBSERVE:
+                # L0 is the floor — everyone passes, no gate.
+                autonomy_ok = True
+                autonomy_verifiable = True
+            else:
+                # Rule requires L1+. Resolve the agent's level.
+                # None → L0_OBSERVE (most restrictive, per auditor).
+                resolved_autonomy = (
+                    run_autonomy
+                    if run_autonomy is not None
+                    else AutonomyLevel.L0_OBSERVE
+                )
+                if self.autonomy_manager is not None:
+                    try:
+                        autonomy_ok = bool(
+                            self.autonomy_manager.can_perform(
+                                resolved_autonomy, required
+                            )
+                        )
+                        autonomy_verifiable = True
+                    except Exception:  # noqa: BLE001
+                        # Manager raised — cannot verify. Fail-closed.
+                        autonomy_ok = False
+                        autonomy_verifiable = False
+                else:
+                    # No manager configured. The autonomy check is a
+                    # simple integer comparison (agent_level >=
+                    # required_level). We perform it inline so the
+                    # check is NEVER skipped. This is the same logic
+                    # AutonomyManager.can_perform uses.
+                    try:
+                        autonomy_ok = (
+                            int(resolved_autonomy) >= int(required)
+                        )
+                        autonomy_verifiable = True
+                    except Exception:  # noqa: BLE001
+                        autonomy_ok = False
+                        autonomy_verifiable = False
 
         # Build ActionContext and evaluate.
         ctx = ActionContext(
@@ -198,13 +270,32 @@ class PolicyEngine:
         eval_ = self.evaluator.evaluate(ctx)
 
         # Post-checks: ALLOW requires both permission AND autonomy.
+        #
+        # SECURITY INVARIANT (B-SEC-AUTONOMY):
+        #   * ALLOW + ``not has_permission`` → DENY (permission is
+        #     absolute; cannot be escalated by HITL).
+        #   * ALLOW + ``not autonomy_ok`` + ``autonomy_verifiable`` →
+        #     REQUIRE_HITL (the level IS verifiable, just insufficient;
+        #     a human can approve at a higher level).
+        #   * ALLOW + ``not autonomy_ok`` + ``not autonomy_verifiable``
+        #     → DENY (we could NOT verify — manager raised an exception;
+        #     fail-closed; do not let the action wait for HITL on an
+        #     unverifiable gate).
+        #
+        # In all three cases, the action does NOT reach the executor
+        # (both DENY and REQUIRE_HITL block execution). The distinction
+        # is whether HITL can upgrade the verdict.
         if eval_.decision == PolicyDecision.ALLOW:
             if not has_permission:
                 eval_.decision = PolicyDecision.DENY
                 eval_.reasons.append("permission_missing")
             elif not autonomy_ok:
-                eval_.decision = PolicyDecision.REQUIRE_HITL
-                eval_.reasons.append("autonomy_insufficient")
+                if autonomy_verifiable:
+                    eval_.decision = PolicyDecision.REQUIRE_HITL
+                    eval_.reasons.append("autonomy_insufficient")
+                else:
+                    eval_.decision = PolicyDecision.DENY
+                    eval_.reasons.append("autonomy_unverifiable")
 
         log.info(
             "policy.evaluate",
