@@ -151,6 +151,7 @@ thread-safety, cross-process coordination, or durable execution resumption.
         # A delayed background sweep must never permit a late approval.
         if req.is_expired():
             req.mark_expired()
+            req.reason = "deadline_passed"
             self._record_evidence(req)
             self._signal_decision(approval_id)
             log.info("approvals.expire_before_approve", approval_id=approval_id)
@@ -187,6 +188,7 @@ thread-safety, cross-process coordination, or durable execution resumption.
         # do not mutate a request after its deadline.
         if req.is_expired():
             req.mark_expired()
+            req.reason = "deadline_passed"
             self._record_evidence(req)
             self._signal_decision(approval_id)
             log.info("approvals.expire_before_reject", approval_id=approval_id)
@@ -220,7 +222,10 @@ thread-safety, cross-process coordination, or durable execution resumption.
                 status=self._status_of(approval_id),
                 reason="not_pending_or_missing",
             )
+        deadline_passed = req.is_expired()
         req.mark_expired()
+        if deadline_passed:
+            req.reason = "deadline_passed"
         self._record_evidence(req)
         self._signal_decision(approval_id)
         log.info("approvals.expire", approval_id=approval_id)
