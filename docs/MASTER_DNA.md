@@ -374,3 +374,24 @@ Changes to it MUST:
 **PRINCIPLE MAESTRO:**
 > *El ADN universal no es negociable. Cada agente ALBRA lo hereda, lo
 > preserva, y lo extiende — nunca lo debilita.*
+
+
+## Known Scalability Limitation: Memory Retrieval Candidate Set
+
+The MemoryRetriever operates on a bounded candidate set before performing
+ranking. The default  is 10000 memories per isolation
+bucket (agent_id + domain + user_id + context_id). The store returns the
+most recent N memories (by ), and the retriever then
+scores and ranks them.
+
+**Implication:** at very large scales (>10000 matching memories in a single
+isolation bucket), a relevant OLD memory could be excluded from the candidate
+set before ranking even happens. The lexical-match signal never sees it.
+
+**Mitigations available:**
+- Increase  (trades memory for coverage)
+- Use semantic retrieval (future: push scoring into the store)
+- Archive old memories to reduce the active set size
+
+This is a **known limitation**, not a defect. It does not contradict any
+formal requirement of the Seed.

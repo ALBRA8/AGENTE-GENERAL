@@ -77,7 +77,28 @@ class TrustedPrincipalIssuer:
         self, principal_id: str, kind: str, roles: tuple[str, ...],
         auth_method: str, is_anonymous: bool, sealed_at: float,
     ) -> str:
-        return f"{principal_id}|{kind}|{','.join(sorted(roles))}|{auth_method}|{is_anonymous}|{sealed_at}"
+        """Canonical representation for HMAC signing.
+        
+        Uses JSON serialization with sorted keys to guarantee:
+        1. No separator collisions (JSON escapes special characters)
+        2. Deterministic ordering (sorted roles)
+        3. Type-ambiguous fields are unambiguous (JSON booleans, numbers)
+        
+        This prevents attacks like:
+        - roles=("admin,foo",) vs roles=("admin", "foo") — JSON arrays
+          distinguish a single element containing a comma from two elements
+        - principal_id="a|b" colliding with principal_id="a", kind="b" —
+          JSON key-value pairs prevent field-boundary ambiguity
+        """
+        import json
+        return json.dumps({
+            "principal_id": principal_id,
+            "kind": kind,
+            "roles": sorted(roles),
+            "auth_method": auth_method,
+            "is_anonymous": is_anonymous,
+            "sealed_at": sealed_at,
+        }, sort_keys=True, separators=(",", ":"))
 
     def seal(self, principal: Any) -> TrustedPrincipal:
         """Seal an AuthPrincipal into a TrustedPrincipal.

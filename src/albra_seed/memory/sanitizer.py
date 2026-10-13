@@ -342,19 +342,45 @@ def sanitize_injections(content: str) -> str:
     return result
 
 
+def _detect_secrets(content: str) -> bool:
+    """Unified secret detection used by BOTH assess_suspicion() and redact_secrets().
+    
+    This ensures that any content redacted by redact_secrets() is ALSO
+    classified as SUSPICIOUS by assess_suspicion(). No divergences.
+    
+    Detects:
+    1. Inline key=value patterns (_INLINE_SECRET_PATTERN + _should_redact_inline)
+    2. Standalone secret values (_looks_like_secret_value)
+    """
+    if not isinstance(content, str):
+        return False
+    # Check inline patterns
+    if _INLINE_SECRET_PATTERN.search(content):
+        return True
+    # Check standalone secret values (split by whitespace, check each token)
+    for token in content.split():
+        stripped = token.rstrip(".,;:!?)\"'}]")
+        if _looks_like_secret_value(stripped):
+            return True
+    return False
+
+
 def assess_suspicion(content: str) -> SuspicionLevel:
     """Assess how suspicious a memory content is.
-
+    
+    Uses _detect_secrets() (the SAME function used by redact_secrets())
+    to ensure detection → classification alignment. No divergence possible.
+    
     Returns:
     - ``CLEAN``: no injection patterns, no secrets detected
-    - ``SUSPICIOUS``: contains secrets OR mild injection indicators
+    - ``SUSPICIOUS``: contains secrets (inline OR standalone)
     - ``MALICIOUS``: contains explicit injection patterns
     """
     if not isinstance(content, str):
         return SuspicionLevel.CLEAN
 
     has_injection = detect_instruction_injection(content)
-    has_secret = bool(_INLINE_SECRET_PATTERN.search(content))
+    has_secret = _detect_secrets(content)
 
     if has_injection:
         return SuspicionLevel.MALICIOUS

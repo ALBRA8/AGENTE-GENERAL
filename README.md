@@ -59,7 +59,7 @@ python scripts/clean_room_verify.py     # 17/17 required + 2/2 optional PASS
 python scripts/audit_matrix.py          # 40/40 VERIFIED
 python scripts/parity_check.py          # exit 0, 106/106 DNA
 python scripts/contamination_scan.py    # exit 0, is_clean=True
-python -m pytest tests/ -q              # 769 passed (732 baseline + 16 cognitive-mode + 21 adversarial security tests)
+python -m pytest tests/ -q              # 833 passed
 ```
 
 Expected last line of clean_room: `CLEAN-ROOM: PASS` (17/17 required + 2/2 optional).
@@ -383,7 +383,7 @@ MIT — see [LICENSE](LICENSE).
 | Decision + learning loop      | `DecisionMemory` + `LearningManager` wired into `_phase_record` (HITL-gated proposals) |
 | Master DNA contract           | [`docs/MASTER_DNA.md`](docs/MASTER_DNA.md) — every guarantee testable |
 | Ecosystem conformity matrix   | [`docs/ECOSYSTEM_CONFORMITY.md`](docs/ECOSYSTEM_CONFORMITY.md) — 9 known ALBRA repos |
-| Final status                 | **`READY_TO_FREEZE`**                     |
+| Final status                 | `AUDIT_CANDIDATE`                     |
 
 > Canonical certification record: **[`docs/CERTIFICATION.md`](docs/CERTIFICATION.md)**.
 
