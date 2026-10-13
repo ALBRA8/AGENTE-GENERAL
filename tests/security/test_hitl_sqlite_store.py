@@ -255,3 +255,23 @@ def test_independent_processes_cannot_claim_the_same_dispatch(tmp_path):
         ))
     assert sum(results) == 1
     assert coordinator.get("approval-1").state is SuspendedExecutionState.CLAIMED
+
+
+def test_crash_after_external_effect_before_outcome_is_not_replayed(tmp_path):
+    """An unknown side-effect outcome remains claimed after a worker restart."""
+    path = tmp_path / "approvals.sqlite3"
+    coordinator, now = _registered(path)
+    _approve(coordinator, now)
+    _claim(coordinator, now)
+
+    # Model an external service accepting the effect, followed by a process
+    # crash before the caller could persist a success outcome.
+    simulated_external_effects = ["message accepted"]
+    recovered = SQLiteSuspendedExecutionCoordinator(path)
+    with pytest.raises(SuspendedExecutionError, match="not approved"):
+        _claim(recovered, now)
+
+    # Recovery does not retry the effect to guess whether the first attempt ran.
+    assert simulated_external_effects == ["message accepted"]
+    assert recovered.get("approval-1").state is SuspendedExecutionState.CLAIMED
+    assert recovered.get_dispatch_outcome("approval-1") is None
