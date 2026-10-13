@@ -3,7 +3,7 @@
 > **Canonical single source of truth for ALBRA SEED certification state.**
 
 **Last verified:** 2026-10-13
-**Commit: `b8d9bd16b7bd3af4b2338ef8b68d8a4bb1a3bd74`
+**Commit:** `2c78ebebf4af2e1713af636a5047ea1ebd83aeb9`
 **Status:** `AUDIT_CANDIDATE` — pending independent audit. NOT READY_TO_FREEZE.
 
 ---
@@ -15,7 +15,7 @@
 | Universal DNA components | 106 | `src/albra_seed/parity/dna.py` |
 | Audit matrix probes | 40 | `scripts/audit_matrix.py` |
 | Total tests (local, with z-ai CLI) | 906 | `pytest --collect-only -q` |
-| Total tests (CI, without z-ai CLI) | 900 passed + 1 skipped | GitHub Actions |
+| Total tests (CI, without z-ai CLI) | 901 passed + 1 skipped | GitHub Actions |
 | A2A tests | 72 | `tests/a2a/` |
 | Golden flows | 13 | `tests/golden/` |
 | Security tests | ~135 | `tests/security/` |
@@ -26,7 +26,7 @@
 | Gate | Result | Evidence |
 |---|---|---|
 | Tests (local) | PASS | 906 passed, 1 warning (asyncio ResourceWarning) |
-| Tests (CI) | PASS | 900 passed + 1 skipped (z-ai module), 3/3 jobs success |
+| Tests (CI) | PASS | 901 passed + 1 skipped (z-ai module), 3/3 jobs success |
 | Audit Matrix | PASS | 40/40 VERIFIED |
 | Genetic Parity | PASS | exit 0, 106/106 DNA, is_pure_seed=True |
 | Genetic Contamination | PASS | exit 0, is_clean=True |
@@ -45,8 +45,8 @@ CI runs on every push to `feat/albra-universal-core` via PR #2 trigger.
 ## Test count reconciliation
 
 - **Local (with z-ai CLI):** 906 passed + 1 warning (asyncio ResourceWarning, not our code)
-- **CI (without z-ai CLI):** 900 passed + 1 skipped (`tests/llm_real/` module-level skip)
-- **Formula:** 906 local - 5 llm_real tests + 1 module-level skip = 900 + 1 skip
+- **CI (without z-ai CLI):** 901 passed + 1 skipped (`tests/llm_real/` module-level skip)
+- **Formula:** 906 local - 5 llm_real tests = 901 passed + 1 module-level skip
 
 ## Limitations
 
