@@ -28,6 +28,12 @@ execution within one process/event loop. It rejects pending, mismatched, and
 past-deadline requests. This is process-local at-most-once protection only;
 it does not survive restarts or coordinate multiple workers.
 
+The approval engine also exposes a process-local at-most-once claim keyed by
+execution ID and tool-call ID. The check-and-set is protected by a thread lock,
+and a regression test races 64 contenders across a thread pool to verify that
+only one claim succeeds. This guarantee is limited to one live process; it is
+not durable and does not coordinate workers or survive restarts.
+
 This helper is defense in depth for a future coordinator, not a dispatch
 authorization by itself. The caller must still re-check current policy and
 principal authorization. The approval engine remains in-memory, and the
