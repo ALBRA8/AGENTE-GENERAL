@@ -60,7 +60,11 @@ class ApprovalResult(BaseModel):
 
 
 class ApprovalEngine:
-    """HITL approval engine. In-memory by default; thread-safe via asyncio.Lock."""
+    """In-memory HITL approval engine for use within a single asyncio event loop.
+
+State and notifications are process-local; this class does not provide
+thread-safety, cross-process coordination, or durable execution resumption.
+"""
 
     def __init__(
         self,
