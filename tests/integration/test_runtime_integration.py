@@ -401,11 +401,11 @@ async def test_workflow_engine_with_hitl_resume() -> None:
 # =====================================================================
 
 
-@pytest.mark.parametrize("human_decision", ["approve", "reject", "expire"])
+@pytest.mark.parametrize("human_decision", ["approve", "reject", "expire", "identity_changed"])
 async def test_agent_suspends_and_resumes_same_bound_tool_call_once(
     human_decision: str,
 ) -> None:
-    """A pending approval suspends the original run; only approval dispatches."""
+    """A pending approval suspends the run; only a still-valid principal approval dispatches."""
     from albra_seed.approvals import ApprovalEngine
     from albra_seed.core.types import ApprovalStatus
     from albra_seed.policy import PolicyEngine, PolicyRule, PolicyRuleSet
@@ -414,9 +414,12 @@ async def test_agent_suspends_and_resumes_same_bound_tool_call_once(
     class _IntegrationAuthenticator(Authenticator):
         name = "hitl-integration"
 
+        def __init__(self) -> None:
+            self.identity = "requester-1"
+
         async def authenticate(self, credentials: Any) -> AuthPrincipal:
             return AuthPrincipal(
-                kind="user", identity="requester-1", roles=["user"],
+                kind="user", identity=self.identity, roles=["user"],
                 auth_method=self.name, is_anonymous=False,
             )
 
@@ -424,7 +427,7 @@ async def test_agent_suspends_and_resumes_same_bound_tool_call_once(
             if token != "requester-token":
                 return None
             return AuthPrincipal(
-                kind="user", identity="requester-1", roles=["user"],
+                kind="user", identity=self.identity, roles=["user"],
                 auth_method=self.name, is_anonymous=False,
             )
 
@@ -469,7 +472,8 @@ async def test_agent_suspends_and_resumes_same_bound_tool_call_once(
     runtime.register("policy_engine", policy)
     approvals = ApprovalEngine(default_deadline_seconds=5)
     runtime.register("approval_engine", approvals)
-    runtime.register("authenticator", _IntegrationAuthenticator())
+    authenticator = _IntegrationAuthenticator()
+    runtime.register("authenticator", authenticator)
 
     identity = AgentIdentity(
         name="hitl-integration-agent",
@@ -492,7 +496,10 @@ async def test_agent_suspends_and_resumes_same_bound_tool_call_once(
         assert not pending_run.done(), "Agent.run returned instead of suspending"
         assert tool.execute_count == 0, "tool ran before human approval"
 
-        if human_decision == "approve":
+        if human_decision in {"approve", "identity_changed"}:
+            if human_decision == "identity_changed":
+                # Simulate revocation/account substitution while the run waits.
+                authenticator.identity = "different-user"
             decision = await approvals.approve(pending.approval_id, approver="reviewer-1")
             assert decision.status == ApprovalStatus.APPROVED
         elif human_decision == "reject":
