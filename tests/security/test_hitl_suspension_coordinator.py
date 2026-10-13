@@ -52,6 +52,15 @@ def _claim(coordinator, now, **overrides):
     return coordinator.claim_resume(**values)
 
 
+
+def test_suspended_state_is_process_local_and_not_recovered_by_new_coordinator():
+    """A fresh coordinator has no implicit recovery of volatile pending state."""
+    coordinator, _ = _registered()
+    restarted = SuspendedExecutionCoordinator()
+
+    assert coordinator.get("approval-1") is not None
+    assert restarted.get("approval-1") is None
+
 def test_pending_execution_is_not_resumable():
     coordinator, now = _registered()
     with pytest.raises(SuspendedExecutionError, match="not approved"):
