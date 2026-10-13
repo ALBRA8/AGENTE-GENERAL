@@ -7,8 +7,10 @@ an external side effect, the outcome may be unknown and requires reconciliation.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import sqlite3
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -93,6 +95,19 @@ class SQLiteSuspendedExecutionCoordinator:
                         "CREATE INDEX IF NOT EXISTS idx_hitl_state_deadline "
                         "ON hitl_suspended_executions(state, deadline)"
                     )
+                    connection.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS hitl_dispatch_outcomes (
+                            approval_id TEXT PRIMARY KEY
+                                REFERENCES hitl_suspended_executions(approval_id),
+                            outcome TEXT NOT NULL CHECK (outcome IN (
+                                'succeeded', 'failed', 'unknown'
+                            )),
+                            detail TEXT NOT NULL DEFAULT '',
+                            observed_at TEXT NOT NULL
+                        )
+                        """
+                    )
                     connection.execute("PRAGMA user_version = 1")
                     connection.commit()
                 except Exception:
@@ -120,6 +135,7 @@ class SQLiteSuspendedExecutionCoordinator:
             self.database_path, timeout=self.timeout, isolation_level=None
         )
         connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys=ON")
         connection.execute("PRAGMA busy_timeout = {}".format(int(self.timeout * 1000)))
         connection.execute("PRAGMA synchronous=FULL")
         return connection
@@ -283,6 +299,134 @@ class SQLiteSuspendedExecutionCoordinator:
             return result
         except sqlite3.Error as exc:
             raise SuspendedExecutionError("HITL durable decision failed") from exc
+
+    def list_pending(self) -> list[SuspendedExecution]:
+        """List durable pending approvals for recovery/reconciliation."""
+        try:
+            with self._connection() as connection:
+                rows = connection.execute(
+                    "SELECT * FROM hitl_suspended_executions "
+                    "WHERE state = 'awaiting_approval' ORDER BY deadline"
+                ).fetchall()
+            return [self._from_row(row) for row in rows if row is not None]
+        except sqlite3.Error as exc:
+            raise SuspendedExecutionError("HITL durable storage read failed") from exc
+
+    async def wait_for_decision(
+        self,
+        approval_id: str,
+        *,
+        timeout: float | None = None,
+        poll_interval: float = 0.25,
+    ) -> SuspendedExecution:
+        """Observe decisions made by other workers without relying on local Events."""
+        if poll_interval <= 0 or (timeout is not None and timeout < 0):
+            raise ValueError("timeout must be non-negative and poll_interval positive")
+        started = time.monotonic()
+        while True:
+            record = self.get(approval_id)
+            if record is None:
+                raise SuspendedExecutionError("unknown approval_id")
+            now = datetime.now(timezone.utc)
+            if record.state is SuspendedExecutionState.AWAITING_APPROVAL and now >= record.deadline:
+                self._expire_if_due(approval_id, now)
+                record = self.get(approval_id)
+                if record is None:
+                    raise SuspendedExecutionError("HITL record disappeared")
+            if record.state is not SuspendedExecutionState.AWAITING_APPROVAL:
+                return record
+            if timeout is not None and time.monotonic() - started >= timeout:
+                raise TimeoutError("timed out waiting for HITL decision")
+            await asyncio.sleep(poll_interval)
+
+    def _expire_if_due(self, approval_id: str, now: datetime) -> None:
+        try:
+            with self._connection() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                connection.execute(
+                    """
+                    UPDATE hitl_suspended_executions
+                    SET state = 'expired', decision_reason = 'deadline_passed',
+                        updated_at = ?
+                    WHERE approval_id = ? AND state = 'awaiting_approval' AND deadline <= ?
+                    """,
+                    (now.astimezone(timezone.utc).isoformat(), approval_id,
+                     now.astimezone(timezone.utc).isoformat()),
+                )
+                connection.commit()
+        except sqlite3.Error as exc:
+            raise SuspendedExecutionError("HITL durable expiry failed") from exc
+
+    def record_dispatch_outcome(
+        self,
+        approval_id: str,
+        *,
+        outcome: str,
+        detail: str = "",
+        observed_at: datetime | None = None,
+    ) -> DispatchOutcome:
+        """Record the observed outcome after a durable claim; never triggers retries."""
+        if outcome not in {"succeeded", "failed", "unknown"}:
+            raise SuspendedExecutionError("invalid dispatch outcome")
+        timestamp = self._now(observed_at)
+        try:
+            with self._connection() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                try:
+                    row = connection.execute(
+                        "SELECT state FROM hitl_suspended_executions WHERE approval_id = ?",
+                        (approval_id,),
+                    ).fetchone()
+                    if row is None:
+                        raise SuspendedExecutionError("unknown approval_id")
+                    if row["state"] != SuspendedExecutionState.CLAIMED.value:
+                        raise SuspendedExecutionError("dispatch outcome requires a durable claim")
+                    connection.execute(
+                        """
+                        INSERT INTO hitl_dispatch_outcomes
+                            (approval_id, outcome, detail, observed_at)
+                        VALUES (?, ?, ?, ?)
+                        """,
+                        (approval_id, outcome, detail, timestamp.isoformat()),
+                    )
+                    connection.commit()
+                except sqlite3.IntegrityError as exc:
+                    connection.rollback()
+                    existing = connection.execute(
+                        "SELECT outcome, detail, observed_at FROM hitl_dispatch_outcomes "
+                        "WHERE approval_id = ?", (approval_id,)
+                    ).fetchone()
+                    if existing and existing["outcome"] == outcome and existing["detail"] == detail:
+                        return DispatchOutcome(
+                            approval_id, existing["outcome"],
+                            datetime.fromisoformat(existing["observed_at"]), existing["detail"]
+                        )
+                    raise SuspendedExecutionError("dispatch outcome already recorded") from exc
+                except Exception:
+                    if connection.in_transaction:
+                        connection.rollback()
+                    raise
+            return DispatchOutcome(approval_id, outcome, timestamp, detail)
+        except sqlite3.Error as exc:
+            raise SuspendedExecutionError("HITL dispatch outcome write failed") from exc
+
+    def get_dispatch_outcome(self, approval_id: str) -> DispatchOutcome | None:
+        try:
+            with self._connection() as connection:
+                row = connection.execute(
+                    "SELECT * FROM hitl_dispatch_outcomes WHERE approval_id = ?",
+                    (approval_id,),
+                ).fetchone()
+            if row is None:
+                return None
+            return DispatchOutcome(
+                approval_id=row["approval_id"],
+                outcome=row["outcome"],
+                observed_at=datetime.fromisoformat(row["observed_at"]),
+                detail=row["detail"],
+            )
+        except sqlite3.Error as exc:
+            raise SuspendedExecutionError("HITL dispatch outcome read failed") from exc
 
     def claim_resume(
         self,
