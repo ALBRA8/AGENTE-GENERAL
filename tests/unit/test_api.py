@@ -217,6 +217,52 @@ def test_execution_endpoint_runs_agent_and_returns_trace(runtime: Runtime) -> No
         assert isinstance(body2["trace"], list)
 
 
+
+def test_execution_endpoint_forwards_bearer_token(runtime: Runtime) -> None:
+    """Bearer credentials reach Agent.run for Runtime authenticator verification."""
+    from albra_seed.providers.mock import MockProvider
+    from albra_seed.firewall.firewall import ActionFirewall, FirewallRule
+    from albra_seed.core.types import RiskLevel
+
+    runtime.register_provider(MockProvider())
+    fw = ActionFirewall()
+    fw.add_rule(FirewallRule(
+        action_pattern="*", actor_pattern="*", decision="allow",
+        risk_threshold=RiskLevel.UNKNOWN, autonomy_required=0,
+    ))
+    runtime.register("firewall", fw)
+    identity = AgentIdentity(name="token-forward-agent", providers=["mock"])
+    agent = Agent(identity=identity, runtime=runtime)
+    original_run = agent.run
+    observed: dict[str, Any] = {}
+
+    async def capture_token(*args: Any, **kwargs: Any) -> Any:
+        observed["token"] = kwargs.get("token")
+        return await original_run(*args, **kwargs)
+
+    agent.run = capture_token  # type: ignore[method-assign]
+    app = create_app(runtime, agents={identity.agent_id: agent})
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/execution",
+            headers={"Authorization": "Bearer test-credential"},
+            json={"input": "hello"},
+        )
+    assert response.status_code == 200, response.text
+    assert observed["token"] == "test-credential"
+
+
+def test_execution_endpoint_rejects_malformed_authorization_header(
+    client: TestClient,
+) -> None:
+    response = client.post(
+        "/api/v1/execution",
+        headers={"Authorization": "Basic not-a-bearer"},
+        json={"input": "hello"},
+    )
+    assert response.status_code == 401
+
+
 # =====================================================================
 # Internal diagnostics endpoint returns a DiagnosticReport
 # =====================================================================
