@@ -317,7 +317,7 @@ class TestDryRunSafety:
 
     @pytest.mark.asyncio
     async def test_dry_run_capable_tool_executes_safely(self):
-        """A tool declared is_dry_run_capable → dry-run allowed."""
+        """A tool declared is_dry_run_capable → dry-run returns simulation."""
         registry, spy = _build_registry_with_spy(dry_run_capable=True)
         executor = ToolExecutor(registry)
 
@@ -327,9 +327,13 @@ class TestDryRunSafety:
         )
 
         assert result.success is True
-        # The tool IS invoked in dry_run mode — but it's declared safe
-        assert spy.dry_run_count == 1
-        assert spy.execute_count == 1  # dry_run=True counts as an execute call
+        # The executor returns a SIMULATED result WITHOUT invoking
+        # tool.execute() — zero side effects guaranteed.
+        assert spy.execute_count == 0, f"Spy executed {spy.execute_count} times during dry-run!"
+        assert spy.dry_run_count == 0
+        # The simulation output describes what WOULD have happened
+        assert result.output.get("simulated") is True
+        assert result.output.get("dry_run") is True
 
     @pytest.mark.asyncio
     async def test_real_execution_without_authorization_rejected(self):

@@ -1257,6 +1257,41 @@ class Agent:
                             decision = "allow"
 
                         authorization = _AllowVerdict()
+            # DEFECT 3: When the final decision is "allow", issue a
+            # non-forgeable AuthorizationToken bound to (tool, principal,
+            # execution, context). The ToolExecutor will verify this token
+            # cryptographically before executing the tool.
+            if decision == "allow":
+                try:
+                    from albra_seed.security.auth_token import AuthorizationIssuer, AuthorizationVerifier
+                    # Get or create an issuer for this agent.
+                    if not hasattr(self, '_auth_issuer') or self._auth_issuer is None:
+                        self._auth_issuer = AuthorizationIssuer()
+                    # Resolve the principal identity
+                    principal_id = "anonymous"
+                    vp = getattr(run_ctx, 'verified_principal', None)
+                    if vp is not None:
+                        principal_id = getattr(vp, 'identity', None) or getattr(vp, 'principal_id', None) or "anonymous"
+                    authorization = self._auth_issuer.issue(
+                        tool_name=call.tool_name,
+                        principal_id=principal_id,
+                        execution_id=run_ctx.execution_id,
+                        context_id=run_ctx.context_id,
+                    )
+                    # Register the verifier on the executor if not done
+                    if self._auth_verifier is None:
+                        self._auth_verifier = AuthorizationVerifier(self._auth_issuer)
+                        if self._tool_executor is not None:
+                            self._tool_executor._auth_verifier = self._auth_verifier
+                except Exception:
+                    decision = "deny"
+                    authorization = None
+                    run_ctx.warnings.append(
+                        f"tool call denied (authorization token issuance failed): {call.tool_name}"
+                    )
+            else:
+                authorization = None
+
             decisions.append({
                 "tool": call.tool_name,
                 "decision": decision,

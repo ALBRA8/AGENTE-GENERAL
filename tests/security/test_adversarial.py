@@ -62,6 +62,10 @@ from albra_seed.security.auth import (
     AuthPrincipal,
     NoopAuthenticator,
 )
+from albra_seed.security.auth_token import (
+    AuthorizationIssuer,
+    AuthorizationVerifier,
+)
 from albra_seed.security.permissions import PermissionRegistry
 from albra_seed.security.roles import Role as RBACRole
 from albra_seed.security.roles import RoleRegistry
@@ -736,22 +740,40 @@ class TestDirectExecutorBypass:
 
     @pytest.mark.asyncio
     async def test_tool_executor_with_allowed_authorization_executes(self) -> None:
-        """ToolExecutor.execute() with allowed verdict → executes.
+        """ToolExecutor.execute() with a valid AuthorizationToken → executes.
 
         DECISION: ALLOW.
         EFFECT: tool's ``execute()`` invoked exactly ONCE; result
         is successful.
+
+        H-01/H-02 amendment: the executor no longer accepts a legacy
+        ``PolicyVerdict(allowed=True)`` stub. It requires a non-forgeable
+        ``AuthorizationToken`` issued by ``AuthorizationIssuer`` and
+        verified by an ``AuthorizationVerifier`` configured on the
+        executor. Without it the executor FAILS-CLOSED.
         """
         spy = _SpyEchoTool()
         registry = ToolRegistry()
         registry.register(spy)
-        executor = ToolExecutor(registry)
-        allowed_verdict = PolicyVerdict(
-            decision=PolicyDecision.ALLOW,
-            allowed=True,
+        issuer = AuthorizationIssuer()
+        verifier = AuthorizationVerifier(issuer)
+        executor = ToolExecutor(registry, auth_verifier=verifier)
+        ctx = RunContext(agent_id="test", task="t", execution_id="exec-1")
+        ctx.verified_principal = AuthPrincipal(
+            identity="alice", is_anonymous=False
+        )
+        token = issuer.issue(
+            tool_name="echo",
+            principal_id="alice",
+            execution_id="exec-1",
+            context_id=None,
         )
         result = await executor.execute(
-            "echo", {"message": "hi"}, authorization=allowed_verdict
+            "echo",
+            {"message": "hi"},
+            context=ctx,
+            authorization=token,
+            call_id="call-1",
         )
         # DECISION: ALLOW
         assert result.success is True
@@ -760,14 +782,16 @@ class TestDirectExecutorBypass:
 
     @pytest.mark.asyncio
     async def test_dry_run_bypasses_authorization(self) -> None:
-        """dry_run=True → executes without authorization (safe by contract).
+        """dry_run=True → simulated result WITHOUT invoking the tool.
 
-        Dry-run execution does not invoke the tool's side effects — it
-        simulates the call. The authorization gate is SKIPPED because
-        dry-run cannot produce real-world effects.
+        Dry-run execution no longer invokes ``tool.execute()`` — it
+        returns a SIMULATED result that describes what WOULD have run.
+        The authorization gate is SKIPPED because dry-run cannot
+        produce real-world effects.
 
         DECISION: ALLOW (dry-run is safe by contract).
-        EFFECT: tool's ``execute()`` invoked once with ``dry_run=True``.
+        EFFECT: tool's ``execute()`` NEVER invoked (execute_count==0);
+        the result is a SIMULATED dry-run output.
         """
         spy = _SpyEchoTool()
         registry = ToolRegistry()
@@ -777,8 +801,12 @@ class TestDirectExecutorBypass:
         result = await executor.execute("echo", {"message": "hi"}, dry_run=True)
         # DECISION: ALLOW (dry-run bypasses the gate)
         assert result.success is True
-        # EFFECT: tool's execute() called ONCE (in dry-run mode).
-        assert spy.execute_count == 1
+        # Dry-run returns a SIMULATED result (not a real execution).
+        assert isinstance(result.output, dict)
+        assert result.output.get("simulated") is True
+        assert result.output.get("dry_run") is True
+        # EFFECT: tool's execute() NEVER invoked (dry-run does not call it).
+        assert spy.execute_count == 0
 
 
 # =====================================================================
@@ -1167,10 +1195,21 @@ class TestTimeout:
         # Contract says timeout_seconds=1; sleep is 2s → exceeds.
         registry = ToolRegistry()
         registry.register(slow)
-        executor = ToolExecutor(registry)
-        allowed = PolicyVerdict(decision=PolicyDecision.ALLOW, allowed=True)
+        issuer = AuthorizationIssuer()
+        verifier = AuthorizationVerifier(issuer)
+        executor = ToolExecutor(registry, auth_verifier=verifier)
+        ctx = RunContext(agent_id="test", task="t", execution_id="exec-1")
+        ctx.verified_principal = AuthPrincipal(
+            identity="alice", is_anonymous=False
+        )
+        token = issuer.issue(
+            tool_name="slow",
+            principal_id="alice",
+            execution_id="exec-1",
+            context_id=None,
+        )
         result = await executor.execute(
-            "slow", {}, authorization=allowed
+            "slow", {}, context=ctx, authorization=token, call_id="call-1",
         )
         # DECISION: refuse (timeout)
         assert result.success is False
@@ -1276,15 +1315,28 @@ class TestRetry:
         spy = _SpyEchoTool()
         registry = ToolRegistry()
         registry.register(spy)
-        executor = ToolExecutor(registry)
-        allowed = PolicyVerdict(decision=PolicyDecision.ALLOW, allowed=True)
+        issuer = AuthorizationIssuer()
+        verifier = AuthorizationVerifier(issuer)
+        executor = ToolExecutor(registry, auth_verifier=verifier)
+        ctx = RunContext(agent_id="test", task="t", execution_id="exec-1")
+        ctx.verified_principal = AuthPrincipal(
+            identity="alice", is_anonymous=False
+        )
+        token = issuer.issue(
+            tool_name="echo",
+            principal_id="alice",
+            execution_id="exec-1",
+            context_id=None,
+        )
         # First call — executes normally.
         result1 = await executor.execute(
-            "echo", {"message": "hi"}, authorization=allowed, call_id="call-1"
+            "echo", {"message": "hi"}, context=ctx, authorization=token,
+            call_id="call-1",
         )
         # Second call — same call_id → idempotent skip.
         result2 = await executor.execute(
-            "echo", {"message": "hi"}, authorization=allowed, call_id="call-1"
+            "echo", {"message": "hi"}, context=ctx, authorization=token,
+            call_id="call-1",
         )
         # Both calls succeed (idempotent skip is a SUCCESS no-op).
         assert result1.success is True

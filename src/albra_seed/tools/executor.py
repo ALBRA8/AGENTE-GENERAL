@@ -179,17 +179,12 @@ class ToolExecutor:
                 output={"idempotent_skip": True},
             )
 
-        # ----- AUTHORIZATION GATE (H-02 CRITICAL) — NON-FORGEABLE ---------
-        # Non-dry-run execution requires a valid AuthorizationToken that
-        # is cryptographically signed, not expired, not revoked, and
-        # bound to (tool_name, execution_id, principal_id, context_id).
-        # An arbitrary object with `allowed=True` is REJECTED — only
-        # AuthorizationToken issued by AuthorizationIssuer is accepted.
-        #
-        # If no auth_verifier is configured (legacy/CORE_ONLY), we fall
-        # back to the old behavior: accept any object with `allowed=True`.
-        # This preserves backward compatibility but is LESS secure.
-        # Production deployments MUST register an AuthorizationIssuer.
+        # ----- AUTHORIZATION GATE (CRITICAL) — FAIL-CLOSED ----------------
+        # Non-dry-run execution requires a valid AuthorizationToken verified
+        # by an AuthorizationVerifier. If no verifier is configured, ALL
+        # real executions are REJECTED (fail-closed). An arbitrary object
+        # with `allowed=True` is NEVER accepted — only a properly issued
+        # AuthorizationToken passes verification.
         if not dry_run:
             if authorization is None:
                 return ToolResult(
@@ -223,28 +218,28 @@ class ToolExecutor:
                         output={"not_authorized": True},
                     )
             else:
-                # LEGACY MODE: accept any object with allowed=True
-                # (backward compatible but less secure)
-                allowed = getattr(authorization, "allowed", False)
-                if not allowed:
-                    decision = getattr(authorization, "decision", "unknown")
-                    return ToolResult(
-                        call_id=call_id or new_id("tc"),
-                        success=False,
-                        error=f"not authorized: {decision}",
-                        output={
-                            "not_authorized": True,
-                            "decision": str(decision),
-                        },
-                    )
+                # FAIL-CLOSED: no verifier configured → reject ALL real executions.
+                # This is the secure default. Callers MUST configure an
+                # AuthorizationVerifier to enable real tool execution.
+                return ToolResult(
+                    call_id=call_id or new_id("tc"),
+                    success=False,
+                    error="not authorized: no auth_verifier configured (fail-closed)",
+                    output={"not_authorized": True, "reason": "no_verifier"},
+                )
         
-        # ----- DRY-RUN SAFETY GATE (DEFECT 2) —---------------------------
-        # When dry_run=True, we must guarantee no side effects:
-        # 1. Check if the tool's contract declares is_dry_run_capable=True
-        # 2. If NOT dry_run_capable, REJECT the dry-run request (don't
-        #    just pass dry_run=True to the tool and hope it respects it)
-        # 3. Only invoke the tool if the contract explicitly supports
-        #    dry-run semantics
+        # ----- DRY-RUN SAFETY GATE (DEFECT 2) — NO TOOL INVOCATION -------
+        # When dry_run=True, the executor MUST NOT invoke tool.execute()
+        # at all — even with dry_run=True, a tool could produce side
+        # effects (write to disk, send HTTP, mutate global state).
+        #
+        # Instead, the executor returns a SIMULATED result that describes
+        # what WOULD have been executed, without ever calling the tool's
+        # execute() method. This guarantees zero side effects.
+        #
+        # The tool's contract must declare is_dry_run_capable=True for
+        # the executor to even attempt a simulation. Tools that do NOT
+        # declare dry-run support are rejected outright.
         if dry_run:
             try:
                 tool_check = self.registry.get(name)
@@ -263,6 +258,24 @@ class ToolExecutor:
                     error="dry_run rejected: tool is not declared is_dry_run_capable in its contract",
                     output={"dry_run": True, "rejected": True, "reason": "not_dry_run_capable"},
                 )
+            # Return a SIMULATED result WITHOUT invoking tool.execute().
+            # The simulation includes the tool name, arguments, and
+            # contract metadata so the caller can verify what WOULD
+            # have happened.
+            return ToolResult(
+                call_id=call_id or new_id("tc"),
+                success=True,
+                output={
+                    "dry_run": True,
+                    "simulated": True,
+                    "tool_name": name,
+                    "arguments": arguments,
+                    "contract_version": contract_check.version,
+                    "risk_level": str(contract_check.risk_level),
+                    "message": f"[DRY-RUN] tool '{name}' would have been "
+                               f"executed with arguments={arguments}",
+                },
+            )
 
         # ----- mark as executed (idempotency set) ----------------------
         # We add to the set BEFORE invoking the tool so a duplicate

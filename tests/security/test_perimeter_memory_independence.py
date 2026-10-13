@@ -414,22 +414,23 @@ async def test_tool_executor_does_not_consult_memory() -> None:
     cause the executor to look up a different tool, fail to find the
     registered tool, or change the result.
 
-    H-02 note: the executor now requires an authorization verdict on
-    non-dry-run calls. We pass a minimal ``_AllowVerdict`` (any object
-    with ``allowed=True``) so the gate opens and the tool is actually
-    invoked — the test is about MEMORY independence, not authorization,
-    so we keep the verdict constant and vary ONLY the memory state.
+    H-02 amendment: the executor is now FAIL-CLOSED — it rejects any
+    non-dry-run execution unless an ``AuthorizationVerifier`` is
+    configured AND a valid ``AuthorizationToken`` is supplied. The old
+    ``_AllowVerdict(allowed=True)`` stub is no longer accepted. We wire
+    an issuer+verifier and issue a token per tool_name (``echo`` and
+    ``dangerous_op``) so the auth gate opens for both. The test still
+    varies ONLY the memory state — the authorization tokens are held
+    constant across the BEFORE / AFTER memory storage phases.
     """
-    # H-02: minimal verdict stub. ``allowed=True`` opens the gate;
-    # ``decision="allow"`` is informational (the executor only checks
-    # ``allowed``). Using a plain object (not a real PolicyVerdict)
-    # keeps the test focused on memory independence and avoids importing
-    # the policy subpackage.
-    class _AllowVerdict:
-        allowed = True
-        decision = "allow"
+    from albra_seed.security.auth import AuthPrincipal
+    from albra_seed.security.auth_token import (
+        AuthorizationIssuer,
+        AuthorizationVerifier,
+    )
 
-    allow_verdict = _AllowVerdict()
+    issuer = AuthorizationIssuer()
+    verifier = AuthorizationVerifier(issuer)
 
     store = InMemoryMemoryStore()
     mgr = MemoryManager(store=store)
@@ -438,19 +439,42 @@ async def test_tool_executor_does_not_consult_memory() -> None:
     # Registry with ONE registered tool: EchoTool.
     registry = ToolRegistry()
     registry.register(EchoTool())
-    executor = ToolExecutor(registry=registry)
+    executor = ToolExecutor(registry=registry, auth_verifier=verifier)
 
     ctx = RunContext(
         agent_id=agent_id,
         task="echo test",
         autonomy_level=AutonomyLevel.L2_EXECUTE_SAFE,
         risk_level=RiskLevel.LOW,
+        execution_id="exec-1",
+    )
+    ctx.verified_principal = AuthPrincipal(
+        identity="alice", is_anonymous=False
+    )
+
+    # One token per tool_name — both bound to the same
+    # (principal_id, execution_id, context_id) the executor will verify
+    # against. The ``dangerous_op`` token authorizes a tool_name that
+    # is NOT registered — the executor will verify the token OK and
+    # THEN fail at the registry lookup ("tool not found"). This is the
+    # behavior the memory-independence test asserts.
+    token_echo = issuer.issue(
+        tool_name="echo",
+        principal_id="alice",
+        execution_id="exec-1",
+        context_id=None,
+    )
+    token_dangerous = issuer.issue(
+        tool_name="dangerous_op",
+        principal_id="alice",
+        execution_id="exec-1",
+        context_id=None,
     )
 
     # --- A) BEFORE storing memory: executor succeeds for "echo" ---
     args = {"message": "hello"}
     result_before = await executor.execute(
-        "echo", args, context=ctx, authorization=allow_verdict,
+        "echo", args, context=ctx, authorization=token_echo,
     )
     assert result_before.success is True, (
         f"echo must succeed before storing memory: {result_before.error!r}"
@@ -459,7 +483,7 @@ async def test_tool_executor_does_not_consult_memory() -> None:
 
     # And fails for an unregistered tool (deterministic lookup by name).
     unreg_before = await executor.execute(
-        "dangerous_op", {}, context=ctx, authorization=allow_verdict,
+        "dangerous_op", {}, context=ctx, authorization=token_dangerous,
     )
     assert unreg_before.success is False, (
         f"unregistered tool must fail (not found), got success="
@@ -483,7 +507,7 @@ async def test_tool_executor_does_not_consult_memory() -> None:
 
     # --- C) AFTER storing memory: executor's behavior is UNCHANGED ---
     result_after = await executor.execute(
-        "echo", args, context=ctx, authorization=allow_verdict,
+        "echo", args, context=ctx, authorization=token_echo,
     )
     assert result_after.success is True, (
         f"echo must STILL succeed after storing memory: {result_after.error!r}"
@@ -491,7 +515,7 @@ async def test_tool_executor_does_not_consult_memory() -> None:
     assert result_after.output["echoed"] == "hello"
 
     unreg_after = await executor.execute(
-        "dangerous_op", {}, context=ctx, authorization=allow_verdict,
+        "dangerous_op", {}, context=ctx, authorization=token_dangerous,
     )
     assert unreg_after.success is False, (
         "unregistered tool must STILL fail after storing memory — "

@@ -96,16 +96,37 @@ def test_tool_executor_applies_timeout():
             return ToolResult(call_id=new_id("tc"), success=True, output={"ok": True})
 
     reg.register(SlowTool())
-    executor = ToolExecutor(reg)
-    # H-02: non-dry-run execution requires an authorization verdict.
-    # Build a minimal allow verdict (any object with ``allowed=True``)
-    # so the executor's gate passes and the tool is actually invoked —
-    # then its 2-second sleep blows past the 1-second timeout.
-    class _AllowVerdict:
-        allowed = True
-        decision = "allow"
+    # H-02 amendment: ToolExecutor is now FAIL-CLOSED — it rejects
+    # any non-dry-run execution unless an ``AuthorizationVerifier`` is
+    # configured AND a valid ``AuthorizationToken`` is supplied. The
+    # old ``_AllowVerdict(allowed=True)`` stub is no longer accepted.
+    # We wire an issuer+verifier and issue a token bound to the same
+    # (tool_name, principal_id, execution_id) the executor will verify
+    # against — so the gate opens and the tool is actually invoked,
+    # after which its 2-second sleep blows past the 1-second timeout.
+    from albra_seed.security.auth import AuthPrincipal
+    from albra_seed.security.auth_token import (
+        AuthorizationIssuer,
+        AuthorizationVerifier,
+    )
+
+    issuer = AuthorizationIssuer()
+    verifier = AuthorizationVerifier(issuer)
+    executor = ToolExecutor(reg, auth_verifier=verifier)
+    ctx = RunContext(agent_id="test", task="t", execution_id="exec-1")
+    ctx.verified_principal = AuthPrincipal(
+        identity="alice", is_anonymous=False
+    )
+    token = issuer.issue(
+        tool_name="slow",
+        principal_id="alice",
+        execution_id="exec-1",
+        context_id=None,
+    )
     result = asyncio.run(
-        executor.execute("slow", {}, authorization=_AllowVerdict())
+        executor.execute(
+            "slow", {}, context=ctx, authorization=token, call_id="call-1",
+        )
     )
     assert not result.success
     assert "timeout" in (result.error or "")
