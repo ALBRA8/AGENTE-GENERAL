@@ -228,6 +228,402 @@ class TestProviderBehavioralRoleToolHandling:
         assert any(m["role"] == "system" for m in captured)
         assert any(m["role"] == "user" for m in captured)
 
+    @pytest.mark.asyncio
+    async def test_anthropic_provider_payload_separates_system_and_tool(self) -> None:
+        """AnthropicProvider must NOT include Role.TOOL content in the
+        ``system`` arg (Anthropic would merge all Role.SYSTEM into one
+        string, collapsing the trust boundary). Instead, Role.TOOL must
+        appear in the ``messages`` array as a user-role message with the
+        UNTRUSTED DATA prefix."""
+        from albra_seed.providers.anthropic_provider import AnthropicProvider
+
+        provider = AnthropicProvider.__new__(AnthropicProvider)
+
+        # Stub the Anthropic client. Anthropic uses client.messages.create
+        # (NOT client.chat.completions.create).
+        class _FakeTextBlock:
+            text = "ok"
+
+        class _FakeResponse:
+            content = [_FakeTextBlock()]
+            stop_reason = "end_turn"
+
+        class _FakeMessages:
+            async def create(self, **kwargs):
+                provider._captured_kwargs = kwargs
+                return _FakeResponse()
+
+        class _FakeClient:
+            messages = _FakeMessages()
+
+        provider._ensure_client = lambda: _FakeClient()
+        provider.model = "claude-3-5-sonnet-20241022"
+
+        messages = _build_messages_with_tool_role()
+        from albra_seed.core.types import RunContext
+        await provider.complete(
+            messages,
+            context=RunContext(
+                agent_id="test",
+                task="test",
+                execution_id="x",
+                correlation_id="y",
+            ),
+        )
+
+        kwargs = provider._captured_kwargs
+        assert kwargs is not None
+        convo = kwargs["messages"]
+        system_arg = kwargs.get("system")
+
+        # System arg MUST contain the SYSTEM message content.
+        assert system_arg is not None
+        assert "CRITICAL RULES" in system_arg or "ALBRA agent" in system_arg
+
+        # System arg MUST NOT contain the untrusted memory content.
+        assert "[RETRIEVED MEMORIES" not in system_arg
+        assert "some untrusted data" not in system_arg
+
+        # No message in convo should have role=tool.
+        for m in convo:
+            assert m["role"] != "tool", (
+                f"Anthropic payload contains role=tool in messages; "
+                f"got: {convo}"
+            )
+
+        # At least one message MUST contain the UNTRUSTED DATA prefix
+        # (the one that originated as Role.TOOL).
+        assert any(
+            "UNTRUSTED DATA" in m["content"] for m in convo
+        ), f"Anthropic payload missing UNTRUSTED DATA prefix: {convo}"
+
+        # The original USER message is preserved as role=user (no prefix).
+        user_msgs = [m for m in convo if m["role"] == "user" and "UNTRUSTED DATA" not in m["content"]]
+        assert any("hello" in m["content"] for m in user_msgs)
+
+    @pytest.mark.asyncio
+    async def test_groq_provider_payload_does_not_emit_tool_role(self) -> None:
+        """GroqProvider (OpenAI-compatible) must serialize Role.TOOL as
+        role=user with the untrusted-data prefix."""
+        from albra_seed.providers.groq_provider import GroqProvider
+
+        provider = GroqProvider.__new__(GroqProvider)
+
+        class _FakeChoice:
+            class _Message:
+                content = "ok"
+                tool_calls = None
+            message = _Message()
+
+        class _FakeResponse:
+            choices = [_FakeChoice()]
+            usage = None
+
+        class _FakeCompletions:
+            async def create(self, **kwargs):
+                provider._captured_messages = kwargs.get("messages")
+                return _FakeResponse()
+
+        class _FakeChat:
+            completions = _FakeCompletions()
+
+        class _FakeClient:
+            chat = _FakeChat()
+
+        provider._ensure_client = lambda: _FakeClient()
+        provider.model = "llama-3.1-8b-instant"
+
+        messages = _build_messages_with_tool_role()
+        from albra_seed.core.types import RunContext
+        await provider.complete(
+            messages,
+            context=RunContext(
+                agent_id="test",
+                task="test",
+                execution_id="x",
+                correlation_id="y",
+            ),
+        )
+
+        captured = provider._captured_messages
+        assert captured is not None
+        # No message should have role=tool (Groq rejects that without
+        # tool_call_id, same as OpenAI).
+        for m in captured:
+            assert m["role"] != "tool", (
+                f"Groq payload contains role=tool which requires "
+                f"tool_call_id; got: {captured}"
+            )
+        # The untrusted-data prefix must appear in at least one message.
+        assert any(
+            "UNTRUSTED DATA" in m["content"] for m in captured
+        ), f"Groq payload missing UNTRUSTED DATA prefix: {captured}"
+        # The original SYSTEM and USER roles are preserved.
+        assert any(m["role"] == "system" for m in captured)
+        assert any(m["role"] == "user" for m in captured)
+
+    @pytest.mark.asyncio
+    async def test_ollama_provider_payload_does_not_emit_tool_role(self) -> None:
+        """OllamaProvider must serialize Role.TOOL as role=user with the
+        untrusted-data prefix."""
+        from albra_seed.providers.ollama_provider import OllamaProvider
+
+        provider = OllamaProvider.__new__(OllamaProvider)
+
+        class _FakeChoice:
+            class _Message:
+                content = "ok"
+                tool_calls = None
+            message = _Message()
+
+        class _FakeResponse:
+            choices = [_FakeChoice()]
+            usage = None
+
+        class _FakeCompletions:
+            async def create(self, **kwargs):
+                provider._captured_messages = kwargs.get("messages")
+                return _FakeResponse()
+
+        class _FakeChat:
+            completions = _FakeCompletions()
+
+        class _FakeClient:
+            chat = _FakeChat()
+
+        provider._ensure_client = lambda: _FakeClient()
+        provider.model = "llama3.1"
+
+        messages = _build_messages_with_tool_role()
+        from albra_seed.core.types import RunContext
+        await provider.complete(
+            messages,
+            context=RunContext(
+                agent_id="test",
+                task="test",
+                execution_id="x",
+                correlation_id="y",
+            ),
+        )
+
+        captured = provider._captured_messages
+        assert captured is not None
+        for m in captured:
+            assert m["role"] != "tool", (
+                f"Ollama payload contains role=tool which requires "
+                f"tool_call_id; got: {captured}"
+            )
+        assert any(
+            "UNTRUSTED DATA" in m["content"] for m in captured
+        ), f"Ollama payload missing UNTRUSTED DATA prefix: {captured}"
+        assert any(m["role"] == "system" for m in captured)
+        assert any(m["role"] == "user" for m in captured)
+
+    @pytest.mark.asyncio
+    async def test_zai_provider_payload_does_not_emit_tool_role(self) -> None:
+        """ZAIProvider must serialize Role.TOOL as role=user with the
+        untrusted-data prefix."""
+        from albra_seed.providers.zai_provider import ZAIProvider
+
+        provider = ZAIProvider.__new__(ZAIProvider)
+
+        class _FakeChoice:
+            class _Message:
+                content = "ok"
+                tool_calls = None
+            message = _Message()
+
+        class _FakeResponse:
+            choices = [_FakeChoice()]
+            usage = None
+
+        class _FakeCompletions:
+            async def create(self, **kwargs):
+                provider._captured_messages = kwargs.get("messages")
+                return _FakeResponse()
+
+        class _FakeChat:
+            completions = _FakeCompletions()
+
+        class _FakeClient:
+            chat = _FakeChat()
+
+        provider._ensure_client = lambda: _FakeClient()
+        provider.model = "glm-4-plus"
+
+        messages = _build_messages_with_tool_role()
+        from albra_seed.core.types import RunContext
+        await provider.complete(
+            messages,
+            context=RunContext(
+                agent_id="test",
+                task="test",
+                execution_id="x",
+                correlation_id="y",
+            ),
+        )
+
+        captured = provider._captured_messages
+        assert captured is not None
+        for m in captured:
+            assert m["role"] != "tool", (
+                f"ZAI payload contains role=tool which requires "
+                f"tool_call_id; got: {captured}"
+            )
+        assert any(
+            "UNTRUSTED DATA" in m["content"] for m in captured
+        ), f"ZAI payload missing UNTRUSTED DATA prefix: {captured}"
+        assert any(m["role"] == "system" for m in captured)
+        assert any(m["role"] == "user" for m in captured)
+
+    @pytest.mark.asyncio
+    async def test_assistant_role_preserved_by_all_providers(self) -> None:
+        """All providers must preserve Role.ASSISTANT messages as
+        role=assistant (or, for Anthropic, in the convo array). This
+        verifies the non-TOOL path is unchanged by the M-01 fix."""
+        from albra_seed.providers.openai_provider import OpenAIProvider
+        from albra_seed.core.types import Role
+
+        provider = OpenAIProvider.__new__(OpenAIProvider)
+
+        class _FakeChoice:
+            class _Message:
+                content = "ok"
+                tool_calls = None
+            message = _Message()
+
+        class _FakeResponse:
+            choices = [_FakeChoice()]
+            usage = None
+
+        class _FakeCompletions:
+            async def create(self, **kwargs):
+                provider._captured_messages = kwargs.get("messages")
+                return _FakeResponse()
+
+        class _FakeChat:
+            completions = _FakeCompletions()
+
+        class _FakeClient:
+            chat = _FakeChat()
+
+        provider._ensure_client = lambda: _FakeClient()
+        provider.model = "gpt-4o-mini"
+
+        messages = [
+            Message(role=Role.SYSTEM, content="system instructions"),
+            Message(role=Role.USER, content="hello"),
+            Message(role=Role.ASSISTANT, content="hi there"),
+            Message(role=Role.USER, content="how are you?"),
+        ]
+        from albra_seed.core.types import RunContext
+        await provider.complete(
+            messages,
+            context=RunContext(
+                agent_id="test",
+                task="test",
+                execution_id="x",
+                correlation_id="y",
+            ),
+        )
+
+        captured = provider._captured_messages
+        assert captured is not None
+        roles = [m["role"] for m in captured]
+        # All 4 roles must be preserved in order.
+        assert roles == ["system", "user", "assistant", "user"], (
+            f"role sequence wrong; got: {roles}"
+        )
+        # No UNTRUSTED DATA prefix should be added to any of these
+        # (none were Role.TOOL).
+        for m in captured:
+            assert "UNTRUSTED DATA" not in m["content"], (
+                f"UNTRUSTED DATA prefix added to non-TOOL message: {m}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_provider_handles_empty_messages_list(self) -> None:
+        """Each provider must handle an empty messages list gracefully
+        (return a response, not crash)."""
+        from albra_seed.providers.openai_provider import OpenAIProvider
+
+        provider = OpenAIProvider.__new__(OpenAIProvider)
+
+        class _FakeChoice:
+            class _Message:
+                content = ""
+                tool_calls = None
+            message = _Message()
+
+        class _FakeResponse:
+            choices = [_FakeChoice()]
+            usage = None
+
+        class _FakeCompletions:
+            async def create(self, **kwargs):
+                provider._captured_messages = kwargs.get("messages")
+                return _FakeResponse()
+
+        class _FakeChat:
+            completions = _FakeCompletions()
+
+        class _FakeClient:
+            chat = _FakeChat()
+
+        provider._ensure_client = lambda: _FakeClient()
+        provider.model = "gpt-4o-mini"
+
+        from albra_seed.core.types import RunContext
+        response = await provider.complete(
+            [],
+            context=RunContext(
+                agent_id="test",
+                task="test",
+                execution_id="x",
+                correlation_id="y",
+            ),
+        )
+        # Provider must return a response, not raise.
+        assert response is not None
+        assert provider._captured_messages == []
+
+    @pytest.mark.asyncio
+    async def test_provider_client_exception_returns_error_response(self) -> None:
+        """If the API client raises, the provider must return an
+        AgentResponse with errors set (not propagate the exception)."""
+        from albra_seed.providers.openai_provider import OpenAIProvider
+
+        provider = OpenAIProvider.__new__(OpenAIProvider)
+
+        class _FakeCompletions:
+            async def create(self, **kwargs):
+                raise RuntimeError("simulated API failure")
+
+        class _FakeChat:
+            completions = _FakeCompletions()
+
+        class _FakeClient:
+            chat = _FakeChat()
+
+        provider._ensure_client = lambda: _FakeClient()
+        provider.model = "gpt-4o-mini"
+
+        messages = _build_messages_with_tool_role()
+        from albra_seed.core.types import RunContext
+        response = await provider.complete(
+            messages,
+            context=RunContext(
+                agent_id="test",
+                task="test",
+                execution_id="x",
+                correlation_id="y",
+            ),
+        )
+        # Provider must NOT propagate the exception — it returns an
+        # AgentResponse with errors captured.
+        assert response is not None
+        assert response.errors  # non-empty error list
+
 
 __all__ = [
     "TestProviderRoleToolSerialization",
