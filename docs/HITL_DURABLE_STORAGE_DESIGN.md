@@ -1,6 +1,6 @@
 # Durable HITL storage and cross-worker resume design
 
-Status: SQLite storage primitives, ApprovalEngine integration for durable approval decisions/polling/claims, API storage-scope reporting, runtime dispatch-outcome audit, and regression tests are implemented on the draft branch. CI passed for commit `7d6f3c7a`: HITL Regression and Clean-Room Verification on Python 3.10, 3.11, and 3.12. The latest runtime outcome-audit changes are under CI now. Full Agent.run recovery after the originating process dies is NOT implemented: the suspended coroutine and live authorization context are not serialized, and must not be reconstructed from an approval row alone.
+Status: SQLite storage primitives, ApprovalEngine integration for durable approval decisions/polling/claims, API storage-scope reporting, runtime dispatch-outcome audit, and regression tests are implemented on the draft branch. On commit `6e85b4d7`, HITL Regression passed (934 passed, 14 skipped) and Clean-Room Verification passed on Python 3.10, 3.11, and 3.12 (1,005 passed, 1 skipped per interpreter). Full Agent.run recovery after the originating process dies is NOT implemented: the suspended coroutine and live authorization context are not serialized, and must not be reconstructed from an approval row alone.
 
 ## Goals and non-goals
 
