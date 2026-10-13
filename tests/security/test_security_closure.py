@@ -305,6 +305,26 @@ class TestBloq2HTTPExecutionPerimeter:
             risk_threshold=RiskLevel.UNKNOWN, autonomy_required=0,
         ))
         runtime.register("firewall", fw)
+        from albra_seed.security.auth import AuthPrincipal, Authenticator
+
+        class _TokenAuthenticator(Authenticator):
+            name = "token-leak-test"
+
+            async def authenticate(self, credentials: object) -> AuthPrincipal:
+                return AuthPrincipal(
+                    kind="user", identity="token-leak-test",
+                    auth_method=self.name, is_anonymous=False,
+                )
+
+            async def verify(self, token: str | None) -> AuthPrincipal | None:
+                if token != "sk-super-secret-token-12345":
+                    return None
+                return AuthPrincipal(
+                    kind="user", identity="token-leak-test",
+                    auth_method=self.name, is_anonymous=False,
+                )
+
+        runtime.register("authenticator", _TokenAuthenticator())
         identity = AgentIdentity(name="token-leak-agent")
         agent = Agent(identity=identity, runtime=runtime)
         app = create_app(runtime, agents={identity.agent_id: agent})
