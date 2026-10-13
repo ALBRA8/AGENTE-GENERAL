@@ -1274,7 +1274,42 @@ class Agent:
             # Approval engine: HITL.
             if decision == "require_hitl" and approval is not None:
                 approval_result = await approval.request(call, context=run_ctx)
-                if getattr(approval_result, "status", None) != "approved":
+                # request() creates a PENDING record; it is not an approval.
+                # Wait for an explicit decision and fail closed on rejection,
+                # expiry, missing wait support, or any engine error.
+                if getattr(approval_result, "status", None) == "pending":
+                    wait_for_decision = getattr(approval, "wait_for_decision", None)
+                    if wait_for_decision is None:
+                        decision = "deny"
+                        run_ctx.warnings.append(
+                            f"tool call denied (approval engine cannot await decisions): {call.tool_name}"
+                        )
+                        decisions.append({
+                            "tool": call.tool_name,
+                            "decision": decision,
+                            "reason": "approval_wait_unsupported",
+                            "authorization": None,
+                        })
+                        continue
+                    try:
+                        approval_result = await wait_for_decision(
+                            getattr(approval_result, "approval_id", "")
+                        )
+                    except Exception:  # noqa: BLE001
+                        decision = "deny"
+                        run_ctx.warnings.append(
+                            f"tool call denied (approval wait failed): {call.tool_name}"
+                        )
+                        decisions.append({
+                            "tool": call.tool_name,
+                            "decision": decision,
+                            "reason": "approval_wait_failed",
+                            "authorization": None,
+                        })
+                        continue
+                status = getattr(approval_result, "status", None)
+                status = status.value if hasattr(status, "value") else status
+                if status != "approved":
                     decision = "deny"
                 else:
                     decision = "allow"
