@@ -23,6 +23,8 @@ CRITICAL INVARIANTS:
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -104,6 +106,20 @@ thread-safety, cross-process coordination, or durable execution resumption.
         else:
             action_name = str(action)
             arguments = {}
+        # Bind a ToolCall approval to the exact call identity and a
+        # canonical digest of its arguments. A future resume coordinator can
+        # compare this trusted binding before dispatch; the digest is not an
+        # authorization token and does not replace policy revalidation.
+        canonical_arguments = json.dumps(
+            arguments,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+        arguments_sha256 = hashlib.sha256(
+            canonical_arguments.encode("utf-8")
+        ).hexdigest()
         req = ApprovalRequest(
             action=action_name,
             actor=actor or (
@@ -114,6 +130,8 @@ thread-safety, cross-process coordination, or durable execution resumption.
                 "correlation_id": context.correlation_id if context else None,
                 "agent_id": context.agent_id if context else None,
                 "session_id": context.session_id if context else None,
+                "tool_call_id": action.id if isinstance(action, ToolCall) else None,
+                "arguments_sha256": arguments_sha256,
                 "arguments": arguments,
             },
             deadline=deadline or (utc_now() + timedelta(seconds=self._default_deadline)),
