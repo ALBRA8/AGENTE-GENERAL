@@ -71,3 +71,47 @@ async def test_wait_for_decision_expires_at_deadline() -> None:
     assert observed.status == ApprovalStatus.EXPIRED
     assert engine.get(pending.approval_id).status == ApprovalStatus.EXPIRED
     assert engine.verify_evidence_chain()
+
+
+
+@pytest.mark.asyncio
+async def test_wait_for_decision_wakes_after_rejection() -> None:
+    engine = ApprovalEngine()
+    pending = await engine.request(
+        "tool.external.http",
+        deadline=utc_now() + timedelta(seconds=2),
+    )
+    waiter = asyncio.create_task(engine.wait_for_decision(pending.approval_id))
+    await asyncio.sleep(0)
+
+    rejected = await engine.reject(
+        pending.approval_id,
+        approver="human:test",
+        reason="not authorized",
+    )
+    observed = await asyncio.wait_for(waiter, timeout=1)
+
+    assert rejected.status == ApprovalStatus.REJECTED
+    assert observed.status == ApprovalStatus.REJECTED
+    assert observed.reason == "not authorized"
+
+
+@pytest.mark.asyncio
+async def test_terminal_approval_cannot_be_reversed_by_rejection() -> None:
+    engine = ApprovalEngine()
+    pending = await engine.request(
+        "tool.external.http",
+        deadline=utc_now() + timedelta(seconds=2),
+    )
+
+    approved = await engine.approve(pending.approval_id, approver="human:first")
+    repeated = await engine.reject(
+        pending.approval_id,
+        approver="human:second",
+        reason="conflicting decision",
+    )
+
+    assert approved.status == ApprovalStatus.APPROVED
+    assert repeated.status == ApprovalStatus.APPROVED
+    assert engine.get(pending.approval_id).status == ApprovalStatus.APPROVED
+    assert engine.verify_evidence_chain()
