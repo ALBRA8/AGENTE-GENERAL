@@ -34,6 +34,21 @@ principal authorization. The approval engine remains in-memory, and the
 runtime still lacks the authenticated suspend/resume coordinator described
 below.
 
+## Coordinator primitive added (not yet runtime-integrated)
+
+`src/albra_seed/approvals/suspension.py` now defines a bound suspended-execution
+record and a process-local coordinator. Registration binds the approval, execution,
+correlation, tool-call, tool-name, principal, deadline, and canonical argument
+digest. A lock serializes terminal decisions and resume claims; tests cover missing
+identity/authorization, deadline expiry, binding changes, conflicting decisions,
+and concurrent duplicate claims.
+
+This is intentionally not advertised as end-to-end suspension/resumption: no
+runtime loop or HTTP route calls this coordinator yet. The caller must derive
+identity and authorization from trusted security components, then revalidate
+current policy and firewall state before dispatch. State is volatile and scoped
+to one process; multi-worker safety and restart recovery are not provided.
+
 ## Required lifecycle
 
 1. **Create a bound approval.** Persist the approval ID together with the
