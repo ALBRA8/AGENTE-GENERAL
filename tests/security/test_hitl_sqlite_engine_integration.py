@@ -36,7 +36,7 @@ def test_second_engine_can_decide_and_originating_engine_resumes_same_waiter(tmp
         )
         waiter = asyncio.create_task(origin.wait_for_decision(requested.approval_id))
         await asyncio.sleep(0.03)
-        decided = await reviewer.approve(requested.approval_id, "reviewer-1")
+        decided = await reviewer.approve(requested.approval_id, "reviewer-1", authorized=True)
         resumed = await waiter
 
         assert decided.status is ApprovalStatus.APPROVED
@@ -63,5 +63,29 @@ def test_durable_engine_requires_original_bound_call_context(tmp_path):
             assert "ToolCall, RunContext" in str(exc)
         else:
             raise AssertionError("durable HITL accepted an unbound action")
+
+    asyncio.run(scenario())
+
+
+
+def test_durable_engine_rejects_decision_without_explicit_authorization(tmp_path):
+    path = tmp_path / "hitl.sqlite3"
+    store = SQLiteSuspendedExecutionCoordinator(path)
+    engine = ApprovalEngine(suspension_store=store)
+    context = _context()
+    call = ToolCall(id="call-auth", tool_name="send_message", arguments={"body": "x"})
+
+    async def scenario():
+        requested = await engine.request(
+            call, context=context, actor="principal:requester-1",
+            deadline=utc_now() + timedelta(seconds=10),
+        )
+        try:
+            await engine.approve(requested.approval_id, "reviewer-1")
+        except RuntimeError as exc:
+            assert "authenticated approval permission" in str(exc)
+        else:
+            raise AssertionError("durable decision bypassed explicit authorization")
+        assert store.get(requested.approval_id).state.value == "awaiting_approval"
 
     asyncio.run(scenario())
