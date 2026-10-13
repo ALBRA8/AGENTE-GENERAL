@@ -42,6 +42,8 @@ from albra_seed.core.types import (
 from albra_seed.approvals.evidence import ApprovalEvidence, ApprovalEvidenceStore
 from albra_seed.approvals.escalation import EscalationPolicy
 from albra_seed.approvals.request import ApprovalRequest
+from albra_seed.approvals.sqlite_store import SQLiteSuspendedExecutionCoordinator
+from albra_seed.approvals.suspension import SuspendedExecutionState
 
 log = structlog.get_logger("albra.approvals")
 
@@ -76,6 +78,7 @@ not provide cross-process coordination or durable execution resumption.
         evidence_store: ApprovalEvidenceStore | None = None,
         escalation_policy: EscalationPolicy | None = None,
         default_deadline_seconds: float = 3600.0,
+        suspension_store: SQLiteSuspendedExecutionCoordinator | None = None,
     ) -> None:
         self._requests: dict[str, ApprovalRequest] = {}
         # In-process notification primitives for coordinators waiting on a
@@ -89,6 +92,9 @@ not provide cross-process coordination or durable execution resumption.
             escalation_policy or EscalationPolicy()
         )
         self._default_deadline = default_deadline_seconds
+        # Optional durable coordination across approval workers. The suspended
+        # Python coroutine remains owned by its originating process.
+        self._suspension_store = suspension_store
 
     # ------------------------------------------------------------------
     # Request lifecycle
@@ -134,6 +140,19 @@ not provide cross-process coordination or durable execution resumption.
             scope=scope,
             evidence_ids=list(evidence_ids or []),
         )
+        if self._suspension_store is not None:
+            if not isinstance(action, ToolCall) or context is None or not req.deadline:
+                raise RuntimeError("durable HITL requires a ToolCall, RunContext, and deadline")
+            self._suspension_store.register(
+                approval_id=req.approval_id,
+                execution_id=context.execution_id,
+                correlation_id=context.correlation_id,
+                tool_call_id=action.id,
+                tool_name=action.tool_name,
+                arguments=action.arguments,
+                principal_id=req.actor,
+                deadline=req.deadline,
+            )
         self._requests[req.approval_id] = req
         self._decision_events[req.approval_id] = asyncio.Event()
         log.info(
@@ -154,6 +173,19 @@ not provide cross-process coordination or durable execution resumption.
         approver: str,
     ) -> ApprovalResult:
         """Approve a pending request, expiring it if the deadline has passed."""
+        if self._suspension_store is not None:
+            durable = self._suspension_store.decide(
+                approval_id, decision="approve",
+                authenticated_principal_id=approver, authorized=bool(approver),
+            )
+            local = self._requests.get(approval_id)
+            if local is not None and local.status == ApprovalStatus.PENDING:
+                self._apply_durable_decision(local, durable.state, durable.decided_by, durable.decision_reason)
+                self._signal_decision(approval_id)
+            return ApprovalResult(
+                approval_id=approval_id, status=self._approval_status_from_durable(durable.state),
+                decided_by=durable.decided_by, reason=durable.decision_reason,
+            )
         req = self._get_pending(approval_id)
         if req is None:
             return ApprovalResult(
@@ -191,6 +223,19 @@ not provide cross-process coordination or durable execution resumption.
         reason: str,
     ) -> ApprovalResult:
         """Reject a pending request, expiring it if the deadline has passed."""
+        if self._suspension_store is not None:
+            durable = self._suspension_store.decide(
+                approval_id, decision="reject",
+                authenticated_principal_id=approver, authorized=bool(approver), reason=reason,
+            )
+            local = self._requests.get(approval_id)
+            if local is not None and local.status == ApprovalStatus.PENDING:
+                self._apply_durable_decision(local, durable.state, durable.decided_by, durable.decision_reason)
+                self._signal_decision(approval_id)
+            return ApprovalResult(
+                approval_id=approval_id, status=self._approval_status_from_durable(durable.state),
+                decided_by=durable.decided_by, reason=durable.decision_reason,
+            )
         req = self._get_pending(approval_id)
         if req is None:
             return ApprovalResult(
@@ -352,6 +397,15 @@ not provide cross-process coordination or durable execution resumption.
         it does not itself suspend/resume Agent.run() or provide durable
         cross-process notification.
         """
+        if self._suspension_store is not None:
+            durable = await self._suspension_store.wait_for_decision(approval_id)
+            local = self._requests.get(approval_id)
+            if local is not None and local.status == ApprovalStatus.PENDING:
+                self._apply_durable_decision(local, durable.state, durable.decided_by, durable.decision_reason)
+            return ApprovalResult(
+                approval_id=approval_id, status=self._approval_status_from_durable(durable.state),
+                decided_by=durable.decided_by, reason=durable.decision_reason,
+            )
         req = self._requests.get(approval_id)
         if req is None:
             return ApprovalResult(
@@ -433,6 +487,18 @@ not provide cross-process coordination or durable execution resumption.
             return False
         if not self.matches_approved_tool_call(approval_id, action, context):
             return False
+        if self._suspension_store is not None:
+            try:
+                claimed = self._suspension_store.claim_resume(
+                    approval_id,
+                    execution_id=context.execution_id if context else "",
+                    correlation_id=context.correlation_id if context else "",
+                    tool_call_id=action.id, tool_name=action.tool_name,
+                    arguments=action.arguments, principal_id=req.actor,
+                )
+                return claimed.state is SuspendedExecutionState.CLAIMED
+            except Exception:
+                return False
         execution_id = (req.context_ref or {}).get("execution_id")
         if not isinstance(execution_id, str) or not execution_id:
             return False
@@ -477,7 +543,44 @@ not provide cross-process coordination or durable execution resumption.
         )
 
     def get(self, approval_id: str) -> ApprovalRequest | None:
-        return self._requests.get(approval_id)
+        local = self._requests.get(approval_id)
+        if local is not None or self._suspension_store is None:
+            return local
+        durable = self._suspension_store.get(approval_id)
+        if durable is None:
+            return None
+        # Projection for remote approval endpoints; not a reconstructed agent run.
+        return ApprovalRequest(
+            approval_id=durable.approval_id, action=durable.tool_name,
+            actor=durable.principal_id,
+            context_ref={"execution_id": durable.execution_id,
+                         "correlation_id": durable.correlation_id,
+                         "tool_call_id": durable.tool_call_id,
+                         "arguments_sha256": durable.arguments_sha256},
+            deadline=durable.deadline,
+            status=self._approval_status_from_durable(durable.state),
+            decided_by=durable.decided_by, reason=durable.decision_reason,
+        )
+
+    @staticmethod
+    def _approval_status_from_durable(state: SuspendedExecutionState) -> ApprovalStatus:
+        return {
+            SuspendedExecutionState.AWAITING_APPROVAL: ApprovalStatus.PENDING,
+            SuspendedExecutionState.APPROVED: ApprovalStatus.APPROVED,
+            SuspendedExecutionState.REJECTED: ApprovalStatus.REJECTED,
+            SuspendedExecutionState.EXPIRED: ApprovalStatus.EXPIRED,
+            SuspendedExecutionState.CLAIMED: ApprovalStatus.APPROVED,
+        }[state]
+
+    @staticmethod
+    def _apply_durable_decision(request, state, decided_by, reason):
+        if state is SuspendedExecutionState.APPROVED:
+            request.mark_approved(by=decided_by or "unknown")
+        elif state is SuspendedExecutionState.REJECTED:
+            request.mark_rejected(by=decided_by or "unknown", reason=reason)
+        elif state is SuspendedExecutionState.EXPIRED:
+            request.mark_expired()
+            request.reason = reason or "deadline_passed"
 
     def list_pending(self) -> list[ApprovalRequest]:
         return [r for r in self._requests.values() if r.status == ApprovalStatus.PENDING]
