@@ -116,7 +116,11 @@ class _SmartMockProvider(MockProvider):
         retrieved_block = ""
         user_text = ""
         for msg in messages:
-            if msg.role == Role.SYSTEM and "[RETRIEVED MEMORIES" in msg.content:
+            # M-01 fix: memory is now ``Role.TOOL``, NOT ``Role.SYSTEM``.
+            # Accept BOTH for backward compatibility — the structural
+            # property under test is "the memory WAS retrieved and IS
+            # visible in the messages list", not its specific role.
+            if msg.role in (Role.TOOL, Role.SYSTEM) and "[RETRIEVED MEMORIES" in msg.content:
                 retrieved_block = msg.content
             elif msg.role == Role.USER:
                 user_text = msg.content
@@ -897,11 +901,17 @@ async def test_eval_full_pipeline_smart_provider() -> None:
     )
     msgs = smart.received_messages[0]
 
-    # The SYSTEM block containing the [RETRIEVED MEMORIES] header must
+    # The TOOL block containing the [RETRIEVED MEMORIES] header must
     # have been injected.
-    system_blobs = [m.content for m in msgs if m.role == Role.SYSTEM]
-    assert any("[RETRIEVED MEMORIES" in b for b in system_blobs), (
-        "REASON phase did not inject the [RETRIEVED MEMORIES] SYSTEM block"
+    # M-01 fix: memory is now ``Role.TOOL``, NOT ``Role.SYSTEM``. Check
+    # TOOL messages; also accept SYSTEM for backward-compatibility (the
+    # structural property under test is "RETRIEVED MEMORIES block WAS
+    # injected into the messages list").
+    retrieved_blobs = [
+        m.content for m in msgs if m.role in (Role.TOOL, Role.SYSTEM)
+    ]
+    assert any("[RETRIEVED MEMORIES" in b for b in retrieved_blobs), (
+        "REASON phase did not inject the [RETRIEVED MEMORIES] block"
     )
 
     # The smart provider's response must mention Python (the relevant

@@ -610,30 +610,31 @@ async def test_concurrent_users_no_isolation_leak() -> None:
     # Both runs called the provider exactly once each.
     assert len(recording.received_messages) == 2
 
-    # For each provider call, the system messages must NOT contain BOTH
+    # For each provider call, the TOOL messages must NOT contain BOTH
     # secrets — they must contain exactly the one matching the run's user.
+    # M-01 fix: memory is now ``Role.TOOL``, NOT ``Role.SYSTEM``.
     alice_marker = "alice's secret preference"
     bob_marker = "bob's secret preference"
     for call_messages in recording.received_messages:
-        system_blob = "\n".join(
-            m.content for m in call_messages if m.role == Role.SYSTEM
+        retrieved_blob = "\n".join(
+            m.content for m in call_messages if m.role == Role.TOOL
         )
         # Invariant: never both markers in the same call.
-        assert not (alice_marker in system_blob and bob_marker in system_blob), (
+        assert not (alice_marker in retrieved_blob and bob_marker in retrieved_blob), (
             "isolation leak: a single provider call saw BOTH users' memories: "
-            f"system_blob={system_blob!r}"
+            f"retrieved_blob={retrieved_blob!r}"
         )
 
     # Stronger: each call must have seen EXACTLY one marker (the matching one).
     # We don't know which call was alice vs bob — figure it out by marker.
     markers_seen = []
     for call_messages in recording.received_messages:
-        system_blob = "\n".join(
-            m.content for m in call_messages if m.role == Role.SYSTEM
+        retrieved_blob = "\n".join(
+            m.content for m in call_messages if m.role == Role.TOOL
         )
-        if alice_marker in system_blob:
+        if alice_marker in retrieved_blob:
             markers_seen.append("alice")
-        elif bob_marker in system_blob:
+        elif bob_marker in retrieved_blob:
             markers_seen.append("bob")
         else:
             markers_seen.append("none")

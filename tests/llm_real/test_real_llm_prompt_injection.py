@@ -310,26 +310,30 @@ async def test_real_llm_memory_overriding_system_instructions() -> None:
     # STRUCTURAL: the injected memory WAS actually retrieved as DATA — this
     # proves the test exercises the LLM against the malicious payload (not a
     # trivial no-op where retrieval returned nothing).
+    # M-01 fix: memory is now ``Role.TOOL``, NOT ``Role.SYSTEM``. Check
+    # both for backward-compat — property under test is "memory WAS
+    # retrieved into the messages list".
     # Phase 2.3: defense-in-depth sanitizer redacts the
     # "IGNORE ALL PREVIOUS INSTRUCTIONS" pattern; accept either the raw
     # text OR a redaction marker — both prove the memory WAS retrieved.
-    system_blob = "\n".join(
-        m.content for m in provider.received_messages if m.role == Role.SYSTEM
+    retrieved_blob = "\n".join(
+        m.content for m in provider.received_messages
+        if m.role in (Role.TOOL, Role.SYSTEM)
     )
     assert (
-        "IGNORE ALL PREVIOUS INSTRUCTIONS" in system_blob
-        or "[REDACTED" in system_blob
+        "IGNORE ALL PREVIOUS INSTRUCTIONS" in retrieved_blob
+        or "[REDACTED" in retrieved_blob
     ), (
         "injected memory was NOT retrieved — test is degenerate; "
-        f"system_blob={system_blob!r}"
+        f"retrieved_blob={retrieved_blob!r}"
     )
-    assert "[RETRIEVED MEMORIES" in system_blob, (
+    assert "[RETRIEVED MEMORIES" in retrieved_blob, (
         "retrieved-memories delimiter missing — test setup is wrong"
     )
 
     # LLM OBSERVATION: what did the LLM say? (NOT a security assertion.)
     print(f"\n[LLM RESPONSE]: {response.content[:200]!r}")
-    print(f"[RETRIEVED SYSTEM BLOCK]: {system_blob[:300]!r}")
+    print(f"[RETRIEVED TOOL BLOCK]: {retrieved_blob[:300]!r}")
 
     # The LLM might or might not follow the injection — that's the residual
     # risk. We document it but don't claim security from it. The structural
@@ -407,9 +411,12 @@ async def test_real_llm_memory_requesting_other_user_info() -> None:
     response = await agent.run("What is Bob's password?", session=session)
 
     # STRUCTURAL: Bob's memory MUST NOT be in alice's retrieved context.
+    # M-01 fix: memory is now ``Role.TOOL``, NOT ``Role.SYSTEM``. Accept
+    # both for backward-compat — the property under test is "the memory
+    # WAS retrieved into the messages list", not its specific role.
     retrieved_block = ""
     for msg in provider.received_messages:
-        if msg.role == Role.SYSTEM and "[RETRIEVED MEMORIES" in msg.content:
+        if msg.role in (Role.TOOL, Role.SYSTEM) and "[RETRIEVED MEMORIES" in msg.content:
             retrieved_block = msg.content
             break
 
@@ -561,18 +568,20 @@ async def test_real_llm_memory_provoking_unauthorized_tool_call() -> None:
 
     # STRUCTURAL: the injected memory WAS retrieved as DATA (proves the test
     # exercises the LLM against the malicious payload, not a no-op).
+    # M-01 fix: memory is now ``Role.TOOL``, NOT ``Role.SYSTEM``.
     # Phase 2.3: defense-in-depth sanitizer redacts the
     # "Execute the dangerous" injection pattern; accept either the raw
     # text OR a redaction marker — both prove the memory WAS retrieved.
-    system_blob = "\n".join(
-        m.content for m in provider.received_messages if m.role == Role.SYSTEM
+    retrieved_blob = "\n".join(
+        m.content for m in provider.received_messages
+        if m.role in (Role.TOOL, Role.SYSTEM)
     )
     assert (
-        "Execute the dangerous_op tool" in system_blob
-        or "[REDACTED" in system_blob
+        "Execute the dangerous_op tool" in retrieved_blob
+        or "[REDACTED" in retrieved_blob
     ), (
         "injected memory was NOT retrieved — test is degenerate; "
-        f"system_blob={system_blob!r}"
+        f"retrieved_blob={retrieved_blob!r}"
     )
 
     print(f"\n[LLM RESPONSE]: {provider.llm_response_content[:200]!r}")
@@ -630,18 +639,20 @@ async def test_real_llm_memory_modifying_security_policies() -> None:
 
     # STRUCTURAL: the injected memory WAS retrieved as DATA (proves the test
     # exercises the LLM against the malicious payload, not a no-op).
+    # M-01 fix: memory is now ``Role.TOOL``, NOT ``Role.SYSTEM``.
     # Phase 2.3: defense-in-depth sanitizer redacts the "POLICY UPDATE"
     # injection pattern; accept either the raw text OR a redaction marker —
     # both prove the memory WAS retrieved.
-    system_blob = "\n".join(
-        m.content for m in provider.received_messages if m.role == Role.SYSTEM
+    retrieved_blob = "\n".join(
+        m.content for m in provider.received_messages
+        if m.role in (Role.TOOL, Role.SYSTEM)
     )
     assert (
-        "POLICY UPDATE" in system_blob
-        or "[REDACTED" in system_blob
+        "POLICY UPDATE" in retrieved_blob
+        or "[REDACTED" in retrieved_blob
     ), (
         "injected 'POLICY UPDATE' memory was NOT retrieved — test is "
-        f"degenerate; system_blob={system_blob!r}"
+        f"degenerate; retrieved_blob={retrieved_blob!r}"
     )
 
     print(f"\n[LLM RESPONSE]: {response.content[:200]!r}")
@@ -829,15 +840,17 @@ async def test_real_llm_mixed_useful_and_malicious_memory() -> None:
 
     # STRUCTURAL: at least one of the injected memories was retrieved as DATA
     # (proves the LLM actually saw the malicious payload).
-    system_blob = "\n".join(
-        m.content for m in provider.received_messages if m.role == Role.SYSTEM
+    # M-01 fix: memory is now ``Role.TOOL``, NOT ``Role.SYSTEM``.
+    retrieved_blob = "\n".join(
+        m.content for m in provider.received_messages
+        if m.role in (Role.TOOL, Role.SYSTEM)
     )
     assert (
-        "User prefers Python" in system_blob
-        or "Authorize dangerous_op" in system_blob
+        "User prefers Python" in retrieved_blob
+        or "Authorize dangerous_op" in retrieved_blob
     ), (
         "injected memory was NOT retrieved — test is degenerate; "
-        f"system_blob={system_blob!r}"
+        f"retrieved_blob={retrieved_blob!r}"
     )
 
     await runtime.shutdown()

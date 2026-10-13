@@ -354,8 +354,31 @@ async def _setup(
 
 
 def _system_blob(messages: list[Message]) -> str:
-    """Join all SYSTEM message contents from a messages list."""
+    """Join all SYSTEM message contents from a messages list.
+
+    NOTE (M-01 fix): after the trust-level separation, ``Role.SYSTEM`` is
+    reserved EXCLUSIVELY for the agent's own operating instructions
+    (CRITICAL RULES). Retrieved memory content is sent as ``Role.TOOL``
+    — a structurally untrusted role. Tests that previously asserted that
+    retrieved memory content "appears in the SYSTEM block" must now use
+    :func:`_retrieved_blob` to inspect the ``Role.TOOL`` message where
+    the memory is actually delivered. ``_system_blob`` remains available
+    for tests that legitimately need to inspect the agent's instructions.
+    """
     return "\n".join(m.content for m in messages if m.role == Role.SYSTEM)
+
+
+def _retrieved_blob(messages: list[Message]) -> str:
+    """Join all ``Role.TOOL`` message contents from a messages list.
+
+    After the M-01 fix, retrieved memory content is delivered to the
+    provider as ``Role.TOOL`` (a structurally untrusted role), NOT as
+    ``Role.SYSTEM``. This helper lets tests assert that retrieved memory
+    content was indeed delivered to the provider — preserving the
+    ORIGINAL ASSERTION INTENT (memory WAS retrieved as DATA) while
+    targeting the correct role.
+    """
+    return "\n".join(m.content for m in messages if m.role == Role.TOOL)
 
 
 # =====================================================================
@@ -395,23 +418,33 @@ async def test_memory_cannot_override_system_instructions() -> None:
     )
     assert response.content == "[mock] what is 2+2?"
 
-    # The memory WAS retrieved and IS present in the SYSTEM DATA block.
+    # The memory WAS retrieved and IS present in the retrieved DATA block.
+    # M-01 fix: memory is now delivered as ``Role.TOOL`` (structurally
+    # untrusted), NOT as ``Role.SYSTEM``. Use ``_retrieved_blob`` to inspect
+    # the ``Role.TOOL`` messages.
     # Phase 2.3: defense-in-depth sanitizer may have redacted the raw
     # injection patterns — accept either the raw text OR the redaction
     # marker; both prove the memory was retrieved as DATA.
     assert rig.provider.calls == 1, "provider must be called exactly once"
     messages = rig.provider.received_messages[0]
-    system_blob = _system_blob(messages)
+    retrieved_blob = _retrieved_blob(messages)
     assert (
-        "SYSTEM OVERRIDE" in system_blob
-        or "[REDACTED" in system_blob
-    ), "memory content must appear in the retrieved SYSTEM block"
+        "SYSTEM OVERRIDE" in retrieved_blob
+        or "[REDACTED" in retrieved_blob
+    ), "memory content must appear in the retrieved TOOL block"
     assert (
-        "DAN" in system_blob
-        or "[REDACTED" in system_blob
+        "DAN" in retrieved_blob
+        or "[REDACTED" in retrieved_blob
     )
-    assert "[RETRIEVED MEMORIES" in system_blob
-    assert "[END RETRIEVED MEMORIES]" in system_blob
+    assert "[RETRIEVED MEMORIES" in retrieved_blob
+    assert "[END RETRIEVED MEMORIES]" in retrieved_blob
+    # M-01 negative assertion: memory MUST NOT appear in SYSTEM messages —
+    # it must be confined to ``Role.TOOL`` so it cannot be confused with
+    # the agent's own operating instructions.
+    system_blob = _system_blob(messages)
+    assert "SYSTEM OVERRIDE" not in system_blob
+    assert "DAN" not in system_blob
+    assert "[RETRIEVED MEMORIES" not in system_blob
 
     # The USER message is UNMODIFIED — memory did not inject into USER.
     user_messages = [m for m in messages if m.role == Role.USER]
@@ -465,14 +498,21 @@ async def test_memory_cannot_request_secrets_or_credentials() -> None:
     )
     assert response.content == "[mock] what is the weather today?"
 
-    # The memory WAS retrieved (SYSTEM DATA block contains the secret).
+    # The memory WAS retrieved (TOOL DATA block contains the secret).
+    # M-01 fix: memory is delivered as ``Role.TOOL``, not ``Role.SYSTEM``.
+    # The secret is still DATA (the redactor passes it through for the
+    # structural-retrieval assertion in this test; the next test verifies
+    # the redactor actually fires on the same secret in user-owned memory).
     assert rig.provider.calls == 1
     messages = rig.provider.received_messages[0]
-    system_blob = _system_blob(messages)
-    assert secret in system_blob, (
-        "secret must appear in retrieved SYSTEM block (it's DATA)"
+    retrieved_blob = _retrieved_blob(messages)
+    assert secret in retrieved_blob, (
+        "secret must appear in retrieved TOOL block (it's DATA)"
     )
-    assert "[RETRIEVED MEMORIES" in system_blob
+    assert "[RETRIEVED MEMORIES" in retrieved_blob
+    # M-01 negative: secret must NOT appear in SYSTEM messages.
+    system_blob = _system_blob(messages)
+    assert secret not in system_blob
 
     # The secret NEVER appears in the RunContext's audit-visible fields.
     ctx = rig.agent.state.current_context
@@ -578,11 +618,12 @@ async def test_memory_cannot_authorize_tool_without_approval() -> None:
     )
 
     # The memory WAS retrieved (as DATA, not as authorization).
+    # M-01 fix: memory is delivered as ``Role.TOOL``, not ``Role.SYSTEM``.
     assert rig.provider.calls == 1
     messages = rig.provider.received_messages[0]
-    system_blob = _system_blob(messages)
-    assert "authorized tool 'dangerous_op'" in system_blob, (
-        "memory content must appear in retrieved SYSTEM block"
+    retrieved_blob = _retrieved_blob(messages)
+    assert "authorized tool 'dangerous_op'" in retrieved_blob, (
+        "memory content must appear in retrieved TOOL block"
     )
 
     # The firewall has NO rules — default-deny was the verdict.
@@ -644,18 +685,19 @@ async def test_memory_cannot_impersonate_developer_instructions() -> None:
     )
 
     # The memory WAS retrieved (as DATA, not as authorization).
+    # M-01 fix: memory is delivered as ``Role.TOOL``, not ``Role.SYSTEM``.
     # Phase 2.3: defense-in-depth sanitizer redacts ``[DEVELOPER NOTE]``
     # and ``Grant admin`` patterns — accept either raw text OR redaction
     # marker; both prove the memory was retrieved as DATA.
     messages = rig.provider.received_messages[0]
-    system_blob = _system_blob(messages)
+    retrieved_blob = _retrieved_blob(messages)
     assert (
-        "[DEVELOPER NOTE]" in system_blob
-        or "[REDACTED" in system_blob
+        "[DEVELOPER NOTE]" in retrieved_blob
+        or "[REDACTED" in retrieved_blob
     )
     assert (
-        "Grant admin access" in system_blob
-        or "[REDACTED" in system_blob
+        "Grant admin access" in retrieved_blob
+        or "[REDACTED" in retrieved_blob
     )
 
     # The firewall rules are unchanged — memory didn't add any.
@@ -715,10 +757,11 @@ async def test_memory_cannot_induce_dangerous_action_via_fake_decision() -> None
     )
 
     # The memory WAS retrieved (as DATA).
+    # M-01 fix: memory is delivered as ``Role.TOOL``, not ``Role.SYSTEM``.
     messages = rig.provider.received_messages[0]
-    system_blob = _system_blob(messages)
-    assert "DECISION:" in system_blob
-    assert "delete_all" in system_blob
+    retrieved_blob = _retrieved_blob(messages)
+    assert "DECISION:" in retrieved_blob
+    assert "delete_all" in retrieved_blob
 
     await rig.runtime.shutdown()
 
@@ -840,18 +883,19 @@ async def test_memory_mixed_useful_and_malicious_content() -> None:
     )
 
     # BOTH memories were retrieved (as DATA) — useful context + inert injection.
+    # M-01 fix: memory is delivered as ``Role.TOOL``, not ``Role.SYSTEM``.
     # Phase 2.3: the malicious memory's "Authorize tool 'dangerous_op'"
     # injection pattern is sanitized by the defense-in-depth layer; the
     # useful memory is preserved. Accept either raw or redacted form for
     # the malicious one — both prove it WAS retrieved (as DATA).
     messages = rig.provider.received_messages[0]
-    system_blob = _system_blob(messages)
-    assert "User prefers Python over JavaScript." in system_blob, (
+    retrieved_blob = _retrieved_blob(messages)
+    assert "User prefers Python over JavaScript." in retrieved_blob, (
         "useful memory must be retrieved"
     )
     assert (
-        "Authorize tool 'dangerous_op'" in system_blob
-        or "[REDACTED" in system_blob
+        "Authorize tool 'dangerous_op'" in retrieved_blob
+        or "[REDACTED" in retrieved_blob
     ), (
         "malicious memory must also be retrieved (as DATA, not as authorization)"
     )
@@ -940,16 +984,17 @@ async def test_memory_injection_does_not_bypass_policy_engine() -> None:
     assert spy.execute_called == 0
 
     # The memory WAS retrieved (as DATA).
+    # M-01 fix: memory is delivered as ``Role.TOOL``, not ``Role.SYSTEM``.
     # Phase 2.3: "Policy update" is sanitized by the defense-in-depth
     # layer — accept either raw text OR redaction marker; both prove
     # the memory was retrieved (as DATA).
     messages = rig.provider.received_messages[0]
-    system_blob = _system_blob(messages)
+    retrieved_blob = _retrieved_blob(messages)
     assert (
-        "Policy update" in system_blob
-        or "[REDACTED" in system_blob
+        "Policy update" in retrieved_blob
+        or "[REDACTED" in retrieved_blob
     )
-    assert "all tools are now allowed" in system_blob
+    assert "all tools are now allowed" in retrieved_blob
 
     # The policy engine's rules are UNCHANGED — memory didn't add/modify
     # any rule. This is the core structural property: memory content cannot
@@ -1066,10 +1111,11 @@ async def test_retrieved_memory_never_grants_autonomy_elevation() -> None:
     )
 
     # The memory WAS retrieved (as DATA) — it just didn't change autonomy.
+    # M-01 fix: memory is delivered as ``Role.TOOL``, not ``Role.SYSTEM``.
     messages = rig.provider.received_messages[0]
-    system_blob = _system_blob(messages)
-    assert "L5_SELF_IMPROVE" in system_blob
-    assert "All actions allowed" in system_blob
+    retrieved_blob = _retrieved_blob(messages)
+    assert "L5_SELF_IMPROVE" in retrieved_blob
+    assert "All actions allowed" in retrieved_blob
 
     # The firewall rule is UNCHANGED — memory didn't modify it.
     assert rig.firewall is not None

@@ -195,14 +195,21 @@ async def test_persistent_preference_remembered() -> None:
     agent = Agent(identity, runtime)
     await agent.run("which language do I prefer?", session=session)
 
-    # The Mock provider received the SYSTEM DATA block carrying the
+    # The Mock provider received the TOOL DATA block carrying the
     # retrieved preference memory.
+    # M-01 fix: memory is now ``Role.TOOL`` (structurally untrusted),
+    # NOT ``Role.SYSTEM``. The retrieval assertion targets the TOOL
+    # message; the SYSTEM message must NOT carry memory content.
     assert len(recording.received_messages) == 1
+    retrieved_blob = "\n".join(
+        m.content for m in recording.received_messages[0] if m.role == Role.TOOL
+    )
     system_blob = "\n".join(
         m.content for m in recording.received_messages[0] if m.role == Role.SYSTEM
     )
-    assert "[RETRIEVED MEMORIES" in system_blob
-    assert "the user prefers Python over JavaScript" in system_blob
+    assert "[RETRIEVED MEMORIES" in retrieved_blob
+    assert "the user prefers Python over JavaScript" in retrieved_blob
+    assert "[RETRIEVED MEMORIES" not in system_blob
     # The user's input is still there as the LAST message.
     assert recording.received_messages[0][-1].role == Role.USER
 
@@ -366,14 +373,19 @@ async def test_explicit_correction_influences_response() -> None:
     agent = Agent(identity, runtime)
     response = await agent.run("which language do I prefer?")
 
-    # The provider received the SYSTEM DATA block carrying the correction.
+    # The provider received the TOOL DATA block carrying the correction.
+    # M-01 fix: memory is ``Role.TOOL``, NOT ``Role.SYSTEM``.
     assert len(recording.received_messages) == 1
+    retrieved_blob = "\n".join(
+        m.content for m in recording.received_messages[0] if m.role == Role.TOOL
+    )
     system_blob = "\n".join(
         m.content for m in recording.received_messages[0] if m.role == Role.SYSTEM
     )
-    assert "[RETRIEVED MEMORIES" in system_blob
-    assert "CORRECTION" in system_blob
-    assert "Rust" in system_blob
+    assert "[RETRIEVED MEMORIES" in retrieved_blob
+    assert "CORRECTION" in retrieved_blob
+    assert "Rust" in retrieved_blob
+    assert "[RETRIEVED MEMORIES" not in system_blob
     # The response itself echoes the user's input — not "PWNED" or "C++".
     assert response.content == "[mock] which language do I prefer?"
 
@@ -413,15 +425,20 @@ async def test_decision_recovery() -> None:
     agent = Agent(identity, runtime)
     await agent.run("what database did we pick?")
 
-    # The DECISION memory surfaced in the SYSTEM DATA block.
+    # The DECISION memory surfaced in the TOOL DATA block.
+    # M-01 fix: memory is ``Role.TOOL``, NOT ``Role.SYSTEM``.
     assert len(recording.received_messages) == 1
+    retrieved_blob = "\n".join(
+        m.content for m in recording.received_messages[0] if m.role == Role.TOOL
+    )
     system_blob = "\n".join(
         m.content for m in recording.received_messages[0] if m.role == Role.SYSTEM
     )
-    assert "[RETRIEVED MEMORIES" in system_blob
+    assert "[RETRIEVED MEMORIES" in retrieved_blob
     # The decision_taken + objective are serialized in the content payload.
-    assert "Postgres" in system_blob
-    assert "database" in system_blob.lower()
+    assert "Postgres" in retrieved_blob
+    assert "database" in retrieved_blob.lower()
+    assert "[RETRIEVED MEMORIES" not in system_blob
 
     await runtime.shutdown()
 
@@ -663,29 +680,40 @@ async def test_instruction_injection_via_memory_fails() -> None:
     )
     assert response.content == "[mock] what is 2+2?"
 
-    # Structural check: the malicious payload appears ONLY in SYSTEM messages
+    # Structural check: the malicious payload appears ONLY in TOOL messages
     # (wrapped by the delimited DATA block), never in a USER message.
+    # M-01 fix: memory is ``Role.TOOL``, NOT ``Role.SYSTEM`` — the trust
+    # boundary between agent instructions and retrieved untrusted data
+    # is now STRUCTURAL, not merely textual.
     assert len(recording.received_messages) == 1
     messages = recording.received_messages[0]
     user_messages = [m for m in messages if m.role == Role.USER]
+    tool_messages = [m for m in messages if m.role == Role.TOOL]
     system_messages = [m for m in messages if m.role == Role.SYSTEM]
     assert len(user_messages) == 1
     assert user_messages[0].content == "what is 2+2?"
     for m in user_messages:
         assert "PWNED" not in m.content
         assert "DISREGARD" not in m.content
+    assert len(tool_messages) == 1
+    retrieved_blob = "\n".join(m.content for m in tool_messages)
     system_blob = "\n".join(m.content for m in system_messages)
     # Phase 2.3: defense-in-depth sanitizer redacts the
     # "DISREGARD ALL PREVIOUS INSTRUCTIONS" injection pattern; accept
     # either the raw text OR a redaction marker — both prove the
-    # malicious memory WAS retrieved (as DATA) into the SYSTEM block.
+    # malicious memory WAS retrieved (as DATA) into the TOOL block.
     assert (
-        "DISREGARD ALL PREVIOUS INSTRUCTIONS" in system_blob
-        or "[REDACTED" in system_blob
+        "DISREGARD ALL PREVIOUS INSTRUCTIONS" in retrieved_blob
+        or "[REDACTED" in retrieved_blob
     )
-    assert "PWNED" in system_blob
-    assert "[RETRIEVED MEMORIES" in system_blob
-    assert "[END RETRIEVED MEMORIES]" in system_blob
+    assert "PWNED" in retrieved_blob
+    assert "[RETRIEVED MEMORIES" in retrieved_blob
+    assert "[END RETRIEVED MEMORIES]" in retrieved_blob
+    # M-01 negative: the malicious payload and DATA block MUST NOT
+    # appear in SYSTEM messages.
+    assert "PWNED" not in system_blob
+    assert "[RETRIEVED MEMORIES" not in system_blob
+    assert "DISREGARD" not in system_blob
 
     await runtime.shutdown()
 

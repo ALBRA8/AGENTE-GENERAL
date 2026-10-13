@@ -114,8 +114,15 @@ class _EvalMockProvider(LLMProvider):
     ) -> AgentResponse:
         self.received_messages.append(list(messages))
 
+        # M-01 fix: memory is now ``Role.TOOL``, NOT ``Role.SYSTEM``. To
+        # keep this Mock useful for tests that check whether retrieved
+        # memory content surfaced in the response, we echo BOTH the
+        # SYSTEM messages (agent operating instructions) AND the TOOL
+        # messages (retrieved memory data).
         system_blob = "\n".join(
-            m.content for m in messages if m.role == Role.SYSTEM
+            m.content
+            for m in messages
+            if m.role in (Role.SYSTEM, Role.TOOL)
         )
         user_text = ""
         for msg in reversed(messages):
@@ -313,6 +320,9 @@ async def _run_with_memory_off(
 
     assert len(recording.received_messages) == 1
     msgs = recording.received_messages[0]
+    # M-01 fix: memory is now ``Role.TOOL``. For the no-memory case,
+    # ``system_chars`` only counts SYSTEM (CRITICAL RULES), which is
+    # nonzero when memory is OFF too — that's the intended baseline.
     system_chars = sum(len(m.content) for m in msgs if m.role == Role.SYSTEM)
 
     # No memory -> no retrieval -> no relevant info. The keywords come
@@ -369,18 +379,21 @@ async def _run_with_memory_on(
 
     assert len(recording.received_messages) == 1
     msgs = recording.received_messages[0]
+    # M-01 fix: memory is now ``Role.TOOL``, NOT ``Role.SYSTEM``. Use the
+    # TOOL messages (which carry the retrieved-memories block) instead.
+    retrieved_blob = "\n".join(m.content for m in msgs if m.role == Role.TOOL)
     system_blob = "\n".join(m.content for m in msgs if m.role == Role.SYSTEM)
-    system_chars = len(system_blob)
+    system_chars = len(system_blob) + len(retrieved_blob)
 
     # Count relevant / irrelevant retrieved memories by inspecting the
-    # lines between the delimiters in the SYSTEM DATA block. Each memory
+    # lines between the delimiters in the TOOL DATA block. Each memory
     # entry is formatted by MemoryRetriever.format_for_context() as:
     #     - [TYPE, confidence=X.XX, source=Y] <content>
     # so we count lines starting with "- [".
     relevant_lines = 0
     irrelevant_lines = 0
-    if "[RETRIEVED MEMORIES" in system_blob:
-        inside = system_blob.split("[RETRIEVED MEMORIES", 1)[1]
+    if "[RETRIEVED MEMORIES" in retrieved_blob:
+        inside = retrieved_blob.split("[RETRIEVED MEMORIES", 1)[1]
         if "[END RETRIEVED MEMORIES]" in inside:
             inside = inside.split("[END RETRIEVED MEMORIES]", 1)[0]
         for line in inside.split("\n"):
