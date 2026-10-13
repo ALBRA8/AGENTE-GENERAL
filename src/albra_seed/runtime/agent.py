@@ -1611,13 +1611,6 @@ class Agent:
                     )
                     continue
 
-            # H-14: NOW mark as executed — all gates have passed
-            # (decision==allow, budget reserved, kill switch clear,
-            # cooldown clear). Only authorized+dispatched calls are
-            # marked; denied/blocked calls are NOT in the set.
-            executed_call_ids.add(call.id)
-            ctx["executed_call_ids"] = executed_call_ids
-
             # H-01: route through ToolExecutor (NOT tool.execute directly).
             # The executor re-validates the authorization verdict (H-02),
             # enforces idempotency on call_id (H-08), and applies the
@@ -1645,6 +1638,14 @@ class Agent:
                     f"tool {call.tool_name} failed: {exc}"
                 )
                 continue
+            # H-14: Only mark as executed AFTER the executor successfully
+            # dispatched the call. If the executor rejected (auth failure,
+            # no tp_verifier, invalid token), the call_id is NOT marked —
+            # a retry in a later iteration with valid authorization can
+            # still execute.
+            if result.success:
+                executed_call_ids.add(call.id)
+                ctx["executed_call_ids"] = executed_call_ids
             results.append(result)
             # H-01: the executor catches tool-level exceptions and returns
             # them as failed ToolResults (success=False). The pre-H-01

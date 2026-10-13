@@ -122,7 +122,7 @@ class ToolExecutor:
         # OR failed-but-attempted) executions so a retry with the same
         # call_id is a no-op. Lives for the lifetime of this executor
         # instance — typically one per Runtime.
-        self._executed_calls: set[tuple[str, str, str, str]] = set()
+        self._executed_calls: set[tuple[str, str, str, str, str]] = set()
 
     # ------------------------------------------------------------------
     async def execute(
