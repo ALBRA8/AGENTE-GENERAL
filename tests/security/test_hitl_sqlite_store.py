@@ -1,6 +1,7 @@
 """Cross-instance and restart regressions for durable HITL suspension."""
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from multiprocessing import get_context
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -220,3 +221,37 @@ def test_waiter_observes_decision_from_an_independent_worker(tmp_path):
         assert result.state is SuspendedExecutionState.APPROVED
 
     asyncio.run(scenario())
+
+
+
+def _process_claim_once(database_path, now_iso):
+    coordinator = SQLiteSuspendedExecutionCoordinator(database_path)
+    now = datetime.fromisoformat(now_iso)
+    try:
+        coordinator.claim_resume(
+            "approval-1",
+            execution_id="execution-1",
+            correlation_id="correlation-1",
+            tool_call_id="call-1",
+            tool_name="send_message",
+            arguments={"to": "user@example.test", "body": "hello"},
+            principal_id="principal-1",
+            now=now,
+        )
+        return True
+    except SuspendedExecutionError:
+        return False
+
+
+def test_independent_processes_cannot_claim_the_same_dispatch(tmp_path):
+    path = tmp_path / "approvals.sqlite3"
+    coordinator, now = _registered(path)
+    _approve(coordinator, now)
+    with ProcessPoolExecutor(max_workers=6, mp_context=get_context("spawn")) as pool:
+        results = list(pool.map(
+            _process_claim_once,
+            [str(path)] * 6,
+            [now.isoformat()] * 6,
+        ))
+    assert sum(results) == 1
+    assert coordinator.get("approval-1").state is SuspendedExecutionState.CLAIMED
