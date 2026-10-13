@@ -293,3 +293,57 @@ def test_root_endpoint_returns_metadata(client: TestClient) -> None:
     assert body["name"] == "albra-seed-api"
     assert body["public_prefix"] == "/api/v1"
     assert body["internal_prefix"] == "/internal"
+
+
+def test_execution_endpoint_passes_bearer_to_registered_authenticator(
+    runtime: Runtime,
+) -> None:
+    """The forwarded token is consumed by the Runtime's Authenticator."""
+    from albra_seed.providers.mock import MockProvider
+    from albra_seed.firewall.firewall import ActionFirewall, FirewallRule
+    from albra_seed.core.types import RiskLevel
+    from albra_seed.security.auth import AuthPrincipal, Authenticator
+
+    class RecordingAuthenticator(Authenticator):
+        name = "recording-test"
+
+        def __init__(self) -> None:
+            self.seen_tokens: list[str | None] = []
+
+        async def authenticate(self, credentials: Any) -> AuthPrincipal:
+            return AuthPrincipal(
+                kind="user", identity="test-user", auth_method=self.name,
+                is_anonymous=False,
+            )
+
+        async def verify(self, token: str | None) -> AuthPrincipal | None:
+            self.seen_tokens.append(token)
+            if token != "valid-test-token":
+                return None
+            return AuthPrincipal(
+                kind="user", identity="test-user", auth_method=self.name,
+                is_anonymous=False,
+            )
+
+    runtime.register_provider(MockProvider())
+    fw = ActionFirewall()
+    fw.add_rule(FirewallRule(
+        action_pattern="*", actor_pattern="*", decision="allow",
+        risk_threshold=RiskLevel.UNKNOWN, autonomy_required=0,
+    ))
+    runtime.register("firewall", fw)
+    authenticator = RecordingAuthenticator()
+    runtime.register("authenticator", authenticator)
+    identity = AgentIdentity(name="authenticator-integration-agent", providers=["mock"])
+    agent = Agent(identity=identity, runtime=runtime)
+    app = create_app(runtime, agents={identity.agent_id: agent})
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/execution",
+            headers={"Authorization": "Bearer valid-test-token"},
+            json={"input": "hello"},
+        )
+
+    assert response.status_code == 200, response.text
+    assert "valid-test-token" in authenticator.seen_tokens
