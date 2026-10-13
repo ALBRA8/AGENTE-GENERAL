@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import threading
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -64,8 +65,9 @@ class ApprovalResult(BaseModel):
 class ApprovalEngine:
     """In-memory HITL approval engine for use within a single asyncio event loop.
 
-State and notifications are process-local; this class does not provide
-thread-safety, cross-process coordination, or durable execution resumption.
+State and notifications are process-local; state transitions are not generally
+thread-safe. The at-most-once claim primitive is locally synchronized, but does
+not provide cross-process coordination or durable execution resumption.
 """
 
     def __init__(
@@ -81,6 +83,7 @@ thread-safety, cross-process coordination, or durable execution resumption.
         self._decision_events: dict[str, asyncio.Event] = {}
         # Process-local at-most-once claim; not durable or cross-worker.
         self._claimed_tool_calls: set[tuple[str, str]] = set()
+        self._claim_lock = threading.Lock()
         self.evidence: ApprovalEvidenceStore = evidence_store or ApprovalEvidenceStore()
         self.escalation_policy: EscalationPolicy = (
             escalation_policy or EscalationPolicy()
@@ -421,9 +424,9 @@ thread-safety, cross-process coordination, or durable execution resumption.
     ) -> bool:
         """Atomically claim an approved call once within this process.
 
-        This synchronous check-and-set has no await point, so concurrent
-        coroutines on the same event loop cannot both claim the same call.
-        It is not durable and does not coordinate multiple workers.
+        The claim check-and-set is protected by a process-local lock so threads
+        cannot claim the same call concurrently. It is not durable and does
+        not coordinate multiple workers.
         """
         req = self._requests.get(approval_id)
         if req is None or req.deadline is None or req.deadline <= utc_now():
@@ -434,10 +437,11 @@ thread-safety, cross-process coordination, or durable execution resumption.
         if not isinstance(execution_id, str) or not execution_id:
             return False
         claim_key = (execution_id, action.id)
-        if claim_key in self._claimed_tool_calls:
-            return False
-        self._claimed_tool_calls.add(claim_key)
-        return True
+        with self._claim_lock:
+            if claim_key in self._claimed_tool_calls:
+                return False
+            self._claimed_tool_calls.add(claim_key)
+            return True
 
     def matches_approved_tool_call(
         self,
