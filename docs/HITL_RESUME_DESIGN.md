@@ -47,14 +47,17 @@ The runtime permission phase now waits on the approval engine's decision event
 when a HITL request is pending. This keeps the original `Agent.run()` coroutine
 at the permission boundary rather than regenerating the tool call. The decision
 route signals that event through `ApprovalEngine.approve/reject`; deadline
-expiry and every non-approved outcome fail closed. After approval, policy and
-firewall are rechecked before the tool can be dispatched.
+expiry and every non-approved outcome fail closed. After approval, the original Bearer credential is re-verified, the stable
+principal identity/kind/roles are compared, policy and firewall are rechecked,
+and the original approved call is binding-checked and atomically claimed before
+the tool can be dispatched.
 
 The HTTP API exposes `GET /api/v1/approvals/pending` and
 `POST /api/v1/approvals/{approval_id}/decision`. Both require a verified
-non-anonymous Bearer principal. They also require explicit PolicyEngine rules
-allowing `approval:list` and `approval:decide`; missing policy or denied verdicts
-return 403. The approver identity is taken from the verified principal, not from
+non-anonymous Bearer principal. They also require explicit PolicyEngine rules whose `required_permission` is
+exactly `approval:list` or `approval:decide`, plus a configured PermissionRegistry
+granted that permission to the verified principal's RBAC role. A generic ALLOW
+rule is insufficient; missing policy/permission grants or denied verdicts return 403. The approver identity is taken from the verified principal, not from
 request JSON. `GET /api/v1/execution/{execution_id}` likewise requires a verified
 principal and checks the stable authenticated owner identity and kind stored at
 execution creation; anonymous traces are not retrievable through that endpoint.
