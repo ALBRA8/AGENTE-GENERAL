@@ -19,6 +19,7 @@ async def test_late_approval_expires_instead_of_approving() -> None:
     assert result.status == ApprovalStatus.EXPIRED
     assert result.reason == "deadline_passed"
     assert engine.get(pending.approval_id).status == ApprovalStatus.EXPIRED
+    assert engine.evidence.list_for(pending.approval_id)[-1].reason == "deadline_passed"
     assert engine.verify_evidence_chain()
 
 
@@ -36,6 +37,7 @@ async def test_late_rejection_expires_instead_of_mutating_request() -> None:
     assert result.status == ApprovalStatus.EXPIRED
     assert result.reason == "deadline_passed"
     assert engine.get(pending.approval_id).status == ApprovalStatus.EXPIRED
+    assert engine.evidence.list_for(pending.approval_id)[-1].reason == "deadline_passed"
     assert engine.verify_evidence_chain()
 
 
