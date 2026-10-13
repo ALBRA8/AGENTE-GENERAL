@@ -1,0 +1,36 @@
+name: HITL Regression
+
+on:
+  push:
+    branches: [fix/hitl-deadline-guard]
+  pull_request:
+    branches: [feat/albra-universal-core, main]
+    paths:
+      - "src/albra_seed/approvals/**"
+      - "src/albra_seed/runtime/agent.py"
+      - "tests/security/test_approval_deadline_enforcement.py"
+      - ".github/workflows/hitl-regression.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  hitl-regression:
+    name: HITL tests (Python 3.11)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install package and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Run HITL deadline and waiter regressions
+        run: python -m pytest tests/security/test_approval_deadline_enforcement.py -q
+      - name: Run full test suite
+        run: python -m pytest tests/ -q
