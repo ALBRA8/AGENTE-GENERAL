@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -56,7 +57,7 @@ class SQLiteSuspendedExecutionCoordinator:
         path = Path(self.database_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            with self._connect() as connection:
+            with self._connection() as connection:
                 connection.execute("PRAGMA journal_mode=WAL")
                 connection.execute("PRAGMA synchronous=FULL")
                 connection.execute("BEGIN IMMEDIATE")
@@ -105,6 +106,14 @@ class SQLiteSuspendedExecutionCoordinator:
                 pass
         except (sqlite3.Error, OSError) as exc:
             raise SuspendedExecutionError("HITL durable storage initialization failed") from exc
+
+    @contextmanager
+    def _connection(self):
+        connection = self._connect()
+        try:
+            yield connection
+        finally:
+            connection.close()
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(
