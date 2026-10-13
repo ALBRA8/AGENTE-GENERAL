@@ -22,6 +22,8 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+import pytest
+
 from albra_seed.audit.normal import AuditLog
 from albra_seed.core.base import LLMProvider
 from albra_seed.core.identity import AgentIdentity
@@ -399,8 +401,11 @@ async def test_workflow_engine_with_hitl_resume() -> None:
 # =====================================================================
 
 
-async def test_agent_suspends_and_resumes_same_bound_tool_call_once() -> None:
-    """A pending approval suspends the original run and dispatches once after approval."""
+@pytest.mark.parametrize("human_decision", ["approve", "reject", "expire"])
+async def test_agent_suspends_and_resumes_same_bound_tool_call_once(
+    human_decision: str,
+) -> None:
+    """A pending approval suspends the original run; only approval dispatches."""
     from albra_seed.approvals import ApprovalEngine
     from albra_seed.core.types import ApprovalStatus
     from albra_seed.policy import PolicyEngine, PolicyRule, PolicyRuleSet
@@ -487,18 +492,30 @@ async def test_agent_suspends_and_resumes_same_bound_tool_call_once() -> None:
         assert not pending_run.done(), "Agent.run returned instead of suspending"
         assert tool.execute_count == 0, "tool ran before human approval"
 
-        decision = await approvals.approve(pending.approval_id, approver="reviewer-1")
-        assert decision.status == ApprovalStatus.APPROVED
+        if human_decision == "approve":
+            decision = await approvals.approve(pending.approval_id, approver="reviewer-1")
+            assert decision.status == ApprovalStatus.APPROVED
+        elif human_decision == "reject":
+            decision = await approvals.reject(
+                pending.approval_id, approver="reviewer-1", reason="test rejection"
+            )
+            assert decision.status == ApprovalStatus.REJECTED
+        else:
+            decision = await approvals.expire(pending.approval_id)
+            assert decision.status == ApprovalStatus.EXPIRED
         response = await asyncio.wait_for(pending_run, timeout=5)
 
         assert response.execution_id == pending.context_ref["execution_id"]
-        assert tool.execute_count == 1, "approved tool call must dispatch exactly once"
-        assert response.tool_results and response.tool_results[0].success
-        assert response.tool_results[0].output["echoed"] == "approved-once"
-        assert (
-            pending.context_ref["execution_id"],
-            pending.context_ref["tool_call_id"],
-        ) in approvals._claimed_tool_calls, "the approved call must remain claimed after dispatch"
+        if human_decision == "approve":
+            assert tool.execute_count == 1, "approved tool call must dispatch exactly once"
+            assert response.tool_results and response.tool_results[0].success
+            assert response.tool_results[0].output["echoed"] == "approved-once"
+            assert (
+                pending.context_ref["execution_id"],
+                pending.context_ref["tool_call_id"],
+            ) in approvals._claimed_tool_calls, "the approved call must remain claimed after dispatch"
+        else:
+            assert tool.execute_count == 0, "rejected/expired call must never dispatch"
     finally:
         if not pending_run.done():
             pending_run.cancel()
