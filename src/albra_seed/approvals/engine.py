@@ -582,7 +582,17 @@ not provide cross-process coordination or durable execution resumption.
             request.mark_expired()
             request.reason = reason or "deadline_passed"
 
+    @property
+    def storage_scope(self) -> str:
+        return "durable_sqlite" if self._suspension_store is not None else "process-local"
+
     def list_pending(self) -> list[ApprovalRequest]:
+        if self._suspension_store is not None:
+            return [
+                projected
+                for record in self._suspension_store.list_pending()
+                if (projected := self.get(record.approval_id)) is not None
+            ]
         return [r for r in self._requests.values() if r.status == ApprovalStatus.PENDING]
 
     def list_all(self) -> list[ApprovalRequest]:
