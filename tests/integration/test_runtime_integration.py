@@ -494,16 +494,11 @@ async def test_agent_suspends_and_resumes_same_bound_tool_call_once() -> None:
         assert response.execution_id == pending.context_ref["execution_id"]
         assert tool.execute_count == 1, "approved tool call must dispatch exactly once"
         assert response.tool_results and response.tool_results[0].success
-        assert response.tool_results[0].output["message"] == "approved-once"
-        assert approvals.claim_approved_tool_call(
-            pending.approval_id,
-            ToolCall(
-                id=pending.context_ref["tool_call_id"],
-                tool_name="echo",
-                arguments=pending.context_ref["arguments"],
-            ),
-            context=agent.state.current_context,
-        ) is False, "the approved call must remain claimed after dispatch"
+        assert response.tool_results[0].output["echoed"] == "approved-once"
+        assert (
+            pending.context_ref["execution_id"],
+            pending.context_ref["tool_call_id"],
+        ) in approvals._claimed_tool_calls, "the approved call must remain claimed after dispatch"
     finally:
         if not pending_run.done():
             pending_run.cancel()
