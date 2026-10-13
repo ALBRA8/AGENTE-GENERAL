@@ -69,7 +69,9 @@ async def test_wait_for_decision_expires_at_deadline() -> None:
     observed = await engine.wait_for_decision(pending.approval_id)
 
     assert observed.status == ApprovalStatus.EXPIRED
+    assert observed.reason == "deadline_passed"
     assert engine.get(pending.approval_id).status == ApprovalStatus.EXPIRED
+    assert engine.get(pending.approval_id).reason == "deadline_passed"
     assert engine.verify_evidence_chain()
 
 
