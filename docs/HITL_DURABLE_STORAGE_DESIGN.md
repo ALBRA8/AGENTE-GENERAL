@@ -1,6 +1,6 @@
 # Durable HITL storage and cross-worker resume design
 
-Status: SQLite storage primitives, ApprovalEngine integration for durable approval decisions/polling/claims, API storage-scope reporting, and regression tests are implemented on the draft branch. CI passed for commit `3c7b3035`: HITL Regression (933 passed, 14 skipped) and Clean-Room Verification on Python 3.10, 3.11, and 3.12. Full Agent.run recovery after the originating process dies is NOT implemented: the suspended coroutine and live authorization context are not serialized, and must not be reconstructed from an approval row alone.
+Status: SQLite storage primitives, ApprovalEngine integration for durable approval decisions/polling/claims, API storage-scope reporting, runtime dispatch-outcome audit, and regression tests are implemented on the draft branch. CI passed for commit `7d6f3c7a`: HITL Regression and Clean-Room Verification on Python 3.10, 3.11, and 3.12. The latest runtime outcome-audit changes are under CI now. Full Agent.run recovery after the originating process dies is NOT implemented: the suspended coroutine and live authorization context are not serialized, and must not be reconstructed from an approval row alone.
 
 ## Goals and non-goals
 
@@ -23,10 +23,13 @@ a one-time dispatch-outcome audit record. It stores the canonical arguments
 digest rather than raw tool arguments or credentials. SQLite storage errors
 fail closed; a claim is never automatically reclaimed.
 
-The new tests in `tests/security/test_hitl_sqlite_store.py` cover coordinator
-restart, independent-worker decision/claim races, deadline expiry, corrupt
-storage, binding/authorization rejection, polling, and an ambiguous dispatch
-crash window.
+The tests in `tests/security/test_hitl_sqlite_store.py` cover coordinator
+restart, independent-thread/process decision and claim races, deadline expiry,
+corrupt storage, binding/authorization rejection, polling, and an ambiguous
+dispatch crash window. `ApprovalEngine.record_dispatch_outcome()` and the
+runtime execution boundary persist `succeeded` only on a successful tool result;
+failures/exceptions are recorded as `unknown`, because a failed response does
+not prove that an external side effect did not occur. The claim is not released.
 
 **Remaining recovery boundary:** `ApprovalEngine` can be configured with
 `suspension_store=SQLiteSuspendedExecutionCoordinator(path)`. With that
