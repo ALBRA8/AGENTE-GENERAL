@@ -171,12 +171,14 @@ not provide cross-process coordination or durable execution resumption.
         self,
         approval_id: str,
         approver: str,
+        *,
+        authorized: bool | None = None,
     ) -> ApprovalResult:
         """Approve a pending request, expiring it if the deadline has passed."""
         if self._suspension_store is not None:
             durable = self._suspension_store.decide(
                 approval_id, decision="approve",
-                authenticated_principal_id=approver, authorized=bool(approver),
+                authenticated_principal_id=approver, authorized=(authorized is True),
             )
             local = self._requests.get(approval_id)
             if local is not None and local.status == ApprovalStatus.PENDING:
@@ -221,12 +223,14 @@ not provide cross-process coordination or durable execution resumption.
         approval_id: str,
         approver: str,
         reason: str,
+        *,
+        authorized: bool | None = None,
     ) -> ApprovalResult:
         """Reject a pending request, expiring it if the deadline has passed."""
         if self._suspension_store is not None:
             durable = self._suspension_store.decide(
                 approval_id, decision="reject",
-                authenticated_principal_id=approver, authorized=bool(approver), reason=reason,
+                authenticated_principal_id=approver, authorized=(authorized is True), reason=reason,
             )
             local = self._requests.get(approval_id)
             if local is not None and local.status == ApprovalStatus.PENDING:
