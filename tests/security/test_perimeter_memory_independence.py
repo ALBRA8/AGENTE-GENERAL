@@ -447,6 +447,7 @@ async def test_tool_executor_does_not_consult_memory() -> None:
         autonomy_level=AutonomyLevel.L2_EXECUTE_SAFE,
         risk_level=RiskLevel.LOW,
         execution_id="exec-1",
+        context_id="ctx-1",
     )
     ctx.verified_principal = AuthPrincipal(
         identity="alice", is_anonymous=False
@@ -462,13 +463,13 @@ async def test_tool_executor_does_not_consult_memory() -> None:
         tool_name="echo",
         principal_id="alice",
         execution_id="exec-1",
-        context_id=None,
+        context_id="ctx-1",
     )
     token_dangerous = issuer.issue(
         tool_name="dangerous_op",
         principal_id="alice",
         execution_id="exec-1",
-        context_id=None,
+        context_id="ctx-1",
     )
 
     # --- A) BEFORE storing memory: executor succeeds for "echo" ---

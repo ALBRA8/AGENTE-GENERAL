@@ -129,14 +129,14 @@ class TestForgedAuthorization:
         verifier = AuthorizationVerifier(issuer)
         executor = ToolExecutor(registry, auth_verifier=verifier)
 
-        ctx = RunContext(agent_id="test", task="t", execution_id="exec-1")
+        ctx = RunContext(agent_id="test", task="t", execution_id="exec-1", context_id="ctx-1")
         ctx.verified_principal = AuthPrincipal(identity="alice", roles=["admin"], is_anonymous=False)
 
         token = issuer.issue(
             tool_name="spy",
             principal_id="alice",
             execution_id="exec-1",
-            context_id=None,
+            context_id='ctx-1',
         )
 
         result = await executor.execute(
@@ -157,7 +157,7 @@ class TestForgedAuthorization:
         verifier = AuthorizationVerifier(issuer)
         executor = ToolExecutor(registry, auth_verifier=verifier)
 
-        ctx = RunContext(agent_id="test", task="t", execution_id="exec-1")
+        ctx = RunContext(agent_id="test", task="t", execution_id="exec-1", context_id="ctx-1")
         ctx.verified_principal = AuthPrincipal(identity="alice", is_anonymous=False)
 
         token = issuer.issue(
@@ -186,7 +186,7 @@ class TestForgedAuthorization:
         verifier = AuthorizationVerifier(issuer)
         executor = ToolExecutor(registry, auth_verifier=verifier)
 
-        ctx = RunContext(agent_id="test", task="t", execution_id="exec-1")
+        ctx = RunContext(agent_id="test", task="t", execution_id="exec-1", context_id="ctx-1")
         ctx.verified_principal = AuthPrincipal(identity="alice", is_anonymous=False)
 
         # Issue token for "echo" but try to execute "spy"
@@ -242,7 +242,7 @@ class TestForgedAuthorization:
         verifier = AuthorizationVerifier(issuer)
         executor = ToolExecutor(registry, auth_verifier=verifier)
 
-        ctx = RunContext(agent_id="test", task="t", execution_id="exec-1")
+        ctx = RunContext(agent_id="test", task="t", execution_id="exec-1", context_id="ctx-1")
         ctx.verified_principal = AuthPrincipal(identity="bob", is_anonymous=False)
 
         # Issue token for alice but execute as bob
@@ -270,7 +270,7 @@ class TestForgedAuthorization:
         verifier = AuthorizationVerifier(issuer)
         executor = ToolExecutor(registry, auth_verifier=verifier)
 
-        ctx = RunContext(agent_id="test", task="t", execution_id="exec-1")
+        ctx = RunContext(agent_id="test", task="t", execution_id="exec-1", context_id="ctx-1")
         ctx.verified_principal = AuthPrincipal(identity="alice", is_anonymous=False)
 
         token = issuer.issue(

@@ -1272,12 +1272,21 @@ class Agent:
                     vp = getattr(run_ctx, 'verified_principal', None)
                     if vp is not None:
                         principal_id = getattr(vp, 'identity', None) or getattr(vp, 'principal_id', None) or "anonymous"
+                    # context_id is MANDATORY for token binding. If the
+                    # RunContext has no explicit context_id, use the
+                    # execution_id as the binding context (ensures every
+                    # token is bound to a non-None context_id).
+                    ctx_id_for_token = run_ctx.context_id or run_ctx.execution_id
                     authorization = self._auth_issuer.issue(
                         tool_name=call.tool_name,
                         principal_id=principal_id,
                         execution_id=run_ctx.execution_id,
-                        context_id=run_ctx.context_id,
+                        context_id=ctx_id_for_token,
                     )
+                    # Also set the context_id on the RunContext so the
+                    # executor's verification can match it.
+                    if run_ctx.context_id is None:
+                        run_ctx.context_id = ctx_id_for_token
                     # Register the verifier on the executor if not done
                     if self._auth_verifier is None:
                         self._auth_verifier = AuthorizationVerifier(self._auth_issuer)

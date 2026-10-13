@@ -71,17 +71,25 @@ class AuthorizationToken:
         *,
         tool_name: str,
         execution_id: str,
-        principal_id: str | None = None,
-        context_id: str | None = None,
+        principal_id: str,
+        context_id: str,
     ) -> bool:
-        """Check if the token matches the given execution context."""
+        """Check if the token matches the given execution context.
+        
+        ALL fields are MANDATORY — None is never accepted. A token
+        whose principal_id or context_id does not EXACTLY match the
+        execution context is rejected. No partial matches, no
+        optional fields.
+        """
         if self.tool_name != tool_name:
             return False
         if self.execution_id != execution_id:
             return False
-        if principal_id is not None and self.principal_id != principal_id:
+        # principal_id is MANDATORY — None or mismatch → reject
+        if principal_id is None or self.principal_id != principal_id:
             return False
-        if context_id is not None and self.context_id != context_id:
+        # context_id is MANDATORY — None or mismatch → reject
+        if context_id is None or self.context_id != context_id:
             return False
         return True
 
@@ -170,14 +178,15 @@ class AuthorizationIssuer:
         *,
         tool_name: str,
         execution_id: str,
-        principal_id: str | None = None,
-        context_id: str | None = None,
+        principal_id: str,
+        context_id: str,
         now: float | None = None,
     ) -> bool:
         """Verify a token is valid, not expired, not revoked, and matches.
 
-        This is the method ToolExecutor calls (via the verifier) before
-        executing any non-dry-run tool.
+        principal_id and context_id are MANDATORY — None is rejected.
+        This ensures every token is bound to a verified principal AND
+        a verified execution context. No optional checks.
         """
         # 1. Check signature
         canonical = self._canonical(
@@ -230,14 +239,15 @@ class AuthorizationVerifier:
         *,
         tool_name: str,
         execution_id: str,
-        principal_id: str | None = None,
-        context_id: str | None = None,
+        principal_id: str,
+        context_id: str,
         now: float | None = None,
     ) -> bool:
         """Verify a token. Returns True only if the token is a valid
         AuthorizationToken, correctly signed, not expired, not revoked,
         and bound to the given (tool_name, execution_id, principal_id, context_id).
 
+        principal_id and context_id are MANDATORY — None is rejected.
         Returns False for:
         - None
         - Any object that is not an AuthorizationToken

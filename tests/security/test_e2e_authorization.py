@@ -248,7 +248,7 @@ class TestEndToEndTokenLifecycle:
         verifier = AuthorizationVerifier(issuer)
         executor = ToolExecutor(registry, auth_verifier=verifier)
 
-        ctx = RunContext(agent_id="test", task="t", execution_id="exec-1")
+        ctx = RunContext(agent_id="test", task="t", execution_id="exec-1", context_id="ctx-1")
         ctx.verified_principal = AuthPrincipal(identity="alice", is_anonymous=False)
 
         token = issuer.issue(tool_name="echo", principal_id="alice", execution_id="exec-1")
@@ -269,7 +269,7 @@ class TestEndToEndTokenLifecycle:
         verifier = AuthorizationVerifier(issuer)
         executor = ToolExecutor(registry, auth_verifier=verifier)
 
-        ctx = RunContext(agent_id="test", task="t", execution_id="exec-1")
+        ctx = RunContext(agent_id="test", task="t", execution_id="exec-1", context_id="ctx-1")
         ctx.verified_principal = AuthPrincipal(identity="alice", is_anonymous=False)
 
         token = issuer.issue(tool_name="echo", principal_id="alice", execution_id="exec-1")
@@ -290,7 +290,7 @@ class TestEndToEndTokenLifecycle:
         verifier = AuthorizationVerifier(issuer)
         executor = ToolExecutor(registry, auth_verifier=verifier)
 
-        ctx = RunContext(agent_id="test", task="t", execution_id="exec-1")
+        ctx = RunContext(agent_id="test", task="t", execution_id="exec-1", context_id="ctx-1")
         ctx.verified_principal = AuthPrincipal(identity="alice", is_anonymous=False)
 
         # Token for "other_tool" but executing "echo"
@@ -311,7 +311,7 @@ class TestEndToEndTokenLifecycle:
         verifier = AuthorizationVerifier(issuer)
         executor = ToolExecutor(registry, auth_verifier=verifier)
 
-        ctx = RunContext(agent_id="test", task="t", execution_id="exec-1")
+        ctx = RunContext(agent_id="test", task="t", execution_id="exec-1", context_id="ctx-1")
         ctx.verified_principal = AuthPrincipal(identity="bob", is_anonymous=False)
 
         # Token for alice but principal is bob

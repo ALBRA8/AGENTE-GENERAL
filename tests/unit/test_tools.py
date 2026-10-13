@@ -113,7 +113,7 @@ def test_tool_executor_applies_timeout():
     issuer = AuthorizationIssuer()
     verifier = AuthorizationVerifier(issuer)
     executor = ToolExecutor(reg, auth_verifier=verifier)
-    ctx = RunContext(agent_id="test", task="t", execution_id="exec-1")
+    ctx = RunContext(agent_id="test", task="t", execution_id="exec-1", context_id="ctx-1")
     ctx.verified_principal = AuthPrincipal(
         identity="alice", is_anonymous=False
     )
@@ -121,7 +121,7 @@ def test_tool_executor_applies_timeout():
         tool_name="slow",
         principal_id="alice",
         execution_id="exec-1",
-        context_id=None,
+        context_id='ctx-1',
     )
     result = asyncio.run(
         executor.execute(

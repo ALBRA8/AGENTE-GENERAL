@@ -195,14 +195,47 @@ class ToolExecutor:
                 )
             
             if self._auth_verifier is not None:
-                # SECURE MODE: verify the AuthorizationToken cryptographically
+                # SECURE MODE: verify the AuthorizationToken cryptographically.
+                # principal_id and context_id are MANDATORY — if the
+                # RunContext has no verified_principal or no context_id,
+                # the execution is REJECTED (fail-closed). No optional
+                # checks — every field must be present and match.
                 exec_id = context.execution_id if context else "unknown"
+                
+                # Resolve principal_id from verified_principal — NOT from
+                # caller-settable metadata. If verified_principal is None
+                # (no Authenticator configured, or authentication failed),
+                # principal_id is None → token verification will FAIL
+                # because matches() rejects None principal_id.
                 principal_id = None
                 if context is not None and hasattr(context, 'verified_principal'):
                     vp = context.verified_principal
                     if vp is not None:
                         principal_id = getattr(vp, 'identity', None) or getattr(vp, 'principal_id', None)
+                
+                # context_id is MANDATORY — if the RunContext has no
+                # context_id (None), the token's context_id (which is
+                # "" for None) will NOT match None → verification FAILS.
                 ctx_id = context.context_id if context else None
+                
+                # If principal_id or context_id cannot be resolved, REJECT
+                # immediately without even calling verify(). This prevents
+                # a token issued with context_id="" from matching a
+                # context with context_id=None (which would be a bypass).
+                if principal_id is None:
+                    return ToolResult(
+                        call_id=call_id or new_id("tc"),
+                        success=False,
+                        error="not authorized: no verified principal in context (fail-closed)",
+                        output={"not_authorized": True, "reason": "no_principal"},
+                    )
+                if ctx_id is None:
+                    return ToolResult(
+                        call_id=call_id or new_id("tc"),
+                        success=False,
+                        error="not authorized: no context_id in RunContext (fail-closed)",
+                        output={"not_authorized": True, "reason": "no_context_id"},
+                    )
                 
                 if not self._auth_verifier.verify(
                     authorization,

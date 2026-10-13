@@ -758,7 +758,7 @@ class TestDirectExecutorBypass:
         issuer = AuthorizationIssuer()
         verifier = AuthorizationVerifier(issuer)
         executor = ToolExecutor(registry, auth_verifier=verifier)
-        ctx = RunContext(agent_id="test", task="t", execution_id="exec-1")
+        ctx = RunContext(agent_id="test", task="t", execution_id="exec-1", context_id="ctx-1")
         ctx.verified_principal = AuthPrincipal(
             identity="alice", is_anonymous=False
         )
@@ -766,7 +766,7 @@ class TestDirectExecutorBypass:
             tool_name="echo",
             principal_id="alice",
             execution_id="exec-1",
-            context_id=None,
+            context_id='ctx-1',
         )
         result = await executor.execute(
             "echo",
@@ -1198,7 +1198,7 @@ class TestTimeout:
         issuer = AuthorizationIssuer()
         verifier = AuthorizationVerifier(issuer)
         executor = ToolExecutor(registry, auth_verifier=verifier)
-        ctx = RunContext(agent_id="test", task="t", execution_id="exec-1")
+        ctx = RunContext(agent_id="test", task="t", execution_id="exec-1", context_id="ctx-1")
         ctx.verified_principal = AuthPrincipal(
             identity="alice", is_anonymous=False
         )
@@ -1206,7 +1206,7 @@ class TestTimeout:
             tool_name="slow",
             principal_id="alice",
             execution_id="exec-1",
-            context_id=None,
+            context_id='ctx-1',
         )
         result = await executor.execute(
             "slow", {}, context=ctx, authorization=token, call_id="call-1",
@@ -1318,7 +1318,7 @@ class TestRetry:
         issuer = AuthorizationIssuer()
         verifier = AuthorizationVerifier(issuer)
         executor = ToolExecutor(registry, auth_verifier=verifier)
-        ctx = RunContext(agent_id="test", task="t", execution_id="exec-1")
+        ctx = RunContext(agent_id="test", task="t", execution_id="exec-1", context_id="ctx-1")
         ctx.verified_principal = AuthPrincipal(
             identity="alice", is_anonymous=False
         )
@@ -1326,7 +1326,7 @@ class TestRetry:
             tool_name="echo",
             principal_id="alice",
             execution_id="exec-1",
-            context_id=None,
+            context_id='ctx-1',
         )
         # First call — executes normally.
         result1 = await executor.execute(
