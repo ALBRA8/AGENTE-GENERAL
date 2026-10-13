@@ -59,7 +59,7 @@ python scripts/clean_room_verify.py     # 17/17 required + 2/2 optional PASS
 python scripts/audit_matrix.py          # 40/40 VERIFIED
 python scripts/parity_check.py          # exit 0, 106/106 DNA
 python scripts/contamination_scan.py    # exit 0, is_clean=True
-python -m pytest tests/ -q              # 891 passed
+python -m pytest tests/ -q              # 892 passed
 ```
 
 Expected last line of clean_room: `CLEAN-ROOM: PASS` (17/17 required + 2/2 optional).

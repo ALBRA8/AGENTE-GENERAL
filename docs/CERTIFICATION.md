@@ -3,7 +3,7 @@
 > **Canonical single source of truth for ALBRA SEED certification state.**
 
 **Last verified:** 2026-10-13
-**Commit: `caf66c752ca361ad99da4462ac6268c282433dd7`
+**Commit: `a2a8dbd820791ccf83a0adeb2c48e56d7d991dbd`
 **Status:** `AUDIT_CANDIDATE` — pending independent audit. NOT READY_TO_FREEZE.
 
 ---
@@ -14,7 +14,7 @@
 |---|---|---|
 | Universal DNA components | 106 | `src/albra_seed/parity/dna.py` |
 | Audit matrix probes | 40 | `scripts/audit_matrix.py` |
-| Total tests | 891 | `pytest --collect-only -q` |
+| Total tests | 892 | `pytest --collect-only -q` |
 | A2A tests | 72 | `tests/a2a/` |
 | Golden flows | 13 | `tests/golden/` |
 | Security tests | ~130 | `tests/security/` |
@@ -24,7 +24,7 @@
 
 | Gate | Result | Evidence |
 |---|---|---|
-| Tests | PASS | 891 passed in ~17s |
+| Tests | PASS | 892 passed in ~17s |
 | Audit Matrix | PASS | 40/40 VERIFIED |
 | Genetic Parity | PASS | exit 0, 106/106 DNA, is_pure_seed=True |
 | Genetic Contamination | PASS | exit 0, is_clean=True |
@@ -34,9 +34,9 @@
 
 | Python | Tests | Result |
 |---|---|---|
-| 3.10 | 891 | passed |
-| 3.11 | 891 | passed |
-| 3.12 | 891 | passed |
+| 3.10 | 892 | passed |
+| 3.11 | 892 | passed |
+| 3.12 | 892 | passed |
 
 ## CI GitHub Actions
 
@@ -46,7 +46,7 @@
 ## What is verified vs what is CI-only
 
 ### Verified locally (in-process)
-- All 891 tests pass on Python 3.10, 3.11, 3.12 (fresh venvs)
+- All 892 tests pass on Python 3.10, 3.11, 3.12 (fresh venvs)
 - Audit matrix, parity, contamination, clean-room all PASS
 - Security perimeter: fail-closed executor, TrustedPrincipal seal verification
   (cryptographic + canonical JSON), dry-run without invocation, budget

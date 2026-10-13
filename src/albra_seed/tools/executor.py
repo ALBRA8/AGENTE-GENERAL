@@ -168,16 +168,17 @@ class ToolExecutor:
         """
         # ----- PRE-COMPUTE IDEMPOTENCY KEY (H-13) — SCOPED ---------------
         # The idempotency key is (call_id, tool_name, execution_id,
-        # principal_id) — NOT just call_id. We compute it here but
-        # do NOT check it until AFTER the authorization gate — an
-        # unauthorized duplicate must NOT get idempotent_skip success.
+        # principal_id, context_id) — NOT just call_id. We compute it
+        # here but do NOT check it until AFTER the authorization gate —
+        # an unauthorized duplicate must NOT get idempotent_skip success.
         _idem_exec_id = context.execution_id if context else "unknown"
+        _idem_ctx_id = context.context_id if context else ""
         _idem_principal = ""
         if context is not None and hasattr(context, 'verified_principal'):
             vp = context.verified_principal
             if vp is not None:
                 _idem_principal = getattr(vp, 'principal_id', '') or getattr(vp, 'identity', '') or ""
-        _idem_key = (call_id or "", name, _idem_exec_id, _idem_principal)
+        _idem_key = (call_id or "", name, _idem_exec_id, _idem_principal, _idem_ctx_id)
 
         # ----- AUTHORIZATION GATE (CRITICAL) — FAIL-CLOSED ----------------
         # Non-dry-run execution requires a valid AuthorizationToken verified

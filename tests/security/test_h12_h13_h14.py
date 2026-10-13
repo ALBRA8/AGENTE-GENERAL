@@ -68,7 +68,6 @@ def _ctx(exec_id="exec-1", ctx_id="ctx-1", principal="alice", tp_issuer=None):
 class TestTokenCanonical:
     """Token canonicalization must prevent separator collisions."""
 
-    @pytest.mark.asyncio
     def test_tool_name_with_pipe_no_collision(self):
         """tool_name="a|b" must NOT collide with tool_name="a", principal_id="b"."""
         issuer = AuthorizationIssuer()
@@ -76,7 +75,6 @@ class TestTokenCanonical:
         t2 = issuer.issue(tool_name="a", principal_id="b", execution_id="e1", context_id="c1")
         assert t1.signature != t2.signature, "Canonical collision: pipe in tool_name!"
 
-    @pytest.mark.asyncio
     def test_context_id_with_pipe_no_collision(self):
         """context_id="c|d" must NOT collide with context_id="c", issued_at="d"."""
         issuer = AuthorizationIssuer()
@@ -160,6 +158,19 @@ class TestIdempotencyScope:
         assert spy.execute_count == 2
 
     @pytest.mark.asyncio
+    async def test_same_call_id_different_context_not_deduped(self):
+        """Same call_id + same execution + same principal but different context_id → both execute."""
+        _, spy, auth_issuer, _, executor, tp_issuer = _setup()
+        ctx1 = _ctx(ctx_id="ctx-A", tp_issuer=tp_issuer)
+        ctx2 = _ctx(ctx_id="ctx-B", tp_issuer=tp_issuer)
+        token1 = auth_issuer.issue(tool_name="spy", principal_id="alice", execution_id="exec-1", context_id="ctx-A")
+        token2 = auth_issuer.issue(tool_name="spy", principal_id="alice", execution_id="exec-1", context_id="ctx-B")
+        r1 = await executor.execute("spy", {"message": "hi"}, context=ctx1, authorization=token1, call_id="call-X")
+        r2 = await executor.execute("spy", {"message": "hi"}, context=ctx2, authorization=token2, call_id="call-X")
+        assert r1.success and r2.success
+        assert spy.execute_count == 2  # Both executed — different context_id
+
+    @pytest.mark.asyncio
     async def test_same_call_id_same_scope_deduped(self):
         """Same call_id + same scope → second is deduped."""
         _, spy, auth_issuer, _, executor, tp_issuer = _setup()
@@ -196,63 +207,18 @@ class TestCognitiveDedup:
 
     @pytest.mark.asyncio
     async def test_denied_call_not_marked_as_executed(self):
-        """A denied call in iteration 1 should NOT prevent execution in iteration 2."""
-        from albra_seed import Agent, AgentIdentity, Runtime, SeedConfig, Session
-        from albra_seed.providers.mock import MockProvider
-        from albra_seed.firewall.firewall import ActionFirewall, FirewallRule
-        from albra_seed.policy.engine import PolicyEngine
-        from albra_seed.policy.rules import PolicyRule as PR
+        """First call denied (no auth), second call with same call_id + valid
+        auth → must execute. Verifies denied calls don't poison dedup set."""
+        _, spy, auth_issuer, _, executor, tp_issuer = _setup()
+        ctx = _ctx(tp_issuer=tp_issuer)
 
-        runtime = Runtime(config=SeedConfig())
-        await runtime.startup()
+        # First call: NO authorization → REJECTED
+        r1 = await executor.execute("spy", {"message": "hi"}, context=ctx, authorization=None, call_id="call-X")
+        assert not r1.success
+        assert spy.execute_count == 0  # spy NOT invoked
 
-        spy = _SpyTool("echo")
-        runtime.register_tool(spy)
-
-        # Provider that emits the same call_id twice
-        call_id = "test-call-1"
-        class _Provider(MockProvider):
-            def __init__(self):
-                super().__init__()
-                self._call_count = 0
-            async def complete(self, messages, **kwargs):
-                self._call_count += 1
-                ctx = kwargs.get("context")
-                # First call: emit tool_call; second call: emit plain response
-                if self._call_count == 1:
-                    return AgentResponse(
-                        content="tool call",
-                        execution_id=ctx.execution_id if ctx else "x",
-                        correlation_id=ctx.correlation_id if ctx else "y",
-                        tool_calls=[ToolCall(id=call_id, tool_name="echo", arguments={"message": "hi"})],
-                    )
-                return AgentResponse(
-                    content="done",
-                    execution_id=ctx.execution_id if ctx else "x",
-                    correlation_id=ctx.correlation_id if ctx else "y",
-                )
-        runtime.register_provider(_Provider())
-
-        # First iteration: DENY the call
-        # Second iteration: ALLOW the same call_id
-        # H-14: the denied call must NOT be in executed_call_ids
-        fw = ActionFirewall()
-        fw.add_rule(FirewallRule(action_pattern="echo", actor_pattern="*", decision="allow",
-                                 risk_threshold=RiskLevel.UNKNOWN, autonomy_required=0))
-        runtime.register("firewall", fw)
-        policy = PolicyEngine()
-        policy.add_rule(PR(name="allow_echo", action_pattern="echo", actor_pattern="*",
-                                   risk_threshold=RiskLevel.UNKNOWN, autonomy_required=AutonomyLevel.L0_OBSERVE,
-                                   decision="allow", priority=10))
-        runtime.register("policy_engine", policy)
-
-        from albra_seed.runtime.loop import CognitiveLoopConfig
-        identity = AgentIdentity(name="test", autonomy_level=AutonomyLevel.L2_EXECUTE_SAFE)
-        agent = Agent(identity, runtime, cognitive_loop_config=CognitiveLoopConfig(max_iterations=2))
-        response = await agent.run("echo hi")
-
-        # The call should have executed (spy.execute_count >= 1)
-        # because the first iteration's authorization passed (firewall + policy allow)
-        assert spy.execute_count >= 1, f"Expected at least 1 execution, got {spy.execute_count}"
-
-        await runtime.shutdown()
+        # Second call: SAME call_id + valid authorization → must execute
+        token = auth_issuer.issue(tool_name="spy", principal_id="alice", execution_id="exec-1", context_id="ctx-1")
+        r2 = await executor.execute("spy", {"message": "hi"}, context=ctx, authorization=token, call_id="call-X")
+        assert r2.success, f"Second call should succeed, got: {r2.error}"
+        assert spy.execute_count == 1, f"Expected 1 execution, got {spy.execute_count}"
