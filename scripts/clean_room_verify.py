@@ -299,7 +299,11 @@ def check_test_run(rep: Report) -> None:
     rep.add(CheckResult(
         f"5. TEST-RUN (pytest: {passed} passed, {failed} failed)",
         proc.returncode == 0 and passed > 0 and failed == 0,
-        details=summary or proc.stderr.strip()[:200],
+        details=(
+            (proc.stdout[-1400:] or proc.stderr.strip()[:1400])
+            if proc.returncode != 0
+            else (summary or proc.stderr.strip()[:200])
+        ),
     ))
 
 
