@@ -183,8 +183,6 @@ def test_execution_endpoint_runs_agent_and_returns_trace(runtime: Runtime) -> No
     runtime.register_provider(MockProvider())
     # Security perimeter: register a permissive firewall (allows anything
     # that the agent's Mock provider emits — which is no tool calls).
-    # The perimeter itself is what matters; default-deny is still enforced
-    # by the runtime if a tool is actually attempted.
     fw = ActionFirewall()
     fw.add_rule(FirewallRule(
         action_pattern="*", actor_pattern="*", decision="allow",
@@ -192,6 +190,22 @@ def test_execution_endpoint_runs_agent_and_returns_trace(runtime: Runtime) -> No
     ))
     runtime.register("firewall", fw)
 
+    from albra_seed.security.auth import AuthPrincipal, Authenticator
+
+    class TraceAuthenticator(Authenticator):
+        name = "trace-test"
+
+        async def authenticate(self, credentials: Any) -> AuthPrincipal:
+            return AuthPrincipal(kind="user", identity="trace-owner", auth_method=self.name, is_anonymous=False)
+
+        async def verify(self, token: str | None) -> AuthPrincipal | None:
+            identities = {"owner-token": "trace-owner", "other-token": "other-user"}
+            identity = identities.get(token or "")
+            if identity is None:
+                return None
+            return AuthPrincipal(kind="user", identity=identity, auth_method=self.name, is_anonymous=False)
+
+    runtime.register("authenticator", TraceAuthenticator())
     identity = AgentIdentity(name="exec-agent", providers=["mock"])
     agent = Agent(identity=identity, runtime=runtime)
     app = create_app(runtime, agents={identity.agent_id: agent})
@@ -199,6 +213,7 @@ def test_execution_endpoint_runs_agent_and_returns_trace(runtime: Runtime) -> No
     with TestClient(app) as client:
         r = client.post(
             "/api/v1/execution",
+            headers={"Authorization": "Bearer owner-token"},
             json={"input": "hello"},
         )
         assert r.status_code == 200, r.text
@@ -208,8 +223,11 @@ def test_execution_endpoint_runs_agent_and_returns_trace(runtime: Runtime) -> No
         # Mock provider echoes the input back.
         assert "hello" in body["content"].lower()
 
-        # Trace lookup
-        r2 = client.get(f"/api/v1/execution/{body['execution_id']}")
+        # Trace lookup requires the same verified owner.
+        trace_url = f"/api/v1/execution/{body['execution_id']}"
+        assert client.get(trace_url).status_code == 401
+        assert client.get(trace_url, headers={"Authorization": "Bearer other-token"}).status_code == 403
+        r2 = client.get(trace_url, headers={"Authorization": "Bearer owner-token"})
         assert r2.status_code == 200
         body2 = r2.json()
         assert body2["execution_id"] == body["execution_id"]
