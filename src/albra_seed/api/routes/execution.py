@@ -69,6 +69,22 @@ def build_public_execution_router(ctx: RequestContext) -> Any:
         policy = ctx.runtime.get_component("policy_engine")
         if policy is None or not hasattr(policy, "evaluate"):
             raise HTTPException(status_code=403, detail="approval authorization is not configured")
+        # Require a matching rule that names this exact RBAC permission.
+        # A generic ALLOW rule is not sufficient for approval administration.
+        rule_set = getattr(policy, "rule_set", None)
+        if rule_set is None or not hasattr(rule_set, "first_match"):
+            raise HTTPException(status_code=403, detail="approval permission policy is not configured")
+        from albra_seed.core.types import RiskLevel
+        try:
+            rule = rule_set.first_match(
+                action_name=action,
+                actor_id=getattr(principal, "identity", None),
+                risk=RiskLevel.UNKNOWN,
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=403, detail="approval permission policy failed") from exc
+        if rule is None or getattr(rule, "required_permission", None) != action:
+            raise HTTPException(status_code=403, detail="explicit approval permission grant is required")
         try:
             verdict = await policy.evaluate(
                 action,
