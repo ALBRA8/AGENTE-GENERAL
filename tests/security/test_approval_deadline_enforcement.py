@@ -1,6 +1,7 @@
 """Regression tests for approval deadlines and decision waiters."""
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 
 import pytest
@@ -221,3 +222,31 @@ async def test_approved_tool_call_can_be_claimed_only_once_per_execution() -> No
 
     assert engine.claim_approved_tool_call(pending.approval_id, call, context)
     assert not engine.claim_approved_tool_call(pending.approval_id, call, context)
+
+
+
+@pytest.mark.asyncio
+async def test_concurrent_threads_only_claim_approved_call_once() -> None:
+    engine = ApprovalEngine()
+    context = RunContext(agent_id="agent:test", task="concurrent claim")
+    call = ToolCall(
+        id="tc-concurrent-claim",
+        tool_name="tool.external.http",
+        arguments={"url": "https://example.invalid"},
+    )
+    pending = await engine.request(call, context=context)
+    await engine.approve(pending.approval_id, approver="human:test")
+
+    # Exercise the synchronous claim operation from real threads, not just
+    # coroutines on one event loop. Exactly one contender must win.
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        outcomes = list(
+            pool.map(
+                lambda _: engine.claim_approved_tool_call(
+                    pending.approval_id, call, context
+                ),
+                range(64),
+            )
+        )
+
+    assert sum(outcomes) == 1
