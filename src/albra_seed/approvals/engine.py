@@ -138,6 +138,24 @@ class ApprovalEngine:
                 status=self._status_of(approval_id),
                 reason="not_pending_or_missing",
             )
+        req = self._get_pending(approval_id)
+        if req is None:
+            return ApprovalResult(
+                approval_id=approval_id,
+                status=self._status_of(approval_id),
+                reason="not_pending_or_missing",
+            )
+        # Enforce the deadline at decision time, not only during sweep_stale.
+        # A delayed background sweep must never permit a late approval.
+        if req.is_expired():
+            req.mark_expired()
+            self._record_evidence(req)
+            log.info("approvals.expire_before_approve", approval_id=approval_id)
+            return ApprovalResult(
+                approval_id=approval_id,
+                status=ApprovalStatus.EXPIRED,
+                reason="deadline_passed",
+            )
         req.mark_approved(by=approver)
         self._record_evidence(req, decided_by=approver)
         log.info("approvals.approve", approval_id=approval_id, approver=approver)
@@ -160,6 +178,24 @@ class ApprovalEngine:
                 approval_id=approval_id,
                 status=self._status_of(approval_id),
                 reason="not_pending_or_missing",
+            )
+        req = self._get_pending(approval_id)
+        if req is None:
+            return ApprovalResult(
+                approval_id=approval_id,
+                status=self._status_of(approval_id),
+                reason="not_pending_or_missing",
+            )
+        # Rejection is also terminally recorded as EXPIRED when submitted late;
+        # do not mutate a request after its deadline.
+        if req.is_expired():
+            req.mark_expired()
+            self._record_evidence(req)
+            log.info("approvals.expire_before_reject", approval_id=approval_id)
+            return ApprovalResult(
+                approval_id=approval_id,
+                status=ApprovalStatus.EXPIRED,
+                reason="deadline_passed",
             )
         req.mark_rejected(by=approver, reason=reason)
         self._record_evidence(req, decided_by=approver)
