@@ -231,6 +231,26 @@ def test_execution_endpoint_forwards_bearer_token(runtime: Runtime) -> None:
         risk_threshold=RiskLevel.UNKNOWN, autonomy_required=0,
     ))
     runtime.register("firewall", fw)
+    from albra_seed.security.auth import AuthPrincipal, Authenticator
+
+    class AcceptingAuthenticator(Authenticator):
+        name = "accepting-test"
+
+        async def authenticate(self, credentials: Any) -> AuthPrincipal:
+            return AuthPrincipal(
+                kind="user", identity="test-user", auth_method=self.name,
+                is_anonymous=False,
+            )
+
+        async def verify(self, token: str | None) -> AuthPrincipal | None:
+            if token != "test-credential":
+                return None
+            return AuthPrincipal(
+                kind="user", identity="test-user", auth_method=self.name,
+                is_anonymous=False,
+            )
+
+    runtime.register("authenticator", AcceptingAuthenticator())
     identity = AgentIdentity(name="token-forward-agent", providers=["mock"])
     agent = Agent(identity=identity, runtime=runtime)
     original_run = agent.run
