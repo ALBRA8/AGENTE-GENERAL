@@ -249,9 +249,19 @@ def build_public_execution_router(ctx: RequestContext) -> Any:
         if not isinstance(reason, str) or len(reason) > 1000:
             raise HTTPException(status_code=400, detail="reason must be a string of at most 1000 characters")
         if decision == "approve":
-            result = await engine.approve(approval_id, approver=principal.identity)
+            if getattr(engine, "storage_scope", "process-local") == "durable_sqlite":
+                result = await engine.approve(
+                    approval_id, approver=principal.identity, authorized=True
+                )
+            else:
+                result = await engine.approve(approval_id, approver=principal.identity)
         else:
-            result = await engine.reject(approval_id, approver=principal.identity, reason=reason)
+            if getattr(engine, "storage_scope", "process-local") == "durable_sqlite":
+                result = await engine.reject(
+                    approval_id, approver=principal.identity, reason=reason, authorized=True
+                )
+            else:
+                result = await engine.reject(approval_id, approver=principal.identity, reason=reason)
         return {
             "approval_id": result.approval_id,
             "status": getattr(result.status, "value", result.status),
