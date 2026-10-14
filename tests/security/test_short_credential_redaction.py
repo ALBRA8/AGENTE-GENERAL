@@ -11,7 +11,7 @@ from albra_seed.security.output_redaction import assess_suspicion, redact_secret
         ("token=x", "x"),
         ("password=abc", "abc"),
         ('{"api_key":"k1"}', "k1"),
-        ("Authorization: Bearer a", "a"),
+        ("Authorization: abc", "abc"),
         ('{"nested":{"client_secret":"dev"}}', "dev"),
     ],
 )
