@@ -220,6 +220,118 @@ class Agent:
         if ev is not None:
             ev.set()
 
+    async def resume_approved_approval(
+        self, approval_id: str, *, resumed_by: str
+    ) -> ToolResult:
+        """Explicitly dispatch one saved, approved call after restart.
+
+        This method never invokes a model or reconstructs arguments from
+        reasoning. It requires a durable approval store, the exact saved call
+        and RunContext snapshot, an intact argument digest, an unexpired
+        approval, and current policy/firewall authorization. The SQLite
+        dispatch ledger then enforces a one-shot claim; an uncertain or
+        completed dispatch is never retried automatically.
+
+        resumed_by must identify a caller already authenticated and authorized
+        by the API/application boundary.
+        """
+        from albra_seed.approvals.suspension import canonical_arguments_sha256
+        from albra_seed.core.types import ApprovalStatus
+
+        if not isinstance(resumed_by, str) or not resumed_by.strip():
+            raise PermissionError("verified recovery principal required")
+        approval = self.runtime.get_component(COMPONENT_APPROVAL_ENGINE)
+        store = getattr(approval, "store", None)
+        if approval is None or store is None:
+            raise RuntimeError("durable approval storage is required for recovery")
+        request = approval.get(approval_id)
+        if request is None or request.status is not ApprovalStatus.APPROVED:
+            raise ValueError("only a persisted, approved request can be resumed")
+
+        deadline = request.deadline
+        if deadline is not None:
+            now = utc_now()
+            if deadline.tzinfo is None:
+                deadline = deadline.replace(tzinfo=now.tzinfo)
+            if deadline <= now:
+                raise PermissionError("approval deadline passed; recovery denied")
+
+        binding = request.context_ref or {}
+        call_id = binding.get("call_id")
+        arguments = binding.get("arguments")
+        digest = binding.get("arguments_sha256")
+        snapshot = binding.get("run_context")
+        if (
+            not isinstance(call_id, str) or not call_id
+            or not isinstance(arguments, dict)
+            or not isinstance(digest, str) or not digest
+            or not isinstance(snapshot, dict)
+        ):
+            raise ValueError("durable request lacks the exact original call/context; refusing recovery")
+        if canonical_arguments_sha256(arguments) != digest:
+            raise ValueError("saved tool arguments do not match the approved digest")
+
+        run_context = RunContext.model_validate(snapshot)
+        if (
+            run_context.agent_id != self.identity.agent_id
+            or run_context.execution_id != binding.get("execution_id")
+            or run_context.correlation_id != binding.get("correlation_id")
+            or run_context.session_id != binding.get("session_id")
+        ):
+            raise ValueError("saved execution identity does not match the approval binding")
+
+        # Revalidate against the current agent identity, not stale autonomy
+        # or permission values captured when the approval was requested.
+        run_context.autonomy_level = self.identity.autonomy_level
+        run_context.permissions = list(self.identity.permissions)
+        call = ToolCall(id=call_id, tool_name=request.action, arguments=arguments)
+        policy = self.runtime.get_component(COMPONENT_POLICY_ENGINE)
+        firewall = self.runtime.get_component(COMPONENT_FIREWALL)
+        if policy is None and firewall is None:
+            raise PermissionError("current security perimeter is not configured")
+        if policy is not None:
+            if not hasattr(policy, "evaluate"):
+                raise PermissionError("current policy engine cannot authorize recovery")
+            verdict = await policy.evaluate(call, context=run_context)
+            policy_decision = getattr(verdict, "decision", None)
+            if policy_decision not in {"allow", "require_hitl"}:
+                raise PermissionError("current policy does not authorize recovery")
+        if firewall is not None:
+            if not hasattr(firewall, "check"):
+                raise PermissionError("current firewall cannot authorize recovery")
+            firewall_decision = await firewall.check(call, context=run_context)
+            if getattr(firewall_decision, "allowed", False) is not True:
+                raise PermissionError("current firewall does not authorize recovery")
+        elif policy is None:
+            raise PermissionError("current firewall authorization is required")
+
+        if approval_id not in run_context.approvals:
+            run_context.approvals.append(approval_id)
+        log.info(
+            "approvals.resume_dispatch",
+            approval_id=approval_id,
+            resumed_by=resumed_by,
+            execution_id=run_context.execution_id,
+            tool_name=call.tool_name,
+        )
+        phase_context = {
+            "cancel_event": asyncio.Event(),
+            "CHECK_PERMISSIONS": {
+                "decisions": [{
+                    "tool": call.tool_name,
+                    "decision": "allow",
+                    "approval_id": approval_id,
+                }]
+            },
+            "PLAN": {"tool_calls": [call]},
+            "context": run_context,
+        }
+        execution = await self._phase_execute(self, phase_context)
+        results = execution.get("results", [])
+        if len(results) != 1:
+            raise RuntimeError("recovery dispatch did not produce exactly one result")
+        return results[0]
+
     # =====================================================================
     # PHASE BUILDERS
     # =====================================================================
@@ -580,9 +692,24 @@ class Agent:
                             call.id, claim_token, result.model_dump(mode="json")
                         )
                         if not recorded:
+                            try:
+                                dispatch_store.fail_dispatch(
+                                    call.id, claim_token,
+                                    "completion record missing; external outcome is uncertain",
+                                )
+                            except Exception:  # noqa: BLE001
+                                run_ctx.warnings.append(
+                                    f"could not record uncertain outcome for {call.tool_name}; "
+                                    "the durable claim remains non-reclaimable"
+                                )
                             run_ctx.warnings.append(
                                 f"tool {call.tool_name} returned, but durable completion "
                                 "was not recorded; automatic retry remains blocked"
+                            )
+                            result = ToolResult(
+                                call_id=call.id,
+                                success=False,
+                                error="external outcome uncertain: durable completion was not recorded",
                             )
                     else:
                         dispatch_store.fail_dispatch(

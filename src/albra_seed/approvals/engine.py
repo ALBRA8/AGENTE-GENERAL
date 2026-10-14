@@ -44,6 +44,7 @@ from albra_seed.approvals.evidence import (
 from albra_seed.approvals.escalation import EscalationPolicy
 from albra_seed.approvals.request import ApprovalRequest
 from albra_seed.approvals.sqlite_store import SQLiteApprovalStore
+from albra_seed.approvals.suspension import canonical_arguments_sha256
 
 log = structlog.get_logger("albra.approvals")
 
@@ -125,6 +126,10 @@ class ApprovalEngine:
                 "agent_id": context.agent_id if context else None,
                 "session_id": context.session_id if context else None,
                 "arguments": arguments,
+                "arguments_sha256": canonical_arguments_sha256(arguments),
+                # Recovery may dispatch only this exact saved call and context;
+                # it must never rerun model reasoning to recreate either.
+                "run_context": context.model_dump(mode="json") if context else None,
             },
             deadline=deadline or (utc_now() + timedelta(seconds=self._default_deadline)),
             scope=scope,
@@ -503,7 +508,11 @@ class ApprovalEngine:
             decided_by=decided_by or req.decided_by,
             decided_at=req.decided_at or utc_now(),
             reason=req.reason,
-            metadata={"scope": req.scope, "action": req.action},
+            metadata={
+                "scope": req.scope,
+                "action": req.action,
+                "arguments_sha256": (req.context_ref or {}).get("arguments_sha256"),
+            },
         )
         return self.evidence.append(record)
 

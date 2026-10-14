@@ -239,6 +239,44 @@ def build_public_execution_router(ctx: RequestContext) -> Any:
             "reason": result.reason,
         }
 
+    @router.post("/approvals/{approval_id}/resume")
+    async def resume_approved_approval(
+        approval_id: str,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> Any:
+        """Explicitly resume the exact persisted call; never rerun model reasoning."""
+        principal = await verified_approval_principal(authorization)
+        await require_approval_permission(principal, "approval:resume")
+        engine = ctx.runtime.get_component("approval_engine")
+        if engine is None:
+            raise HTTPException(status_code=503, detail="approval engine is not configured")
+        request = engine.get(approval_id) if hasattr(engine, "get") else None
+        if request is None:
+            raise HTTPException(status_code=404, detail="approval not found")
+        agent_id = (request.context_ref or {}).get("agent_id")
+        agent = ctx.get_agent(agent_id) if agent_id else None
+        if agent is None or not hasattr(agent, "resume_approved_approval"):
+            raise HTTPException(status_code=404, detail="original agent is not registered")
+        try:
+            result = await agent.resume_approved_approval(
+                approval_id, resumed_by=principal.identity
+            )
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except (ValueError, RuntimeError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        dispatch_status = (
+            "completed" if result.success
+            else "blocked" if (result.error or "").startswith("blocked:")
+            else "uncertain"
+        )
+        return {
+            "approval_id": approval_id,
+            "status": dispatch_status,
+            "resumed_by": principal.identity,
+            "tool_result": ctx.redacted(result.model_dump(mode="json")),
+        }
+
     return router
 
 
