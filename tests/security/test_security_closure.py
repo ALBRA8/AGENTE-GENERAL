@@ -100,22 +100,22 @@ def _configure_execution_api_auth(runtime: Runtime) -> None:
     roles = RoleRegistry()
     roles.register(Role(role_id="executor", name="executor"))
     permissions = PermissionRegistry(roles)
-    permissions.register(Permission(id="execution:run"))
-    permissions.grant("executor", "execution:run")
-
     policy = runtime.get_component("policy_engine")
     if policy is None:
         policy = PolicyEngine()
     policy.permission_registry = permissions
-    policy.add_rule(PolicyRule(
-        name="allow execution API",
-        action_pattern="execution:run",
-        actor_pattern="executor-1",
-        risk_threshold=RiskLevel.UNKNOWN,
-        required_permission="execution:run",
-        decision=PolicyDecision.ALLOW,
-        priority=100,
-    ))
+    for action in ("execution:run", "execution:read", "execution:read:any"):
+        permissions.register(Permission(id=action))
+        permissions.grant("executor", action)
+        policy.add_rule(PolicyRule(
+            name=f"allow {action} API",
+            action_pattern=action,
+            actor_pattern="executor-1",
+            risk_threshold=RiskLevel.UNKNOWN,
+            required_permission=action,
+            decision=PolicyDecision.ALLOW,
+            priority=100,
+        ))
     runtime.register("authenticator", _HTTPExecutionAuthenticator())
     runtime.register("policy_engine", policy)
 
