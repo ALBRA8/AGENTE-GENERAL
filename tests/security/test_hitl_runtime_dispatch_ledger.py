@@ -1,6 +1,8 @@
 """Runtime tests for fail-closed, one-shot dispatch of durably approved HITL calls."""
 import asyncio
+import os
 import sqlite3
+from multiprocessing import Process
 
 import pytest
 
@@ -144,6 +146,86 @@ async def test_ambiguous_dispatch_is_not_retried_after_store_and_engine_restart(
 
     assert second["results"][0].success is False
     assert tool.calls == 1
+    with sqlite3.connect(store.db_path) as connection:
+        state = connection.execute(
+            "SELECT state FROM approval_dispatch WHERE call_id = ?", ("call-1",)
+        ).fetchone()[0]
+    assert state == "uncertain"
+
+
+
+def _crash_worker_after_external_effect(database_path, marker_path, approval_id):
+    """Simulate a provider accepting an effect before the worker process dies."""
+    class _CrashAfterEffectTool:
+        name = "external.send"
+
+        async def execute(self, arguments, *, context):
+            with open(marker_path, "a", encoding="utf-8") as marker:
+                marker.write("effect accepted\\n")
+                marker.flush()
+                os.fsync(marker.fileno())
+            # Hard process exit bypasses Python cleanup and any dispatch completion
+            # write in the caller, modeling a crash at the ambiguous side-effect edge.
+            os._exit(23)
+
+    store = SQLiteApprovalStore(database_path)
+    approval = ApprovalEngine(store=store)
+    tool = _CrashAfterEffectTool()
+    agent = object.__new__(Agent)
+    agent.runtime = _Runtime(approval, tool)
+    call = ToolCall(
+        id="call-1",
+        tool_name="external.send",
+        arguments={"to": "recipient@example.test", "body": "hello"},
+    )
+    run_context = RunContext(agent_id="agent-test", task="send a message")
+    context = {
+        "cancel_event": asyncio.Event(),
+        "CHECK_PERMISSIONS": {
+            "decisions": [{
+                "tool": call.tool_name,
+                "decision": "allow",
+                "approval_id": approval_id,
+            }]
+        },
+        "PLAN": {"tool_calls": [call]},
+        "context": run_context,
+    }
+    asyncio.run(agent._phase_execute(agent, context))
+
+
+@pytest.mark.asyncio
+async def test_process_crash_after_external_effect_never_replays_dispatch(tmp_path):
+    """A real worker process crash after the effect must not trigger a second call."""
+    tool = _Tool()
+    agent, context, store = await _approved_context(tmp_path, tool)
+    marker = tmp_path / "external-effects.log"
+
+    worker = Process(
+        target=_crash_worker_after_external_effect,
+        args=(store.db_path, str(marker), context["CHECK_PERMISSIONS"]["decisions"][0]["approval_id"]),
+    )
+    worker.start()
+    worker.join(timeout=15)
+    if worker.is_alive():
+        worker.terminate()
+        worker.join(timeout=5)
+        pytest.fail("crash-injection worker did not exit within 15 seconds")
+
+    assert worker.exitcode == 23
+    assert marker.read_text(encoding="utf-8") == "effect accepted\\n"
+
+    # A new worker marks the interrupted claim uncertain. It must not call the
+    # registered tool again, even though the prior process never saved a result.
+    recovered_store = SQLiteApprovalStore(store.db_path)
+    assert recovered_store.recover_interrupted_dispatches() == 1
+    agent.runtime.approval = ApprovalEngine(store=recovered_store)
+
+    retry = await agent._phase_execute(agent, context)
+
+    assert retry["results"][0].success is False
+    assert tool.calls == 0
+    assert marker.read_text(encoding="utf-8") == "effect accepted\\n"
     with sqlite3.connect(store.db_path) as connection:
         state = connection.execute(
             "SELECT state FROM approval_dispatch WHERE call_id = ?", ("call-1",)
