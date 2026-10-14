@@ -64,6 +64,9 @@ class RetrievalConfig(BaseModel):
     """
 
     top_k: int = 5
+    # Candidate pool is intentionally configurable and larger than the final
+    # context window. Stores without cursor pagination remain bounded.
+    candidate_limit: int = 1000
     max_context_chars: int = 2000
     min_score: float = 0.05  # below this, exclude
     recency_half_life_hours: float = 168.0  # 1 week
@@ -145,7 +148,8 @@ class MemoryRetriever:
         ``ARCHIVED`` (i.e. ``is_alive == False``) are excluded.
 
         Steps:
-            1. ``manager.recall()`` with isolation dims (raises → return []).
+            1. ``manager.recall()`` with isolation dims and a configurable
+               candidate pool (raises → return []).
             2. Drop records with no lifecycle / dead lifecycle.
             3. Score each remaining record (deterministic, pure function).
             4. Sort by score descending (stable on record_id for ties).
@@ -160,7 +164,7 @@ class MemoryRetriever:
                 domain=domain,
                 user_id=user_id,
                 context_id=context_id,
-                limit=limit or 100,  # generous pool before ranking
+                limit=limit if limit is not None else self._config.candidate_limit,  # bounded pool before ranking
             )
         except Exception:  # noqa: BLE001
             # CORE_ONLY safety: a store error must NOT crash the reasoning
