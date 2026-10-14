@@ -1069,11 +1069,15 @@ class Agent:
         # RESPOND is the mandatory last-mile security boundary. Never
         # fall back to the provider's raw draft if the phase did not run or
         # did not produce its sanitized content.
-        if "content" in respond_out:
+        if "content" in respond_out and isinstance(respond_out["content"], str):
             content = respond_out["content"]
         else:
             content = "Response withheld because output security validation did not run."
             context.errors.append("response security phase missing; raw draft withheld")
+            # Do not let an absent/broken RESPOND phase leak tool payloads
+            # through the separate tool_calls/results fields.
+            tool_calls = []
+            results = []
         confidence = float(respond_out.get("confidence", 0.0))
 
         warnings = list(context.warnings)
