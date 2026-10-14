@@ -1,7 +1,8 @@
 """Last-mile secret detection and redaction for user-visible model output.
 
-Detection and suspicion deliberately share the exact same pattern registry so
-that any value redacted from output is also classified as suspicious.
+Detection and suspicion share one registry: every recognized pattern is
+redacted by the same pattern that classifies it. Keep provider-specific token
+formats here so new adapters cannot silently bypass the output boundary.
 """
 from __future__ import annotations
 
@@ -15,22 +16,48 @@ class SecretPattern:
     regex: re.Pattern[str]
 
 
-# Keep this registry as the single source of truth for both APIs.
+# This is the single source of truth for both assessment and redaction.
 _SECRET_PATTERNS = (
-    SecretPattern("private_key", re.compile(
-        r"-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----",
-        re.IGNORECASE,
-    )),
-    SecretPattern("anthropic_key", re.compile(r"\bsk-ant-[A-Za-z0-9_-]{20,}\b")),
-    SecretPattern("openai_key", re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\b")),
-    SecretPattern("github_token", re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b")),
+    SecretPattern(
+        "private_key",
+        re.compile(
+            r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY-----"
+            r"[\s\S]*?-----END (?:RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY-----",
+            re.IGNORECASE,
+        ),
+    ),
+    SecretPattern("anthropic_key", re.compile(r"\bsk-ant-[A-Za-z0-9_-]{16,}\b")),
+    SecretPattern(
+        "openai_key",
+        re.compile(r"\bsk-(?!ant-)[A-Za-z0-9_-]{20,}\b"),
+    ),
+    SecretPattern("groq_key", re.compile(r"\bgsk_[A-Za-z0-9]{20,}\b")),
+    SecretPattern("xai_key", re.compile(r"\bxai-[A-Za-z0-9_-]{20,}\b")),
+    SecretPattern("perplexity_key", re.compile(r"\bpplx-[A-Za-z0-9_-]{20,}\b")),
+    SecretPattern("huggingface_token", re.compile(r"\bhf_[A-Za-z0-9]{20,}\b")),
+    SecretPattern(
+        "github_token",
+        re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b"),
+    ),
     SecretPattern("aws_access_key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
     SecretPattern("google_api_key", re.compile(r"\bAIza[0-9A-Za-z_-]{30,}\b")),
     SecretPattern("slack_token", re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{20,}\b")),
-    SecretPattern("jwt", re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b")),
-    SecretPattern("credential_assignment", re.compile(
-        r"(?i)\b(api[_-]?key|access[_-]?token|refresh[_-]?token|password|passwd|client[_-]?secret|secret[_-]?key)\b(\s*[:=]\s*)(['\"]?)[^\s,;'\"}]{8,}\3"
-    )),
+    SecretPattern(
+        "jwt",
+        re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b"),
+    ),
+    SecretPattern(
+        "bearer_token",
+        re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{16,}"),
+    ),
+    # Handles plain assignments and quoted JSON/YAML-like fields, e.g.
+    # api_key=abc, "api_key":"abc", or Authorization: Bearer ...
+    SecretPattern(
+        "credential_assignment",
+        re.compile(
+            r"""(?i)(["']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|passwd|client[_-]?secret|secret[_-]?key|authorization|credential)["']?\s*[:=]\s*)(["']?)([^\s,;'"<>}]{8,})(["']?)"""
+        ),
+    ),
 )
 
 
@@ -52,8 +79,21 @@ def redact_secrets(text: str) -> str:
     try:
         result = text
         for pattern in _SECRET_PATTERNS:
-            result = pattern.regex.sub("[REDACTED_SECRET]", result)
-        # Invariant: nothing classified as a secret may survive redaction.
+            if pattern.name == "credential_assignment":
+                result = pattern.regex.sub(
+                    lambda match: (
+                        match.group(1)
+                        + match.group(2)
+                        + "[REDACTED_SECRET]"
+                        + match.group(4)
+                    ),
+                    result,
+                )
+            elif pattern.name == "bearer_token":
+                result = pattern.regex.sub("Bearer [REDACTED_SECRET]", result)
+            else:
+                result = pattern.regex.sub("[REDACTED_SECRET]", result)
+        # Invariant: no registered secret pattern may survive redaction.
         if assess_suspicion(result):
             raise RedactionError("secret pattern remained after redaction")
         return result
