@@ -37,7 +37,9 @@ principal's role. HITL approval list/decision/resume routes likewise require
 an explicit action-specific rule and a permission-registry grant for one of
 the authenticated principal's roles. `GET /api/v1/execution/{id}` separately requires
 `execution:read`; traces are owner-scoped unless `execution:read:any` is
-explicitly granted. Missing authentication returns 401; missing configuration
+explicitly granted. `GET /internal/diagnostics` also requires a `diagnostics:read`
+policy rule and role permission, and should remain network-restricted. Missing
+authentication returns 401; missing configuration
 fails closed; missing rule or grant returns 403. Do not use `NoopAuthenticator`
 for an exposed API. Configure an actual authenticator and narrowly scoped
 permissions before enabling HTTP execution.
