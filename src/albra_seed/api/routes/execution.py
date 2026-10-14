@@ -89,11 +89,11 @@ def build_public_execution_router(ctx: RequestContext) -> Any:
         if not getattr(verdict, "allowed", False):
             raise HTTPException(status_code=403, detail="approval action is not authorized")
 
-    async def require_execution_permission(principal: Any) -> None:
-        """Require an explicit execution:run RBAC grant and policy allow."""
+    async def require_execution_permission(
+        principal: Any, action: str = "execution:run"
+    ) -> None:
+        """Require an explicit action-specific RBAC grant and policy allow."""
         from albra_seed.core.types import RiskLevel
-
-        action = "execution:run"
         policy = ctx.runtime.get_component("policy_engine")
         rule_set = getattr(policy, "rule_set", None)
         permission_registry = getattr(policy, "permission_registry", None)
@@ -120,11 +120,11 @@ def build_public_execution_router(ctx: RequestContext) -> Any:
         if rule is None or getattr(rule, "required_permission", None) != action:
             raise HTTPException(
                 status_code=403,
-                detail="explicit execution:run policy grant is required",
+                detail=f"explicit {action} policy grant is required",
             )
         try:
             if not permission_registry.has_any(roles, action):
-                raise HTTPException(status_code=403, detail="execution:run permission denied")
+                raise HTTPException(status_code=403, detail=f"{action} permission denied")
             verdict = await policy.evaluate(
                 action,
                 actor_roles=roles,
@@ -135,7 +135,7 @@ def build_public_execution_router(ctx: RequestContext) -> Any:
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=403, detail="execution authorization failed") from exc
         if not getattr(verdict, "allowed", False):
-            raise HTTPException(status_code=403, detail="execution action is not authorized")
+            raise HTTPException(status_code=403, detail=f"{action} action is not authorized")
 
     @router.post(
         "/execution",
@@ -192,6 +192,7 @@ def build_public_execution_router(ctx: RequestContext) -> Any:
             {
                 "execution_id": response.execution_id,
                 "correlation_id": response.correlation_id,
+                "requested_by": principal.identity,
                 "trace": trace_steps,
                 "metadata": trace_meta,
             },
@@ -213,15 +214,28 @@ def build_public_execution_router(ctx: RequestContext) -> Any:
     @router.get(
         "/execution/{execution_id}",
         response_model=TraceResponse,
-        responses={404: {"model": ErrorResponse}},
+        responses={
+            401: {"model": ErrorResponse},
+            403: {"model": ErrorResponse},
+            404: {"model": ErrorResponse},
+            503: {"model": ErrorResponse},
+        },
     )
-    async def get_execution(execution_id: str) -> Any:
+    async def get_execution(
+        execution_id: str,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> Any:
+        principal = await verified_principal(authorization)
+        await require_execution_permission(principal, "execution:read")
         trace = ctx.get_trace(execution_id)
         if trace is None:
             raise HTTPException(
                 status_code=404,
                 detail=f"no execution trace cached for id={execution_id}",
             )
+        owner = trace.get("requested_by")
+        if owner and owner != principal.identity:
+            await require_execution_permission(principal, "execution:read:any")
         return TraceResponse(
             execution_id=execution_id,
             found=True,
