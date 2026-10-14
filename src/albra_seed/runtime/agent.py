@@ -72,12 +72,12 @@ def _redact_persisted_value(value: Any) -> Any:
 
     from albra_seed.security.output_redaction import redact_secrets
 
+    if value is None or isinstance(value, (bool, int, float, Enum, date, datetime)):
+        return value
     if isinstance(value, str):
         return redact_secrets(value)
     if isinstance(value, bytes):
         return redact_secrets(value.decode("utf-8", errors="replace"))
-    if value is None or isinstance(value, (bool, int, float, Enum, date, datetime)):
-        return value
     if isinstance(value, dict):
         return {
             redact_secrets(str(key)) if not isinstance(key, (int, float, bool)) else key:
