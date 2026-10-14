@@ -59,7 +59,7 @@ python scripts/clean_room_verify.py     # 17/17 required + 2/2 optional PASS
 python scripts/audit_matrix.py          # 40/40 VERIFIED
 python scripts/parity_check.py          # exit 0, 106/106 DNA
 python scripts/contamination_scan.py    # exit 0, is_clean=True
-python -m pytest tests/ -q              # 474 passed
+python -m pytest tests/ -q              # see docs/CERTIFICATION.md for current CI count
 ```
 
 Expected last line of clean_room: `CLEAN-ROOM: PASS` (17/17 required + 2/2 optional).
@@ -178,9 +178,9 @@ Endpoints:
 - `GET /api/v1/readiness` — boolean readiness
 - `GET /api/v1/agent/info` — agent manifest
 - `GET /api/v1/agent/capabilities` — capability list
-- `POST /api/v1/execution` — run an agent
-- `GET /api/v1/execution/{id}` — execution trace
-- `GET /internal/diagnostics` — Doctor report (internal)
+- `POST /api/v1/execution` — run an agent; requires a verified Bearer principal, explicit `execution:run` policy rule, RBAC grant, and configured security perimeter
+- `GET /api/v1/execution/{id}` — execution trace; requires verified Bearer authentication and `execution:read` RBAC; traces are owner-scoped unless `execution:read:any` is explicitly granted
+- `GET /internal/diagnostics` — Doctor report; requires verified Bearer authentication and an explicit `diagnostics:read` RBAC grant (also restrict at the network layer)
 
 ---
 
@@ -267,8 +267,8 @@ python scripts/contamination_scan.py
 - 4 contract tests (interface compliance)
 - 5 security tests (secrets, firewall, tamper detection)
 - 17 genetic parity tests (106 DNA entries verified)
-- 12 genetic contamination tests (249 files scanned, 0 critical)
-- **Total: 474 tests passing in ~8s**
+- 12 genetic contamination tests (255 files scanned, 0 critical)
+- **Current test totals and CI evidence:** see [`docs/CERTIFICATION.md`](docs/CERTIFICATION.md); numbers in this historical example are not certification evidence.
 
 ---
 
@@ -325,7 +325,7 @@ src/albra_specialization/
 ## 🛡️ Security Reminders
 
 - **Never commit `.env`** — it's git-ignored by default.
-- **Never log secrets** — `StructuredLogger` redacts known secret keys, but you should still be careful.
+- **Never log secrets** — `StructuredLogger` redacts known secret keys, but you should still be careful. Browser dashboards must not persist provider keys; see [`docs/WEB_DASHBOARD_SECURITY.md`](docs/WEB_DASHBOARD_SECURITY.md).
 - **Default deny** — firewall blocks everything unless explicitly allowed.
 - **Kill switch** — `KillSwitch.activate(reason)` blocks ALL external actions globally.
 - **HITL** — high-risk actions require approval via `ApprovalEngine`.
@@ -367,14 +367,14 @@ MIT — see [LICENSE](LICENSE).
 | Universal DNA entries         | **106** (`src/albra_seed/parity/dna.py`)   |
 | A2A helper modules (NOT DNA)| **3** (`a2a.wire` / `a2a.exposition` / `a2a.observers`) |
 | Allowed specializations       | 8                                         |
-| Total tests                   | **474** (337 unit incl. 8 birth + 11 factual + 10 forget audit + 81 a2a incl. 9 sec perimeter + 13 golden + 5 integration + 4 contracts + 5 security + 17 parity + 12 contamination) |
+| Total tests                   | See [`docs/CERTIFICATION.md`](docs/CERTIFICATION.md) for current verified CI evidence |
 | A2A tests                    | 81 (28 main + 16 wire + 10 routes + 18 interop + 9 security perimeter) |
 | Clean-room                   | PASS (17/17 required + 2/2 optional; 16 real gates + 1 informational scope-doc R) |
 | Genetic parity               | PASS (`is_pure_seed=True`, 106/106 DNA)   |
 | Genetic contamination         | PASS (`is_clean=True`, 0 critical, 249 files) |
 | A2A security perimeter        | CLOSED for ALL 3 inbound ops (message/send + tasks/get + tasks/cancel) — BLOQ-A2A-SEC |
 | Memory FACT rule              | UNIFIED via `MemoryProvenance.validate_fact()` — BLOQ-MEM |
-| Final status                 | **`READY_TO_FREEZE`**                     |
+| Final status                 | **`CODE_GATES_PASS — PRODUCTION_NOT_VERIFIED`** |
 
 > Canonical certification record: **[`docs/CERTIFICATION.md`](docs/CERTIFICATION.md)**.
 

@@ -1,4 +1,9 @@
-# ALBRA AGENT SEED V1.0 — Universal DNA Gap Closure Report
+# ALBRA AGENT SEED V1.0 — Universal DNA Gap Closure
+
+> **Historical code-gap closure record.** `UNIVERSAL DNA COMPLETE` describes
+> the code-scope work recorded below; it does not certify production readiness.
+> Use [`CERTIFICATION.md`](CERTIFICATION.md) for current gates and deployment
+> status.
 
 > **Document ID:** `UNIVERSAL_DNA_GAP_CLOSURE.md`
 > **Generated:** 2026-10-11 by Task ID `GAP-DOCS`; updated 2026-10-12

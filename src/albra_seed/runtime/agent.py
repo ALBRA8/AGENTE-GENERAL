@@ -412,15 +412,12 @@ class Agent:
         that register a custom provider directly via `register_provider()`
         working unchanged.
 
-        MEM-READ: before calling the provider, this phase now consults the
-        ``MemoryManager`` (auto-provisioned by ``Runtime.birth()``) through
-        a deterministic ``MemoryRetriever``. Retrieved memories are wrapped
-        as a clearly-delimited SYSTEM message and inserted at the START of
-        the messages list — they are DATA, never INSTRUCTIONS. The
-        retriever is wrapped in try/except so any failure (missing manager,
-        store error, lifecycle hiccup) falls back to the pre-MEM-READ
-        behavior of ``messages = [ctx["input_message"]]``. CORE_ONLY safety
-        is preserved: the loop never crashes because of memory retrieval.
+        MEM-READ: before calling the provider, this phase consults the
+        ``MemoryManager`` through a deterministic ``MemoryRetriever``.
+        Trusted system policy remains a SYSTEM message; retrieved memories
+        are a separate Role.TOOL message with untrusted-memory metadata.
+        Provider adapters must preserve that trust boundary. Retrieval errors
+        fall back to the input-only message list and are recorded as warnings.
         """
         messages: list[Message] = [ctx["input_message"]]
         run_ctx: RunContext = ctx["context"]
@@ -984,13 +981,24 @@ class Agent:
             def _redact_nested(value: Any) -> Any:
                 if isinstance(value, str):
                     return redact_secrets(value)
+                if isinstance(value, bytes):
+                    return redact_secrets(value.decode("utf-8", errors="replace"))
+                if value is None or isinstance(value, (bool, int, float)):
+                    return value
+                if hasattr(value, "model_dump"):
+                    return _redact_nested(value.model_dump(mode="json"))
                 if isinstance(value, list):
                     return [_redact_nested(item) for item in value]
                 if isinstance(value, tuple):
                     return tuple(_redact_nested(item) for item in value)
                 if isinstance(value, dict):
-                    return {key: _redact_nested(item) for key, item in value.items()}
-                return value
+                    return {
+                        redact_secrets(str(key)) if not isinstance(key, (int, float, bool)) else key: _redact_nested(item)
+                        for key, item in value.items()
+                    }
+                # Unknown objects must not bypass the last-mile boundary.
+                # Convert their public representation to text and sanitize it.
+                return redact_secrets(str(value))
 
             content = redact_secrets(content)
             safe_results: list[ToolResult] = []
@@ -999,12 +1007,28 @@ class Agent:
                     "output": _redact_nested(result.output),
                     "error": redact_secrets(result.error) if result.error else None,
                 }))
+
+            # Tool-call arguments are included in AgentResponse/API payloads;
+            # redact them too instead of treating only assistant prose as output.
+            plan = ctx.get("PLAN", {}) or {}
+            safe_calls: list[ToolCall] = []
+            for call in plan.get("tool_calls", []) or []:
+                safe_calls.append(call.model_copy(update={
+                    "arguments": _redact_nested(call.arguments),
+                }))
+            if plan:
+                plan["tool_calls"] = safe_calls
+
             run_ctx.warnings[:] = [redact_secrets(str(item)) for item in run_ctx.warnings]
             run_ctx.errors[:] = [redact_secrets(str(item)) for item in run_ctx.errors]
             results = safe_results
         except Exception as exc:  # noqa: BLE001
             content = "Response withheld because output security validation failed."
             results = []
+            # Fail closed for every surface that could expose unsanitized data.
+            plan = ctx.get("PLAN", {}) or {}
+            if plan:
+                plan["tool_calls"] = []
             run_ctx.errors[:] = ["final output security validation failed; response withheld"]
             run_ctx.warnings[:] = [f"output security validation failed: {type(exc).__name__}"]
 
@@ -1042,9 +1066,21 @@ class Agent:
         results: list[ToolResult] = respond_out.get("tool_results", [])
         tool_calls: list[ToolCall] = ctx.get("PLAN", {}).get("tool_calls", [])
 
-        content = respond_out.get("content") or (
-            draft.content if draft else ""
-        )
+        # RESPOND is the mandatory last-mile security boundary. Never
+        # fall back to the provider's raw draft if the phase did not run or
+        # did not produce its sanitized content.
+        if "content" in respond_out and isinstance(respond_out["content"], str):
+            content = respond_out["content"]
+        else:
+            content = "Response withheld because output security validation did not run."
+            # The normal sanitizer did not run, so do not trust any prior
+            # warning/error text either; it may contain raw provider/tool data.
+            context.errors[:] = ["response security phase missing; raw output withheld"]
+            context.warnings[:] = []
+            # Do not let an absent/broken RESPOND phase leak tool payloads
+            # through the separate tool_calls/results fields.
+            tool_calls = []
+            results = []
         confidence = float(respond_out.get("confidence", 0.0))
 
         warnings = list(context.warnings)

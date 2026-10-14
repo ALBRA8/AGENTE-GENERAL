@@ -23,7 +23,26 @@ The seed assumes three classes of threats:
 | Cascade failure         | One failing component triggers a destructive auto-recovery (e.g. wipes a DB).                | RecoveryManager refuses SECURITY/UNKNOWN classes + dangerous markers.       |
 | Runaway external action | A misconfigured provider or runaway loop hammers an external API.                            | KillSwitch (global) + RateLimiter + CooldownManager.                        |
 
-Every primitive below is exercised by a security test under `tests/security/`.
+Every primitive below is exercised by a security test under `tests/security/`. Provider-key handling for browser dashboards is specified in [`WEB_DASHBOARD_SECURITY.md`](WEB_DASHBOARD_SECURITY.md). The dashboard reported at `localhost:9000` is not present in this repository, so its browser storage and network behavior remain an external, unverified acceptance item.
+
+---
+
+## 1.1 HTTP execution authentication and RBAC
+
+`POST /api/v1/execution` is not authorized merely because a firewall is present.
+It requires all of the following: a non-anonymous principal verified from a Bearer
+token, a configured policy engine and permission registry, an explicit
+`execution:run` policy rule for that principal, and an RBAC grant for the
+principal's role. HITL approval list/decision/resume routes likewise require
+an explicit action-specific rule and a permission-registry grant for one of
+the authenticated principal's roles. `GET /api/v1/execution/{id}` separately requires
+`execution:read`; traces are owner-scoped unless `execution:read:any` is
+explicitly granted. `GET /internal/diagnostics` also requires a `diagnostics:read`
+policy rule and role permission, and should remain network-restricted. Missing
+authentication returns 401; missing configuration
+fails closed; missing rule or grant returns 403. Do not use `NoopAuthenticator`
+for an exposed API. Configure an actual authenticator and narrowly scoped
+permissions before enabling HTTP execution.
 
 ---
 

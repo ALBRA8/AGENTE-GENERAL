@@ -76,6 +76,50 @@ def _identity(autonomy: AutonomyLevel = AutonomyLevel.L2_EXECUTE_SAFE) -> AgentI
     )
 
 
+class _HTTPExecutionAuthenticator:
+    async def verify(self, token: str | None):
+        from albra_seed.security.auth import AuthPrincipal
+
+        if token not in {"valid-test-token", "sk-super-secret-token-12345"}:
+            return None
+        return AuthPrincipal(
+            kind="user",
+            identity="executor-1",
+            roles=["executor"],
+            auth_method="test",
+            is_anonymous=False,
+        )
+
+
+def _configure_execution_api_auth(runtime: Runtime) -> None:
+    """Install a test-only authenticated principal and explicit execution RBAC."""
+    from albra_seed.core.types import PolicyDecision
+    from albra_seed.security.permissions import Permission, PermissionRegistry
+    from albra_seed.security.roles import Role, RoleRegistry
+
+    roles = RoleRegistry()
+    roles.register(Role(role_id="executor", name="executor"))
+    permissions = PermissionRegistry(roles)
+    policy = runtime.get_component("policy_engine")
+    if policy is None:
+        policy = PolicyEngine()
+    policy.permission_registry = permissions
+    for action in ("execution:run", "execution:read", "execution:read:any"):
+        permissions.register(Permission(id=action))
+        permissions.grant("executor", action)
+        policy.add_rule(PolicyRule(
+            name=f"allow {action} API",
+            action_pattern=action,
+            actor_pattern="executor-1",
+            risk_threshold=RiskLevel.UNKNOWN,
+            required_permission=action,
+            decision=PolicyDecision.ALLOW,
+            priority=100,
+        ))
+    runtime.register("authenticator", _HTTPExecutionAuthenticator())
+    runtime.register("policy_engine", policy)
+
+
 def _build_runtime_with_perimeter(
     *,
     allow_tool: bool = True,
@@ -256,11 +300,19 @@ class TestBloq2HTTPExecutionPerimeter:
             risk_threshold=RiskLevel.UNKNOWN, autonomy_required=0,
         ))
         runtime.register("firewall", fw)
+        _configure_execution_api_auth(runtime)
         identity = AgentIdentity(name="perimeter-agent")
         agent = Agent(identity=identity, runtime=runtime)
         app = create_app(runtime, agents={identity.agent_id: agent})
         with TestClient(app) as client:
-            r = client.post("/api/v1/execution", json={"input": "hello"})
+            # An open endpoint is denied even when a firewall is configured.
+            anonymous = client.post("/api/v1/execution", json={"input": "hello"})
+            assert anonymous.status_code == 401, anonymous.text
+            r = client.post(
+                "/api/v1/execution",
+                json={"input": "hello"},
+                headers={"Authorization": "Bearer valid-test-token"},
+            )
             assert r.status_code == 200, r.text
             body = r.json()
             assert body["execution_id"]
@@ -282,12 +334,44 @@ class TestBloq2HTTPExecutionPerimeter:
             priority=10,
         ))
         runtime.register("policy_engine", policy)
+        _configure_execution_api_auth(runtime)
         identity = AgentIdentity(name="policy-only-agent")
         agent = Agent(identity=identity, runtime=runtime)
         app = create_app(runtime, agents={identity.agent_id: agent})
         with TestClient(app) as client:
-            r = client.post("/api/v1/execution", json={"input": "hello"})
+            r = client.post(
+                "/api/v1/execution",
+                json={"input": "hello"},
+                headers={"Authorization": "Bearer valid-test-token"},
+            )
             assert r.status_code == 200, r.text
+
+    def test_execution_endpoint_requires_explicit_rbac_rule(self):
+        """Valid authentication alone is insufficient without execution:run policy."""
+        runtime = Runtime(config=SeedConfig())
+        from albra_seed.providers.mock import MockProvider
+        runtime.register_provider(MockProvider())
+        fw = ActionFirewall()
+        fw.add_rule(FirewallRule(
+            action_pattern="*", actor_pattern="*", decision="allow",
+            risk_threshold=RiskLevel.UNKNOWN, autonomy_required=0,
+        ))
+        runtime.register("firewall", fw)
+        _configure_execution_api_auth(runtime)
+        # Remove the action-specific rule while retaining the role permission.
+        policy = runtime.get_component("policy_engine")
+        policy.rule_set = PolicyRuleSet()
+        identity = AgentIdentity(name="no-rbac-agent")
+        agent = Agent(identity=identity, runtime=runtime)
+        app = create_app(runtime, agents={identity.agent_id: agent})
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/v1/execution",
+                json={"input": "hello"},
+                headers={"Authorization": "Bearer valid-test-token"},
+            )
+        assert response.status_code == 403
+        assert "explicit execution:run policy grant" in response.json()["detail"]
 
     def test_execution_endpoint_does_not_leak_token_in_response(self):
         """Verify Authorization header is NEVER echoed in response body."""
@@ -300,6 +384,7 @@ class TestBloq2HTTPExecutionPerimeter:
             risk_threshold=RiskLevel.UNKNOWN, autonomy_required=0,
         ))
         runtime.register("firewall", fw)
+        _configure_execution_api_auth(runtime)
         identity = AgentIdentity(name="token-leak-agent")
         agent = Agent(identity=identity, runtime=runtime)
         app = create_app(runtime, agents={identity.agent_id: agent})

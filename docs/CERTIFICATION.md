@@ -8,10 +8,10 @@
 > out of date until refreshed from this file.
 
 **Last verified:** 2026-10-14
-**Verified code commit:** `8f8c6f2c5e1577380777027561b6cc5a2db3903e` (security remediation branch)
+**Verified code commit:** `5a792185f60fc9c267473ea3705a4c99b22869cf` (security remediation branch)
 **Status:** `CODE GATES PASS — PRODUCTION NOT VERIFIED`
 
-> **Verification evidence (2026-10-14):** GitHub Actions run [38531085169](https://github.com/ALBRA8/AGENTE-GENERAL/actions/runs/38531085169) passed on Python 3.10, 3.11, and 3.12 for clean-room verification, audit matrix, parity, contamination scan, and full pytest. The full suite reported 612 passed and 1 warning on Python 3.11. This certifies the tested code commit above, not production deployment. Do not mark production ready or perform a final freeze until the independent real-environment security/HITL acceptance is signed off.
+> **Verification evidence (2026-10-14):** GitHub Actions run [38543438124](https://github.com/ALBRA8/AGENTE-GENERAL/actions/runs/38543438124) passed on Python 3.10, 3.11, and 3.12 for clean-room verification, audit matrix, parity, contamination scan, and full pytest. The full suite reported 624 passed and 1 warning on Python 3.11; all three Python-version jobs passed. This certifies the tested code commit above, not production deployment. The separate dashboard reported at `localhost:9000` is not included in this repository, so its `localStorage` handling and provider-call path remain NOT VERIFIED; see [`WEB_DASHBOARD_SECURITY.md`](WEB_DASHBOARD_SECURITY.md). Do not mark production ready or perform a final freeze until that dashboard is audited and the independent real-environment security/HITL acceptance is signed off.
 
 ---
 
@@ -28,7 +28,7 @@ subgroup counts as current certification evidence.
 | A2A helper modules (NOT DNA)| 3   | `a2a.wire`, `a2a.exposition`, `a2a.observers` — see § "A2A Helper Modules" |
 | Allowed specializations      | 8     | `src/albra_seed/parity/dna.py` `ALLOWED_SPECIALIZATIONS`                |
 | Audit matrix probes          | 40    | `scripts/audit_matrix.py` `PROBES` list (33 original + 7 gap closures)  |
-| Total tests                   | 612   | `python -m pytest tests/ -q` on verified code commit                             |
+| Total tests                   | 624   | `python -m pytest tests/ -q` on verified code commit                             |
 | A2A tests                    | 81    | `python -m pytest tests/a2a/ --collect-only -q` (28 main + 16 wire + 10 routes + 18 external interop + 9 security perimeter) |
 | A2A tests — main             | 28    | `tests/a2a/test_a2a.py`                                                 |
 | A2A tests — wire format      | 16    | `tests/a2a/test_a2a_wire.py`                                             |
@@ -83,21 +83,23 @@ the clean-room script.)
 
 | Gate                       | Result | Evidence                                                                              |
 | -------------------------- | ------ | ------------------------------------------------------------------------------------- |
-| Tests                       | PASS   | `python -m pytest tests/ -q` → **612 passed, 1 warning** (Python 3.11; CI run 38531085169; Python 3.10/3.12 also passed)                                  |
+| Tests                       | PASS   | `python -m pytest tests/ -q` → **624 passed, 1 warning** (Python 3.11; CI run 38542685681; Python 3.10/3.12 also passed)                                  |
 | Audit Matrix               | PASS   | `python scripts/audit_matrix.py` → **40/40 VERIFIED**                                 |
 | Genetic Parity             | PASS   | `python scripts/parity_check.py` → exit 0, `is_pure_seed=True`, 106/106 DNA present   |
-| Genetic Contamination      | PASS   | `python scripts/contamination_scan.py` → exit 0, `is_clean=True`, 0 critical, 0 warnings, 249 files scanned |
+| Genetic Contamination      | PASS   | `python scripts/contamination_scan.py` → exit 0, `is_clean=True`, 0 critical, 0 warnings, 255 files scanned |
 | Clean-room                 | PASS   | `python scripts/clean_room_verify.py` → **17/17 required + 2/2 optional** PASS (16 real PASS/FAIL gates + 1 informational scope-doc check R; see Clean-room scope §) |
-| **CI (GitHub Actions)**     | **PASS** | workflow `.github/workflows/clean-room.yml` on commit `8437f2a` → **3/3 jobs success** (Python 3.10, 3.11, 3.12 on ubuntu-latest); run_id `38197913446` |
+| **CI (GitHub Actions)**     | **PASS** | workflow `.github/workflows/clean-room.yml` on commit `5a79218` → **3/3 jobs success** (Python 3.10, 3.11, 3.12 on ubuntu-latest); run_id `38543438124` |
 | CORE_ONLY birth            | PASS   | Birth check inside `clean_room_verify.py` (check #3 + #4) + `tests/unit/test_birth_readiness.py` (8 tests) |
 | A2A wire format             | PASS   | `pytest tests/a2a/test_a2a_wire.py` → **16 passed**                                   |
 | A2A routes                  | PASS   | `pytest tests/a2a/test_a2a_routes.py` → **10 passed**                                 |
 | A2A external interop        | PASS   | `pytest tests/a2a/test_external_interop.py` → **18 passed** via `httpx.ASGITransport` |
 | A2A security perimeter      | PASS   | `pytest tests/a2a/test_a2a_security_perimeter.py` → **9 passed** (BLOQ-A2A-SEC; all 3 ops through filter, token plumbing end-to-end) |
 | A2A full suite              | PASS   | `pytest tests/a2a/ -q` → **81 passed in ~2s**                                          |
-| Security fail-open closure  | PASS   | `pytest tests/security/test_security_closure.py` → **13 passed** (BLOQ 1 + BLOQ 2; DEFAULT-DENY enforced, no bypass flags, no token leakage) |
+| Security fail-open closure  | PASS   | Included in the verified **624-test full suite**; the updated per-file count was not separately recorded (BLOQ 1 + BLOQ 2; DEFAULT-DENY, authenticated RBAC, trace ownership, and no token leakage) |
 | Memory FACT rule            | PASS   | `pytest tests/unit/test_memory_factual_integrity.py` → **11 passed** (BLOQ-MEM; unified via `MemoryProvenance.validate_fact`) |
 | Memory forget / audit       | PASS   | `pytest tests/unit/test_memory_forget_audit.py` → **10 passed** (BLOQ-MEM; tombstone by/reason + audit_sink) |
+| Browser dashboard key handling | NOT VERIFIED | Dashboard source is not tracked in this repository; inspect/fix `localStorage` and direct provider calls against the actual UI using `WEB_DASHBOARD_SECURITY.md` |
+| Production HITL / infrastructure acceptance | NOT VERIFIED | Requires real evidence for encrypted storage/backups, KMS, auth/RBAC, firewall/egress, restore drill, uncertain-side-effect reconciliation, and kill switch |
 | pyproject.toml parses       | PASS   | `python -c "import tomllib; tomllib.load(open('pyproject.toml','rb'))"` (8 optional-dependencies: openai/anthropic/groq/vector/api/otel/dev/all) |
 
 ---
@@ -242,7 +244,7 @@ block above `UNIVERSAL_DNA_COMPONENTS`).
 CODE_GATES_PASS — PRODUCTION_NOT_VERIFIED
 ```
 
-Code-level CI gates passed on the verified code commit. Production readiness and final freeze remain blocked until the independent real-environment security/HITL acceptance is signed off. The seed may be cloned for isolated development and testing only.
+Code-level CI gates passed on the verified code commit. Production readiness and final freeze remain blocked until the separate dashboard source is audited and fixed, and the independent real-environment security/HITL acceptance is signed off. The seed may be cloned for isolated development and testing only.
 Specialization rules are in [`docs/SPECIALIZATION.md`](SPECIALIZATION.md).
 
 ---
@@ -268,7 +270,7 @@ This breaks down as:
 2. Required deps (`pydantic`, `structlog`, `dotenv`) are importable.
 3. `SeedConfig.from_env()` → CORE_ONLY.
 4. `Runtime.startup()` + `readiness() == True`.
-5. `pytest tests/` passes (612 tests on the verified code commit).
+5. `pytest tests/` passes (624 tests on the verified code commit).
 6. `__seed_version__ == "ALBRA_SEED_V1.0"`.
 7. `Agent.run("hello")` returns `AgentResponse`.
 8. `runtime.health()` returns dict with `status` key.
@@ -363,7 +365,7 @@ python scripts/clean_room_verify.py    # 17/17 required + 2/2 optional PASS
 python scripts/audit_matrix.py         # 40/40 VERIFIED (writes docs/AUDIT_MATRIX.md)
 python scripts/parity_check.py         # exit 0, is_pure_seed=True, 106/106 DNA
 python scripts/contamination_scan.py   # exit 0, is_clean=True, 0 critical
-python -m pytest tests/ -q             # 612 passed on verified code commit
+python -m pytest tests/ -q             # 624 passed on verified code commit
 ```
 
 All gates must PASS. If any gate fails, the seed is NOT ready to freeze;

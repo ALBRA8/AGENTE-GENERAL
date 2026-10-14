@@ -53,9 +53,18 @@ class _RuleSet:
         return None
 
 
+class _PermissionRegistry:
+    def __init__(self, allowed_permissions):
+        self.allowed_permissions = set(allowed_permissions)
+
+    def has_any(self, roles, permission):
+        return "approver" in roles and permission in self.allowed_permissions
+
+
 class _Policy:
     def __init__(self, allowed_permissions):
         self.rule_set = _RuleSet(allowed_permissions)
+        self.permission_registry = _PermissionRegistry(allowed_permissions)
 
     async def evaluate(self, action, **kwargs):
         return SimpleNamespace(allowed=True, decision="allow")

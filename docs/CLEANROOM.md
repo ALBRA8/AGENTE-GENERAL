@@ -272,9 +272,11 @@ happened.
 
 ## 9. Final Status
 
-The seed is shipped with `CLEAN-ROOM: PASS` (17/17 required = 16 PASS/FAIL
-checks + 1 informational scope-doc check R; 2/2 optional). The
-`READY_TO_FREEZE` status in `docs/CERTIFICATION.md` depends on this.
+The clean-room script can report `CLEAN-ROOM: PASS` (17/17 required = 16 PASS/FAIL
+checks + 1 informational scope-doc check R; 2/2 optional). This is a code gate,
+not a production sign-off. The canonical status in `docs/CERTIFICATION.md` is
+`CODE GATES PASS — PRODUCTION NOT VERIFIED` until real-environment security/HITL
+acceptance and the separate dashboard security checks have evidence.
 
 ---
 

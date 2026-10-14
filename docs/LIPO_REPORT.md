@@ -1,5 +1,10 @@
 # ALBRA AGENT SEED V1.0 — LIPO Report
 
+> **Historical architecture review.** Any original `READY_TO_FREEZE` or
+> ship-as-is conclusion is superseded by [`CERTIFICATION.md`](CERTIFICATION.md).
+> Current production status remains unverified until environment-specific
+> security/HITL acceptance is evidenced.
+
 > **LIPO** = Leave / Improve / Pull-Out classification. For the seed, the
 > categories are: **KEEP / REFACTOR / MOVE / SKILL / TOOL / PROVIDER /
 > AUXILIARY / DELETE**.

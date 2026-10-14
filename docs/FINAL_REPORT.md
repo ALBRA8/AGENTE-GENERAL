@@ -7,6 +7,8 @@
 > the universal DNA from which every future specialized ALBRA agent (legal,
 > sales, research, trading, marketing, ...) will be born by cloning.
 
+> **Historical implementation snapshot.** Original `READY_TO_FREEZE` and test-count statements below are not current certification evidence. Code gates can pass while production remains unverified; do not deploy until the external security/HITL acceptance controls in `CERTIFICATION.md` are evidenced.
+
 > **Canonical source of truth:** [`docs/CERTIFICATION.md`](CERTIFICATION.md).
 > All numbers in this report are mirrored from that file. When the
 > certification file changes, this report is out of date until refreshed.

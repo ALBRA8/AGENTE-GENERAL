@@ -49,7 +49,19 @@ def _client(*, add_permissions: bool = False):
             required_permission="approval:decide",
             decision=PolicyDecision.ALLOW,
         ))
-    runtime.register("policy_engine", PolicyEngine(rule_set=rules))
+    from albra_seed.security.permissions import Permission, PermissionRegistry
+    from albra_seed.security.roles import Role, RoleRegistry
+
+    roles = RoleRegistry()
+    roles.register(Role(role_id="reviewer", name="reviewer"))
+    permissions = PermissionRegistry(roles)
+    for action in ("approval:list", "approval:decide"):
+        permissions.register(Permission(id=action))
+        if add_permissions:
+            permissions.grant("reviewer", action)
+    runtime.register("policy_engine", PolicyEngine(
+        rule_set=rules, permission_registry=permissions
+    ))
     from albra_seed.approvals.engine import ApprovalEngine
     engine = ApprovalEngine()
     runtime.register("approval_engine", engine)

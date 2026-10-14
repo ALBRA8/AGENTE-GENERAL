@@ -245,9 +245,8 @@ async def test_agent_with_no_memory_works_normally() -> None:
 
 
 async def test_agent_injected_memory_instructions_do_not_become_commands() -> None:
-    """A memory containing a prompt-injection string is wrapped as DATA in
-    a SYSTEM message — never as a USER message — so the provider sees it as
-    retrieved context, not as orders. The Mock provider just echoes the
+    """A memory containing prompt injection is a TOOL/untrusted-data message,
+    never SYSTEM instructions or a USER request. The Mock provider echoes the
     last USER message; the agent's response must NOT contain "PWNED"."""
     identity = _identity()
     store = InMemoryMemoryStore()
@@ -294,8 +293,11 @@ async def test_agent_injected_memory_instructions_do_not_become_commands() -> No
     for m in user_messages:
         assert "PWNED" not in m.content
         assert "ignore all previous instructions" not in m.content
-    # The malicious payload appears in a SYSTEM message, wrapped by the
-    # delimited DATA block.
+    # The malicious payload appears only in a TOOL message, wrapped by the
+    # delimited DATA block. It must never enter trusted system instructions.
+    system_blob = "\n".join(m.content for m in messages if m.role == Role.SYSTEM)
+    assert "ignore all previous instructions" not in system_blob
+    assert "PWNED" not in system_blob
     tool_blob = "\n".join(m.content for m in tool_messages)
     assert "ignore all previous instructions" in tool_blob
     assert "PWNED" in tool_blob
