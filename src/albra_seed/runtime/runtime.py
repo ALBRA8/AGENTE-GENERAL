@@ -176,6 +176,21 @@ class Runtime:
                 db_path=self.config.approval_db_path,
             )
 
+        # A process may have died after claiming a dispatch but before it
+        # durably recorded the provider outcome. On every startup, recover
+        # claims as uncertain before accepting work; never retry them blindly.
+        approval_engine = self._components.get(COMPONENT_APPROVAL_ENGINE)
+        approval_store = getattr(approval_engine, "store", None)
+        recover = getattr(approval_store, "recover_interrupted_dispatches", None)
+        if callable(recover):
+            recovered = recover()
+            if recovered:
+                log.warning(
+                    "runtime.approval_dispatch.recovered",
+                    count=recovered,
+                    state="uncertain",
+                )
+
         log.info(
             "runtime.startup",
             core_only=self.config.is_core_only(),
