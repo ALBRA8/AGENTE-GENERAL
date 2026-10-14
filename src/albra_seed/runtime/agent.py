@@ -993,7 +993,7 @@ class Agent:
                     return tuple(_redact_nested(item) for item in value)
                 if isinstance(value, dict):
                     return {
-                        redact_secrets(str(key)) if isinstance(key, str) else key: _redact_nested(item)
+                        redact_secrets(str(key)) if not isinstance(key, (int, float, bool)) else key: _redact_nested(item)
                         for key, item in value.items()
                     }
                 # Unknown objects must not bypass the last-mile boundary.
