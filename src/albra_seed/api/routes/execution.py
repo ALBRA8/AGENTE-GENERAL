@@ -131,9 +131,11 @@ def build_public_execution_router(ctx: RequestContext) -> Any:
                 timeout_seconds=req.timeout_seconds,
             )
         except Exception as exc:  # noqa: BLE001
+            # Exception messages can contain provider credentials, request
+            # headers, or tool payloads. Keep the public error non-sensitive.
             raise HTTPException(
                 status_code=500,
-                detail=f"execution failed: {type(exc).__name__}: {exc}",
+                detail=f"execution failed: {type(exc).__name__}",
             ) from exc
         # Cache the trace for later GET /execution/{id}.
         trace_meta = response.metadata or {}
