@@ -65,6 +65,64 @@ if TYPE_CHECKING:  # pragma: no cover
 log = structlog.get_logger("albra.agent")
 
 
+def _redact_persisted_value(value: Any) -> Any:
+    """Recursively redact text before execution data reaches persistence hooks."""
+    from datetime import date, datetime
+    from enum import Enum
+
+    from albra_seed.config.secrets import SecretsRedactor
+    from albra_seed.security.output_redaction import redact_secrets
+
+    if value is None or isinstance(value, (bool, int, float, Enum, date, datetime)):
+        return value
+    if isinstance(value, str):
+        return redact_secrets(value)
+    if isinstance(value, bytes):
+        return redact_secrets(value.decode("utf-8", errors="replace"))
+    if isinstance(value, dict):
+        # Field names carry trust information: redact values under keys such
+        # as api_key/password/token even when the value has no token-like form.
+        secret_keys = SecretsRedactor()
+        safe: dict[Any, Any] = {}
+        for key, item in value.items():
+            safe_key = (
+                redact_secrets(str(key))
+                if not isinstance(key, (int, float, bool))
+                else key
+            )
+            if (
+                isinstance(key, str)
+                and secret_keys.is_secret_key(key)
+                and isinstance(item, (str, bytes))
+            ):
+                safe[safe_key] = "<redacted>"
+            else:
+                safe[safe_key] = _redact_persisted_value(item)
+        return safe
+    if isinstance(value, list):
+        return [_redact_persisted_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_persisted_value(item) for item in value)
+
+    model_fields = getattr(type(value), "model_fields", None)
+    if model_fields and hasattr(value, "model_copy"):
+        updates: dict[str, Any] = {}
+        for field_name in model_fields:
+            field_value = getattr(value, field_name, None)
+            if isinstance(field_value, (str, bytes, dict, list, tuple)) or getattr(
+                type(field_value), "model_fields", None
+            ):
+                updates[field_name] = _redact_persisted_value(field_value)
+            elif field_value is not None and not isinstance(
+                field_value, (bool, int, float, Enum, date, datetime)
+            ):
+                updates[field_name] = redact_secrets(str(field_value))
+        return value.model_copy(update=updates)
+
+    # Unknown payload objects can expose secrets in their string representation.
+    return redact_secrets(str(value))
+
+
 class Agent:
     """A single ALBRA agent instance bound to a Runtime.
 
@@ -806,21 +864,69 @@ class Agent:
         Two records are written per execution:
 
         1. A WORKING memory with a structured ``content`` dict capturing the
-           full execution surface (user input, assistant response, tool calls,
+           redacted execution surface (user input, assistant response, tool calls,
            tool results, trace summary). ``is_fact=False`` — this is working
            scratch space, never a claim of fact.
 
-        2. A low-priority EPISODIC memory of just the raw user input so it
+        2. A low-priority EPISODIC memory of the redacted user input so it
            survives WORKING memory cleanup. ``confidence=0.3``,
            ``is_fact=False``.
 
         CORE_ONLY safety: if no ``MemoryManager`` is registered, fall back to
-        the legacy raw-store write (string content) with a warning. This
+        the legacy raw-store write (redacted string content) with a warning. This
         preserves the pre-MEM-WRITE behavior for callers that have not yet
         invoked ``birth()`` (e.g. custom test rigs that construct a Runtime
         directly).
         """
         run_ctx: RunContext = ctx["context"]
+
+        # RECORD runs before RESPOND, so the draft, tool payloads and run trace
+        # may still contain unredacted provider output. Sanitize every data
+        # surface before evidence, audit, or memory persistence sees it.
+        try:
+            for key in (
+                "RECEIVE", "UNDERSTAND", "REASON", "PLAN",
+                "CHECK_PERMISSIONS", "EXECUTE", "OBSERVE", "VALIDATE",
+                "RESPOND", "draft_response", "input_message",
+            ):
+                if key in ctx:
+                    ctx[key] = _redact_persisted_value(ctx[key])
+
+            safe_context = _redact_persisted_value(run_ctx)
+            for field_name in type(run_ctx).model_fields:
+                setattr(run_ctx, field_name, getattr(safe_context, field_name))
+            ctx["context"] = run_ctx
+
+            session = ctx.get("session")
+            if session is not None and hasattr(type(session), "model_fields"):
+                safe_session = _redact_persisted_value(session)
+                for field_name in type(session).model_fields:
+                    setattr(session, field_name, getattr(safe_session, field_name))
+                ctx["session"] = session
+        except Exception:  # noqa: BLE001
+            # Do not persist or retain any part of an execution if redaction
+            # cannot complete. Replace data-bearing surfaces with safe blanks.
+            run_ctx.task = "[REDACTED]"
+            run_ctx.inputs.clear()
+            run_ctx.outputs.clear()
+            run_ctx.tools_used.clear()
+            run_ctx.providers_used.clear()
+            run_ctx.errors[:] = ["record output redaction failed; persistence skipped"]
+            run_ctx.warnings[:] = []
+            session = ctx.get("session")
+            if session is not None and hasattr(session, "messages"):
+                session.messages.clear()
+                if isinstance(getattr(session, "metadata", None), dict):
+                    session.metadata.clear()
+            ctx["input_message"] = Message(role=Role.USER, content="[REDACTED]")
+            for key in ("UNDERSTAND", "REASON", "CHECK_PERMISSIONS", "OBSERVE", "VALIDATE", "RESPOND"):
+                ctx[key] = {}
+            ctx["RECEIVE"] = {"content": "[REDACTED]"}
+            ctx["PLAN"] = {"tool_calls": []}
+            ctx["EXECUTE"] = {"results": []}
+            ctx["draft_response"] = None
+            return {"recorded": False, "redaction_failed": True}
+
         evidence_collector = self.runtime.get_component(COMPONENT_EVIDENCE_COLLECTOR)
         audit = self.runtime.get_component(COMPONENT_AUDIT_LOGGER)
 
@@ -832,13 +938,13 @@ class Agent:
                         getattr(ev, "evidence_id", "unknown")
                     )
             except Exception as exc:  # noqa: BLE001
-                run_ctx.warnings.append(f"evidence collector failed: {exc}")
+                run_ctx.warnings.append("evidence collector failed; details withheld")
 
         if audit is not None and hasattr(audit, "append"):
             try:
                 await audit.append(run_ctx)
             except Exception as exc:  # noqa: BLE001
-                run_ctx.warnings.append(f"audit log failed: {exc}")
+                run_ctx.warnings.append("audit log failed; details withheld")
 
         # MEM-WRITE: prefer MemoryManager over the raw store.
         mgr = self.runtime.get_memory_manager()
@@ -933,7 +1039,7 @@ class Agent:
                 correlation_id=run_ctx.correlation_id,
             )
         except Exception as exc:  # noqa: BLE001
-            run_ctx.warnings.append(f"memory manager WORKING write failed: {exc}")
+            run_ctx.warnings.append("memory manager WORKING write failed; details withheld")
 
         # 2. Also write a low-priority EPISODIC memory of the raw user input
         #    so it survives WORKING memory cleanup. Wrap in try/except —
@@ -955,7 +1061,7 @@ class Agent:
                 correlation_id=run_ctx.correlation_id,
             )
         except Exception as exc:  # noqa: BLE001
-            run_ctx.warnings.append(f"memory manager EPISODIC write failed: {exc}")
+            run_ctx.warnings.append("memory manager EPISODIC write failed; details withheld")
 
         return {"recorded": True}
 
@@ -979,26 +1085,10 @@ class Agent:
             from albra_seed.security.output_redaction import redact_secrets
 
             def _redact_nested(value: Any) -> Any:
-                if isinstance(value, str):
-                    return redact_secrets(value)
-                if isinstance(value, bytes):
-                    return redact_secrets(value.decode("utf-8", errors="replace"))
-                if value is None or isinstance(value, (bool, int, float)):
-                    return value
-                if hasattr(value, "model_dump"):
-                    return _redact_nested(value.model_dump(mode="json"))
-                if isinstance(value, list):
-                    return [_redact_nested(item) for item in value]
-                if isinstance(value, tuple):
-                    return tuple(_redact_nested(item) for item in value)
-                if isinstance(value, dict):
-                    return {
-                        redact_secrets(str(key)) if not isinstance(key, (int, float, bool)) else key: _redact_nested(item)
-                        for key, item in value.items()
-                    }
-                # Unknown objects must not bypass the last-mile boundary.
-                # Convert their public representation to text and sanitize it.
-                return redact_secrets(str(value))
+                # Use the same key-aware recursive sanitizer as persistence:
+                # {"api_key": "short"} must be redacted even though the value
+                # alone does not match a token-format regular expression.
+                return _redact_persisted_value(value)
 
             content = redact_secrets(content)
             safe_results: list[ToolResult] = []
@@ -1090,16 +1180,35 @@ class Agent:
         ):
             errors.append("one or more phases failed; see trace")
 
-        # Build the execution trace on the RunContext (reconstructable).
-        context.outputs["trace"] = [
-            {
-                "phase": e.phase,
-                "status": e.status.value,
-                "duration_ms": e.duration_ms,
-                "error": e.error,
-            }
-            for e in trace
-        ]
+        # Build a reconstructable trace without exposing raw exception text.
+        # Provider/tool exceptions can contain credentials or request payloads.
+        try:
+            from albra_seed.security.output_redaction import redact_secrets
+
+            safe_trace = []
+            for event in trace:
+                try:
+                    error = redact_secrets(event.error) if event.error else None
+                except Exception:  # noqa: BLE001
+                    error = "phase error withheld"
+                safe_trace.append({
+                    "phase": event.phase,
+                    "status": event.status.value,
+                    "duration_ms": event.duration_ms,
+                    "error": error,
+                })
+            context.outputs["trace"] = safe_trace
+        except Exception:  # noqa: BLE001
+            # Fail closed if the redaction module itself is unavailable.
+            context.outputs["trace"] = [
+                {
+                    "phase": event.phase,
+                    "status": event.status.value,
+                    "duration_ms": event.duration_ms,
+                    "error": "phase error withheld" if event.error else None,
+                }
+                for event in trace
+            ]
 
         return AgentResponse(
             content=content,
