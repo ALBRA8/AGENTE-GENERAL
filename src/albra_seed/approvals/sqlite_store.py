@@ -92,7 +92,7 @@ class SQLiteApprovalStore:
         if call_id:
             payload.setdefault("context_ref", {})["call_id"] = call_id
         saved = ApprovalRequest.model_validate(payload)
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
                 conn.execute(
@@ -107,14 +107,14 @@ class SQLiteApprovalStore:
         return saved
 
     def get(self, approval_id: str) -> ApprovalRequest | None:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             row = conn.execute(
                 "SELECT request_json FROM approvals WHERE approval_id=?", (approval_id,)
             ).fetchone()
         return ApprovalRequest.model_validate_json(row["request_json"]) if row else None
 
     def list(self, *, status: ApprovalStatus | None = None) -> list[ApprovalRequest]:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             if status is None:
                 rows = conn.execute(
                     "SELECT request_json FROM approvals ORDER BY rowid"
@@ -133,7 +133,7 @@ class SQLiteApprovalStore:
         """Atomically transition PENDING to one allowed decision; one worker wins."""
         if target.value not in _ALLOWED[ApprovalStatus.PENDING.value]:
             raise ValueError(f"invalid approval transition target: {target.value}")
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
                 row = conn.execute(
@@ -169,7 +169,7 @@ class SQLiteApprovalStore:
         if not call_id:
             raise ValueError("call_id must be non-empty")
         now = utc_now().isoformat()
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
                 row = conn.execute(
@@ -205,7 +205,7 @@ class SQLiteApprovalStore:
         """Atomic single-worker claim. A claim is never silently made retryable."""
         if not claim_token:
             raise ValueError("claim_token must be non-empty")
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             conn.execute("BEGIN IMMEDIATE")
             cur = conn.execute(
                 "UPDATE approval_dispatch SET state='claimed',claim_token=?,updated_at=? "
@@ -218,7 +218,7 @@ class SQLiteApprovalStore:
     def complete_dispatch(self, call_id: str, claim_token: str, result: Any) -> bool:
         """Persist successful result; stale or competing claimants cannot complete."""
         encoded = json.dumps(result, sort_keys=True, default=str)
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             conn.execute("BEGIN IMMEDIATE")
             cur = conn.execute(
                 "UPDATE approval_dispatch SET state='completed',result_json=?,updated_at=? "
@@ -230,7 +230,7 @@ class SQLiteApprovalStore:
 
     def fail_dispatch(self, call_id: str, claim_token: str, error: str) -> bool:
         """Mark a claimed dispatch uncertain; it is deliberately not retryable."""
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             conn.execute("BEGIN IMMEDIATE")
             cur = conn.execute(
                 "UPDATE approval_dispatch SET state='uncertain',error=?,updated_at=? "
@@ -242,7 +242,7 @@ class SQLiteApprovalStore:
 
     def recover_interrupted_dispatches(self) -> int:
         """Fail closed after restart: claimed means outcome may be externally unknown."""
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             conn.execute("BEGIN IMMEDIATE")
             cur = conn.execute(
                 "UPDATE approval_dispatch SET state='uncertain',"
@@ -254,7 +254,7 @@ class SQLiteApprovalStore:
             return cur.rowcount
 
     def dispatch(self, call_id: str) -> dict[str, Any] | None:
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             row = conn.execute(
                 "SELECT * FROM approval_dispatch WHERE call_id=?", (call_id,)
             ).fetchone()
