@@ -8,10 +8,10 @@
 > out of date until refreshed from this file.
 
 **Last verified:** 2026-10-14
-**Verified code commit:** `9f838defc4133be246d54c9e5272d3a8a97951ad` (security remediation branch)
+**Verified code commit:** `5a792185f60fc9c267473ea3705a4c99b22869cf` (security remediation branch)
 **Status:** `CODE GATES PASS — PRODUCTION NOT VERIFIED`
 
-> **Verification evidence (2026-10-14):** GitHub Actions run [38542685681](https://github.com/ALBRA8/AGENTE-GENERAL/actions/runs/38542685681) passed on Python 3.10, 3.11, and 3.12 for clean-room verification, audit matrix, parity, contamination scan, and full pytest. The full suite reported 624 passed and 1 warning on Python 3.11; all three Python-version jobs passed. This certifies the tested code commit above, not production deployment. The separate dashboard reported at `localhost:9000` is not included in this repository, so its `localStorage` handling and provider-call path remain NOT VERIFIED; see [`WEB_DASHBOARD_SECURITY.md`](WEB_DASHBOARD_SECURITY.md). Do not mark production ready or perform a final freeze until that dashboard is audited and the independent real-environment security/HITL acceptance is signed off.
+> **Verification evidence (2026-10-14):** GitHub Actions run [38543438124](https://github.com/ALBRA8/AGENTE-GENERAL/actions/runs/38543438124) passed on Python 3.10, 3.11, and 3.12 for clean-room verification, audit matrix, parity, contamination scan, and full pytest. The full suite reported 624 passed and 1 warning on Python 3.11; all three Python-version jobs passed. This certifies the tested code commit above, not production deployment. The separate dashboard reported at `localhost:9000` is not included in this repository, so its `localStorage` handling and provider-call path remain NOT VERIFIED; see [`WEB_DASHBOARD_SECURITY.md`](WEB_DASHBOARD_SECURITY.md). Do not mark production ready or perform a final freeze until that dashboard is audited and the independent real-environment security/HITL acceptance is signed off.
 
 ---
 
@@ -88,7 +88,7 @@ the clean-room script.)
 | Genetic Parity             | PASS   | `python scripts/parity_check.py` → exit 0, `is_pure_seed=True`, 106/106 DNA present   |
 | Genetic Contamination      | PASS   | `python scripts/contamination_scan.py` → exit 0, `is_clean=True`, 0 critical, 0 warnings, 255 files scanned |
 | Clean-room                 | PASS   | `python scripts/clean_room_verify.py` → **17/17 required + 2/2 optional** PASS (16 real PASS/FAIL gates + 1 informational scope-doc check R; see Clean-room scope §) |
-| **CI (GitHub Actions)**     | **PASS** | workflow `.github/workflows/clean-room.yml` on commit `9f838de` → **3/3 jobs success** (Python 3.10, 3.11, 3.12 on ubuntu-latest); run_id `38542685681` |
+| **CI (GitHub Actions)**     | **PASS** | workflow `.github/workflows/clean-room.yml` on commit `5a79218` → **3/3 jobs success** (Python 3.10, 3.11, 3.12 on ubuntu-latest); run_id `38543438124` |
 | CORE_ONLY birth            | PASS   | Birth check inside `clean_room_verify.py` (check #3 + #4) + `tests/unit/test_birth_readiness.py` (8 tests) |
 | A2A wire format             | PASS   | `pytest tests/a2a/test_a2a_wire.py` → **16 passed**                                   |
 | A2A routes                  | PASS   | `pytest tests/a2a/test_a2a_routes.py` → **10 passed**                                 |
