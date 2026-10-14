@@ -936,13 +936,13 @@ class Agent:
                         getattr(ev, "evidence_id", "unknown")
                     )
             except Exception as exc:  # noqa: BLE001
-                run_ctx.warnings.append(f"evidence collector failed: {exc}")
+                run_ctx.warnings.append("evidence collector failed; details withheld")
 
         if audit is not None and hasattr(audit, "append"):
             try:
                 await audit.append(run_ctx)
             except Exception as exc:  # noqa: BLE001
-                run_ctx.warnings.append(f"audit log failed: {exc}")
+                run_ctx.warnings.append("audit log failed; details withheld")
 
         # MEM-WRITE: prefer MemoryManager over the raw store.
         mgr = self.runtime.get_memory_manager()
@@ -1037,7 +1037,7 @@ class Agent:
                 correlation_id=run_ctx.correlation_id,
             )
         except Exception as exc:  # noqa: BLE001
-            run_ctx.warnings.append(f"memory manager WORKING write failed: {exc}")
+            run_ctx.warnings.append("memory manager WORKING write failed; details withheld")
 
         # 2. Also write a low-priority EPISODIC memory of the raw user input
         #    so it survives WORKING memory cleanup. Wrap in try/except —
@@ -1059,7 +1059,7 @@ class Agent:
                 correlation_id=run_ctx.correlation_id,
             )
         except Exception as exc:  # noqa: BLE001
-            run_ctx.warnings.append(f"memory manager EPISODIC write failed: {exc}")
+            run_ctx.warnings.append("memory manager EPISODIC write failed; details withheld")
 
         return {"recorded": True}
 
