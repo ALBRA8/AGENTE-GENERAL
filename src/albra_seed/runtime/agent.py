@@ -853,16 +853,16 @@ class Agent:
         Two records are written per execution:
 
         1. A WORKING memory with a structured ``content`` dict capturing the
-           full execution surface (user input, assistant response, tool calls,
+           redacted execution surface (user input, assistant response, tool calls,
            tool results, trace summary). ``is_fact=False`` — this is working
            scratch space, never a claim of fact.
 
-        2. A low-priority EPISODIC memory of just the raw user input so it
+        2. A low-priority EPISODIC memory of the redacted user input so it
            survives WORKING memory cleanup. ``confidence=0.3``,
            ``is_fact=False``.
 
         CORE_ONLY safety: if no ``MemoryManager`` is registered, fall back to
-        the legacy raw-store write (string content) with a warning. This
+        the legacy raw-store write (redacted string content) with a warning. This
         preserves the pre-MEM-WRITE behavior for callers that have not yet
         invoked ``birth()`` (e.g. custom test rigs that construct a Runtime
         directly).
