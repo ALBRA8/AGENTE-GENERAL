@@ -275,3 +275,15 @@ def test_crash_after_external_effect_before_outcome_is_not_replayed(tmp_path):
     assert simulated_external_effects == ["message accepted"]
     assert recovered.get("approval-1").state is SuspendedExecutionState.CLAIMED
     assert recovered.get_dispatch_outcome("approval-1") is None
+
+    # Only after every dispatcher is stopped/fenced, recovery records the
+    # unresolved side effect as unknown without making the claim retryable.
+    outcomes = recovered.recover_interrupted_dispatches(observed_at=now)
+    assert len(outcomes) == 1
+    assert outcomes[0].approval_id == "approval-1"
+    assert outcomes[0].outcome == "unknown"
+    assert "reconcile before any retry" in outcomes[0].detail
+    assert recovered.get_dispatch_outcome("approval-1").outcome == "unknown"
+    assert recovered.recover_interrupted_dispatches(observed_at=now) == []
+    with pytest.raises(SuspendedExecutionError, match="not approved"):
+        _claim(recovered, now)
