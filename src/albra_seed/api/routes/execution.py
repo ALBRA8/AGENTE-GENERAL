@@ -274,7 +274,7 @@ def build_public_execution_router(ctx: RequestContext) -> Any:
             "approval_id": approval_id,
             "status": dispatch_status,
             "resumed_by": principal.identity,
-            "tool_result": result.model_dump(mode="json"),
+            "tool_result": ctx.redacted(result.model_dump(mode="json")),
         }
 
     return router
