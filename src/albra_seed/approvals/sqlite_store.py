@@ -10,6 +10,7 @@ idempotency using the returned call_id.
 from __future__ import annotations
 
 import json
+from contextlib import closing
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -41,7 +42,7 @@ class SQLiteApprovalStore:
             raise ValueError("SQLiteApprovalStore requires a file-backed database shared by workers")
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         self.busy_timeout_ms = busy_timeout_ms
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA synchronous=FULL")
             conn.executescript("""
