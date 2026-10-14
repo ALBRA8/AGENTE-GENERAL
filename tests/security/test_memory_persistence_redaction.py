@@ -142,7 +142,9 @@ async def test_record_phase_skips_all_persistence_if_redaction_fails(
     import albra_seed.security.output_redaction as output_redaction
 
     memory = _MemoryCapture()
-    agent = SimpleNamespace(runtime=_RuntimeCapture(memory))
+    evidence = _CaptureSink()
+    audit = _CaptureSink()
+    agent = SimpleNamespace(runtime=_RuntimeCapture(memory, evidence, audit))
     ctx, run_ctx, session = _context_with_secrets()
 
     def fail_redaction(_: str) -> str:
@@ -154,6 +156,8 @@ async def test_record_phase_skips_all_persistence_if_redaction_fails(
 
     assert result == {"recorded": False, "redaction_failed": True}
     assert memory.records == []
+    assert evidence.payloads == []
+    assert audit.payloads == []
     assert run_ctx.errors == ["record output redaction failed; persistence skipped"]
     assert "TASKSECRET123" not in repr(run_ctx.errors)
     assert run_ctx.task == "[REDACTED]"
