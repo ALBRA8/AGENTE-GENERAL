@@ -55,7 +55,7 @@ _SECRET_PATTERNS = (
     SecretPattern(
         "credential_assignment",
         re.compile(
-            r"""(?i)(["']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|passwd|client[_-]?secret|secret[_-]?key|authorization|credential)["']?\s*[:=]\s*)(["']?)([^\s,;'"<>}]{8,})(["']?)"""
+            r"""(?i)(["']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|passwd|client[_-]?secret|secret[_-]?key|authorization|credential)["']?\s*[:=]\s*)(["']?)(?!\[REDACTED_SECRET\])([^\s,;'"<>}]{8,})(["']?)"""
         ),
     ),
 )
