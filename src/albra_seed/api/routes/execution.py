@@ -191,7 +191,10 @@ def build_public_execution_router(ctx: RequestContext) -> Any:
         if engine is None or not hasattr(engine, "list_pending"):
             raise HTTPException(status_code=503, detail="approval engine is not configured")
         return {
-            "storage_scope": "process-local",
+            "storage_scope": (
+                "sqlite-file" if getattr(engine, "store", None) is not None
+                else "process-local"
+            ),
             "approvals": [
                 {
                     "approval_id": item.approval_id,
