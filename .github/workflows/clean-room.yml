@@ -93,7 +93,7 @@ jobs:
 
       - name: Ruff format check
         run: >-
-          ruff format --diff src/albra_seed/security/output_redaction.py
+          ruff format --check src/albra_seed/security/output_redaction.py
           tests/security/test_memory_persistence_redaction.py
           tests/security/test_memory_retrieval_limits.py
           tests/security/test_short_credential_redaction.py
