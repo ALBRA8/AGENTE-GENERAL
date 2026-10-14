@@ -65,11 +65,11 @@ class RetrievalConfig(BaseModel):
     and the min-score cutoff excludes near-zero matches.
     """
 
-    top_k: int = 5
+    top_k: int = Field(default=5, ge=1, le=1_000)
     # Candidate pool is intentionally configurable and larger than the final
     # context window. Stores without cursor pagination remain bounded.
-    candidate_limit: int = 1000
-    max_context_chars: int = 2000
+    candidate_limit: int = Field(default=1_000, ge=1, le=10_000)
+    max_context_chars: int = Field(default=2_000, ge=1, le=1_000_000)
     min_score: float = 0.05  # below this, exclude
     recency_half_life_hours: float = 168.0  # 1 week
     type_weights: dict[MemoryType, float] = Field(
@@ -159,6 +159,15 @@ class MemoryRetriever:
             6. Apply ``top_k`` + ``max_context_chars`` truncation.
             7. Return ``list[RetrievedMemory]``.
         """
+        # Validate caller overrides before touching the store. This method is
+        # also a public API, so do not rely only on RetrievalConfig validation.
+        if limit is not None and (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not 1 <= limit <= 10_000
+        ):
+            raise ValueError("retrieval limit must be an integer between 1 and 10000")
+
         # 1. Pull candidate records through the isolation-aware recall API.
         try:
             candidates = await self._manager.recall(
@@ -204,8 +213,9 @@ class MemoryRetriever:
                 if self._is_alive(lifecycle, record.record_id, dead_states):
                     alive.append(record)
             except Exception:  # noqa: BLE001
-                # Defensive: lifecycle bugs must not break retrieval.
-                alive.append(record)
+                # If lifecycle state cannot be verified, withhold the record.
+                # Treating an unknown state as alive could resurrect forgotten data.
+                continue
 
         if not alive:
             return []
@@ -257,9 +267,9 @@ class MemoryRetriever:
             ...
             [END RETRIEVED MEMORIES]
 
-        The delimiter makes it explicit to the model that these are DATA,
-        not orders. The caller wraps the returned string as a SYSTEM
-        message (or as an INFO-anchored prefix) — never as a USER message.
+        The delimiters are defense in depth, not a trust boundary by
+        themselves. The caller MUST represent this content using an
+        untrusted role (Role.TOOL) and MUST NOT promote it to Role.SYSTEM.
         """
         if not memories:
             # Return an empty marker so the caller can still insert the
@@ -436,8 +446,9 @@ class MemoryRetriever:
         try:
             events = lifecycle.history(record_id)
         except Exception:  # noqa: BLE001
-            # Defensive: if we can't read history, treat as alive.
-            return True
+            # Fail closed: an unreadable lifecycle history cannot prove that
+            # the record has not been deleted, forgotten, or archived.
+            return False
         for ev in events:
             state = getattr(getattr(ev, "state", None), "value", None) or str(
                 getattr(ev, "state", "")
