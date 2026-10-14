@@ -280,6 +280,10 @@ class Agent:
         ):
             raise ValueError("saved execution identity does not match the approval binding")
 
+        # Revalidate against the current agent identity, not stale autonomy
+        # or permission values captured when the approval was requested.
+        run_context.autonomy_level = self.identity.autonomy_level
+        run_context.permissions = list(self.identity.permissions)
         call = ToolCall(id=call_id, tool_name=request.action, arguments=arguments)
         policy = self.runtime.get_component(COMPONENT_POLICY_ENGINE)
         firewall = self.runtime.get_component(COMPONENT_FIREWALL)
