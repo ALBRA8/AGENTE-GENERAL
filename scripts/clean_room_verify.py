@@ -284,22 +284,30 @@ def check_test_run(rep: Report) -> None:
     """5. TEST-RUN: invoke pytest and parse the summary line."""
     proc = subprocess.run(
         [sys.executable, "-m", "pytest", str(_PROJECT_ROOT / "tests"),
-         "--tb=no", "-q", "--no-header", "--color=no"],
+         "--tb=short", "-q", "--no-header", "--color=no"],
         cwd=str(_PROJECT_ROOT),
         env=_sanitize_env({**os.environ, "PYTHONPATH": str(_SRC)}),
         capture_output=True, text=True, timeout=300,
     )
     summary, passed, failed = "", 0, 0
     for line in proc.stdout.splitlines()[::-1]:
-        m = re.search(r"(\d+) passed(?:.*?(\d+) failed)?", line)
+        # Pytest 8/9 may put failures before passes ("8 failed, 604 passed")
+        # or after passes ("604 passed, 8 failed"). Parse both orders.
+        m = re.search(r"(?:(\d+) failed,?\s*)?(\d+) passed(?:,?\s*(\d+) failed)?", line)
         if m:
-            summary, passed = line.strip(), int(m.group(1))
-            failed = int(m.group(2) or 0)
+            summary = line.strip()
+            passed = int(m.group(2))
+            failed = int(m.group(1) or m.group(3) or 0)
             break
+    details = summary or proc.stderr.strip()[:200]
+    if failed:
+        # Keep enough of pytest's failure summary/traceback to diagnose CI
+        # regressions instead of exposing only the aggregate count.
+        details = (details + "\\n" + proc.stdout[-5000:])[:5500]
     rep.add(CheckResult(
         f"5. TEST-RUN (pytest: {passed} passed, {failed} failed)",
         proc.returncode == 0 and passed > 0 and failed == 0,
-        details=summary or proc.stderr.strip()[:200],
+        details=details,
     ))
 
 

@@ -460,8 +460,11 @@ class Agent:
                             ),
                         ),
                         Message(
-                            role=Role.SYSTEM,
+                            # Retrieved memory is untrusted data, never a system instruction.
+                            role=Role.TOOL,
                             content=retriever.format_for_context(memories),
+                            name="memory_retrieval",
+                            metadata={"trust_boundary": "untrusted_memory"},
                         ),
                         ctx["input_message"],
                     ]
@@ -971,6 +974,18 @@ class Agent:
         else:
             content = ctx["RECEIVE"]["content"]
             confidence = 0.0
+
+        # Mandatory last-mile secret redaction. Fail closed: if the sanitizer
+        # itself fails, never return the raw provider response to the caller.
+        try:
+            from albra_seed.security.output_redaction import redact_secrets
+
+            content = redact_secrets(content)
+        except Exception as exc:  # noqa: BLE001
+            content = "Response withheld because output security validation failed."
+            run_ctx.errors.append("final output redaction failed; response withheld")
+            run_ctx.warnings.append(f"output redaction failure: {type(exc).__name__}")
+
         return {
             "content": content,
             "confidence": confidence,

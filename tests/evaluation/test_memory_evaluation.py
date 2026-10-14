@@ -24,12 +24,12 @@ For each task run, the test records:
     * isolation_violations           — count of memories retrieved from
                                         a DIFFERENT user/context bucket
     * context_chars_added            — memory ON only (length of the
-                                        SYSTEM DATA block inserted)
+                                        untrusted memory data block inserted)
 
-The Mock provider used here echoes the union of (retrieved SYSTEM DATA
+The Mock provider used here echoes the union of (retrieved TOOL DATA
 text) + (user input). When memory is OFF, the response contains only the
 user input. When memory is ON, the response contains the relevant info
-extracted from the SYSTEM block + the user input.
+extracted from the system/tool context + the user input.
 
 Assertions:
     * With memory OFF, response_contains_relevant_info is False for all
@@ -40,7 +40,7 @@ Assertions:
       (we only pre-store the relevant memory; no unrelated noise).
     * With memory ON, isolation_violations == 0 (the retriever consults
       the isolation-aware recall).
-    * With memory ON, context_chars_added > 0 (the SYSTEM DATA block
+    * With memory ON, context_chars_added > 0 (the untrusted memory data block
       is inserted).
     * With memory OFF, context_chars_added == 0.
 
@@ -83,13 +83,13 @@ class _EvalMockProvider(LLMProvider):
 
     Behaviour:
         * Captures the messages list it received (so the test can
-          extract metrics: was a SYSTEM DATA block inserted? what was
+          extract metrics: was a untrusted memory data block inserted? what was
           its length? what did it say?).
         * Returns an AgentResponse whose ``content`` is the concatenation
           of (a) any SYSTEM messages' content (the retrieved memories
           formatted as a DATA block) + (b) the user's input. This means
           the response carries the relevant info WHEN the agent's REASON
-          phase inserted a SYSTEM DATA block.
+          phase inserted a untrusted memory data block.
 
     This is deterministic: same input messages -> same response. No
     external LLM call.
@@ -114,8 +114,8 @@ class _EvalMockProvider(LLMProvider):
     ) -> AgentResponse:
         self.received_messages.append(list(messages))
 
-        system_blob = "\n".join(
-            m.content for m in messages if m.role == Role.SYSTEM
+        context_blob = "\n".join(
+            m.content for m in messages if m.role in {Role.SYSTEM, Role.TOOL}
         )
         user_text = ""
         for msg in reversed(messages):
@@ -127,7 +127,7 @@ class _EvalMockProvider(LLMProvider):
         # the retrieved memory surfaced in the response. The Mock is
         # deliberately simple — no LLM "reasoning", just a faithful echo.
         content = (
-            f"{system_blob}\n---\n{user_text}" if system_blob else user_text
+            f"{context_blob}\n---\n{user_text}" if context_blob else user_text
         )
 
         return AgentResponse(
@@ -369,18 +369,18 @@ async def _run_with_memory_on(
 
     assert len(recording.received_messages) == 1
     msgs = recording.received_messages[0]
-    system_blob = "\n".join(m.content for m in msgs if m.role == Role.SYSTEM)
-    system_chars = len(system_blob)
+    context_blob = "\n".join(m.content for m in msgs if m.role in {Role.SYSTEM, Role.TOOL})
+    system_chars = len(context_blob)
 
     # Count relevant / irrelevant retrieved memories by inspecting the
-    # lines between the delimiters in the SYSTEM DATA block. Each memory
+    # lines between the delimiters in the untrusted memory data block. Each memory
     # entry is formatted by MemoryRetriever.format_for_context() as:
     #     - [TYPE, confidence=X.XX, source=Y] <content>
     # so we count lines starting with "- [".
     relevant_lines = 0
     irrelevant_lines = 0
-    if "[RETRIEVED MEMORIES" in system_blob:
-        inside = system_blob.split("[RETRIEVED MEMORIES", 1)[1]
+    if "[RETRIEVED MEMORIES" in context_blob:
+        inside = context_blob.split("[RETRIEVED MEMORIES", 1)[1]
         if "[END RETRIEVED MEMORIES]" in inside:
             inside = inside.split("[END RETRIEVED MEMORIES]", 1)[0]
         for line in inside.split("\n"):
@@ -481,9 +481,9 @@ async def test_memory_evaluation_on_vs_off() -> None:
         off = pair["off"]
         on = pair["on"]
 
-        # 1. memory OFF: no SYSTEM DATA block was inserted.
+        # 1. memory OFF: no untrusted memory data block was inserted.
         assert off.context_chars_added == 0, (
-            f"[{task_id}] memory OFF must not insert a SYSTEM block, "
+            f"[{task_id}] memory OFF must not insert a system/tool context, "
             f"got {off.context_chars_added} chars"
         )
         # 2. memory OFF: response does NOT contain relevant info.
@@ -491,9 +491,9 @@ async def test_memory_evaluation_on_vs_off() -> None:
             f"[{task_id}] memory OFF response unexpectedly contains relevant "
             f"info — keywords={off.relevant_keywords}"
         )
-        # 3. memory ON: a SYSTEM DATA block was inserted.
+        # 3. memory ON: a untrusted memory data block was inserted.
         assert on.context_chars_added > 0, (
-            f"[{task_id}] memory ON did not insert a SYSTEM block"
+            f"[{task_id}] memory ON did not insert a system/tool context"
         )
         # 4. memory ON: the relevant info was retrieved at least once.
         assert on.relevant_retrieved_count >= 1, (

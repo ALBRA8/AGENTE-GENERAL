@@ -7,16 +7,20 @@
 > copy of the numbers. When any number here changes, all referencing docs are
 > out of date until refreshed from this file.
 
-**Last verified:** 2026-10-12
-**Commit:** `8437f2a` — `fix: close 2 security blockers — fail-open perimeter + HTTP execution boundary`
-**Status:** `READY_TO_FREEZE`
+**Last verified:** 2026-10-14
+**Verified code commit:** `8f8c6f2c5e1577380777027561b6cc5a2db3903e` (security remediation branch)
+**Status:** `CODE GATES PASS — PRODUCTION NOT VERIFIED`
+
+> **Verification evidence (2026-10-14):** GitHub Actions run [38531085169](https://github.com/ALBRA8/AGENTE-GENERAL/actions/runs/38531085169) passed on Python 3.10, 3.11, and 3.12 for clean-room verification, audit matrix, parity, contamination scan, and full pytest. The full suite reported 612 passed and 1 warning on Python 3.11. This certifies the tested code commit above, not production deployment. Do not mark production ready or perform a final freeze until the independent real-environment security/HITL acceptance is signed off.
 
 ---
 
 ## Canonical Numbers
 
-Every value in this table was produced by running the actual verification
-script or by counting actual files. None are invented.
+The top-level test total and gate results below are verified against the code
+commit and CI run identified above. Detailed per-suite breakdowns in this
+table are historical figures unless explicitly re-counted; do not treat those
+subgroup counts as current certification evidence.
 
 | Metric                       | Value | Source                                                                  |
 | ---------------------------- | ----- | ----------------------------------------------------------------------- |
@@ -24,7 +28,7 @@ script or by counting actual files. None are invented.
 | A2A helper modules (NOT DNA)| 3   | `a2a.wire`, `a2a.exposition`, `a2a.observers` — see § "A2A Helper Modules" |
 | Allowed specializations      | 8     | `src/albra_seed/parity/dna.py` `ALLOWED_SPECIALIZATIONS`                |
 | Audit matrix probes          | 40    | `scripts/audit_matrix.py` `PROBES` list (33 original + 7 gap closures)  |
-| Total tests                   | 487   | `python -m pytest tests/ --collect-only -q`                             |
+| Total tests                   | 612   | `python -m pytest tests/ -q` on verified code commit                             |
 | A2A tests                    | 81    | `python -m pytest tests/a2a/ --collect-only -q` (28 main + 16 wire + 10 routes + 18 external interop + 9 security perimeter) |
 | A2A tests — main             | 28    | `tests/a2a/test_a2a.py`                                                 |
 | A2A tests — wire format      | 16    | `tests/a2a/test_a2a_wire.py`                                             |
@@ -40,8 +44,8 @@ script or by counting actual files. None are invented.
 | Memory factual integrity     | 11    | `tests/unit/test_memory_factual_integrity.py` (BLOQ-MEM)                |
 | Memory forget / audit        | 10    | `tests/unit/test_memory_forget_audit.py` (BLOQ-MEM)                     |
 | Birth / readiness tests      | 8     | `tests/unit/test_birth_readiness.py`                                    |
-| Unit tests (total)           | 337   | `python -m pytest tests/unit/ --collect-only -q` (316 + 11 factual + 10 forget audit) |
-| Unit tests (excl. birth/readiness) | ~329 | 337 − 8                                                               |
+| Unit tests (total)           | Historical; not re-counted in this CI run | Re-run `python -m pytest tests/unit/ --collect-only -q` before using subgroup totals |
+| Unit tests (excl. birth/readiness) | Historical; not re-counted | Recompute from current collection output |
 
 ### Allowed specializations (8)
 
@@ -75,11 +79,11 @@ the clean-room script.)
 
 ---
 
-## Gate Results (verified 2026-10-12)
+## Gate Results (verified 2026-10-14)
 
 | Gate                       | Result | Evidence                                                                              |
 | -------------------------- | ------ | ------------------------------------------------------------------------------------- |
-| Tests                       | PASS   | `python -m pytest tests/ -q` → **487 passed in ~8s**                                  |
+| Tests                       | PASS   | `python -m pytest tests/ -q` → **612 passed, 1 warning** (Python 3.11; CI run 38531085169; Python 3.10/3.12 also passed)                                  |
 | Audit Matrix               | PASS   | `python scripts/audit_matrix.py` → **40/40 VERIFIED**                                 |
 | Genetic Parity             | PASS   | `python scripts/parity_check.py` → exit 0, `is_pure_seed=True`, 106/106 DNA present   |
 | Genetic Contamination      | PASS   | `python scripts/contamination_scan.py` → exit 0, `is_clean=True`, 0 critical, 0 warnings, 249 files scanned |
@@ -235,10 +239,10 @@ block above `UNIVERSAL_DNA_COMPONENTS`).
 ## Final Status
 
 ```
-READY_TO_FREEZE
+CODE_GATES_PASS — PRODUCTION_NOT_VERIFIED
 ```
 
-All gates pass. The seed may be cloned to begin specialization work.
+Code-level CI gates passed on the verified code commit. Production readiness and final freeze remain blocked until the independent real-environment security/HITL acceptance is signed off. The seed may be cloned for isolated development and testing only.
 Specialization rules are in [`docs/SPECIALIZATION.md`](SPECIALIZATION.md).
 
 ---
@@ -264,7 +268,7 @@ This breaks down as:
 2. Required deps (`pydantic`, `structlog`, `dotenv`) are importable.
 3. `SeedConfig.from_env()` → CORE_ONLY.
 4. `Runtime.startup()` + `readiness() == True`.
-5. `pytest tests/` passes (487 tests).
+5. `pytest tests/` passes (612 tests on the verified code commit).
 6. `__seed_version__ == "ALBRA_SEED_V1.0"`.
 7. `Agent.run("hello")` returns `AgentResponse`.
 8. `runtime.health()` returns dict with `status` key.
@@ -359,7 +363,7 @@ python scripts/clean_room_verify.py    # 17/17 required + 2/2 optional PASS
 python scripts/audit_matrix.py         # 40/40 VERIFIED (writes docs/AUDIT_MATRIX.md)
 python scripts/parity_check.py         # exit 0, is_pure_seed=True, 106/106 DNA
 python scripts/contamination_scan.py   # exit 0, is_clean=True, 0 critical
-python -m pytest tests/ -q             # 487 passed
+python -m pytest tests/ -q             # 612 passed on verified code commit
 ```
 
 All gates must PASS. If any gate fails, the seed is NOT ready to freeze;

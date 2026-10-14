@@ -518,6 +518,7 @@ async def test_retriever_handles_structured_content() -> None:
 def test_retrieval_config_defaults() -> None:
     cfg = RetrievalConfig()
     assert cfg.top_k == 5
+    assert cfg.candidate_limit == 1000
     assert cfg.max_context_chars == 2000
     assert cfg.min_score == 0.05
     assert cfg.recency_half_life_hours == 168.0
