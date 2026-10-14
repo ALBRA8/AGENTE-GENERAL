@@ -70,7 +70,7 @@ def _redact_persisted_value(value: Any) -> Any:
     from datetime import date, datetime
     from enum import Enum
 
-    from albra_seed.config.secrets import redact_secret_values
+    from albra_seed.config.secrets import SecretsRedactor
     from albra_seed.security.output_redaction import redact_secrets
 
     if value is None or isinstance(value, (bool, int, float, Enum, date, datetime)):
@@ -82,12 +82,23 @@ def _redact_persisted_value(value: Any) -> Any:
     if isinstance(value, dict):
         # Field names carry trust information: redact values under keys such
         # as api_key/password/token even when the value has no token-like form.
-        keyed_safe = redact_secret_values(value)
-        return {
-            redact_secrets(str(key)) if not isinstance(key, (int, float, bool)) else key:
-            _redact_persisted_value(item)
-            for key, item in keyed_safe.items()
-        }
+        secret_keys = SecretsRedactor()
+        safe: dict[Any, Any] = {}
+        for key, item in value.items():
+            safe_key = (
+                redact_secrets(str(key))
+                if not isinstance(key, (int, float, bool))
+                else key
+            )
+            if (
+                isinstance(key, str)
+                and secret_keys.is_secret_key(key)
+                and isinstance(item, (str, bytes))
+            ):
+                safe[safe_key] = "<redacted>"
+            else:
+                safe[safe_key] = _redact_persisted_value(item)
+        return safe
     if isinstance(value, list):
         return [_redact_persisted_value(item) for item in value]
     if isinstance(value, tuple):
