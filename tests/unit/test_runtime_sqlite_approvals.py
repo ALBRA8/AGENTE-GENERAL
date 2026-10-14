@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from albra_seed.approvals import ApprovalEngine, SQLiteApprovalStore
 from albra_seed.core.config import SeedConfig
