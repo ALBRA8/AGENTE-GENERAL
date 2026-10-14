@@ -195,8 +195,10 @@ async def test_agent_response_fail_closed_clears_tool_calls(
 
 
 def test_build_response_withholds_raw_draft_when_respond_phase_is_missing() -> None:
+    from albra_seed.core.identity import AgentIdentity
     from albra_seed.core.types import AgentResponse, RunContext, Session
     from albra_seed.runtime.agent import Agent
+    from albra_seed.runtime.runtime import Runtime
 
     secret = "sk-proj-abcdefghijklmnopqrstuvwxyz123456"
     context = RunContext(agent_id="agent_test", session_id="session_test", task="test")
@@ -206,12 +208,7 @@ def test_build_response_withholds_raw_draft_when_respond_phase_is_missing() -> N
         execution_id=context.execution_id,
         correlation_id=context.correlation_id,
     )
-    agent = Agent(
-        __import__("albra_seed.core.identity", fromlist=["AgentIdentity"]).AgentIdentity(
-            name="redaction-test-agent"
-        ),
-        __import__("albra_seed.runtime.runtime", fromlist=["Runtime"]).Runtime(),
-    )
+    agent = Agent(AgentIdentity(name="redaction-test-agent"), Runtime())
     result = agent._build_response(
         context, session, {"draft_response": draft, "PLAN": {"tool_calls": []}}, []
     )
