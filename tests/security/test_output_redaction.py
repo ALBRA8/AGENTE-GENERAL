@@ -14,9 +14,12 @@ from albra_seed.security.output_redaction import (
     [
         "sk-proj-abcdefghijklmnopqrstuvwxyz123456",
         "sk-ant-abcdefghijklmnopqrstuvwxyz123456",
+        "gsk_abcdefghijklmnopqrstuvwxyz1234567890",
         "ghp_abcdefghijklmnopqrstuvwxyz1234567890",
         "AKIA1234567890ABCDEF",
         "password=super-secret-value-123",
+        '"api_key":"json-secret-value-123456"',
+        "Authorization: Bearer abcdefghijklmnopqrstuvwxyz012345",
         "-----BEGIN PRIVATE KEY-----\nprivate-key-material\n-----END PRIVATE KEY-----",
     ],
 )
@@ -116,3 +119,66 @@ async def test_agent_response_redacts_tool_outputs_and_trace_messages() -> None:
     assert "[REDACTED_SECRET]" in str(result["tool_results"][0].output)
     assert secret not in " ".join(run_context.errors)
     assert "[REDACTED_SECRET]" in " ".join(run_context.errors)
+
+
+async def test_agent_response_redacts_tool_call_arguments() -> None:
+    from types import SimpleNamespace
+
+    from albra_seed.core.types import AgentResponse, ToolCall
+    from albra_seed.runtime.agent import Agent
+
+    secret = "gsk_abcdefghijklmnopqrstuvwxyz1234567890"
+    run_context = SimpleNamespace(errors=[], warnings=[])
+    draft = AgentResponse(
+        content="Completed safely.",
+        execution_id="exec_test",
+        correlation_id="corr_test",
+    )
+    call = ToolCall(
+        id="call_test",
+        tool_name="tool.example",
+        arguments={"api_key": secret, "nested": {"note": f"token={secret}"}},
+    )
+    plan = {"tool_calls": [call]}
+    ctx = {
+        "context": run_context,
+        "draft_response": draft,
+        "EXECUTE": {"results": []},
+        "PLAN": plan,
+    }
+    result = await Agent._phase_respond(None, None, ctx)  # type: ignore[arg-type]
+    assert secret not in str(plan["tool_calls"][0].arguments)
+    assert "[REDACTED_SECRET]" in str(plan["tool_calls"][0].arguments)
+    assert result["content"] == "Completed safely."
+
+
+async def test_agent_response_fail_closed_clears_tool_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from albra_seed.core.types import AgentResponse, ToolCall
+    from albra_seed.runtime.agent import Agent
+    import albra_seed.security.output_redaction as redaction
+
+    monkeypatch.setattr(
+        redaction,
+        "redact_secrets",
+        lambda _: (_ for _ in ()).throw(RuntimeError("sanitizer unavailable")),
+    )
+    run_context = SimpleNamespace(errors=[], warnings=[])
+    draft = AgentResponse(
+        content="raw provider response",
+        execution_id="exec_test",
+        correlation_id="corr_test",
+    )
+    plan = {"tool_calls": [ToolCall(id="call_test", tool_name="tool.example", arguments={"x": "y"})]}
+    ctx = {
+        "context": run_context,
+        "draft_response": draft,
+        "EXECUTE": {"results": []},
+        "PLAN": plan,
+    }
+    result = await Agent._phase_respond(None, None, ctx)  # type: ignore[arg-type]
+    assert result["content"] == "Response withheld because output security validation failed."
+    assert plan["tool_calls"] == []
