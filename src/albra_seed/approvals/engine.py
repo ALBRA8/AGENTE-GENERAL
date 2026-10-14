@@ -35,7 +35,11 @@ from albra_seed.core.types import (
     new_id,
     utc_now,
 )
-from albra_seed.approvals.evidence import ApprovalEvidence, ApprovalEvidenceStore
+from albra_seed.approvals.evidence import (
+    ApprovalEvidence,
+    ApprovalEvidenceStore,
+    SQLiteApprovalEvidenceStore,
+)
 from albra_seed.approvals.escalation import EscalationPolicy
 from albra_seed.approvals.request import ApprovalRequest
 from albra_seed.approvals.sqlite_store import SQLiteApprovalStore
@@ -74,7 +78,12 @@ class ApprovalEngine:
         self._requests: dict[str, ApprovalRequest] = {
             req.approval_id: req for req in (store.list() if store else [])
         }
-        self.evidence: ApprovalEvidenceStore = evidence_store or ApprovalEvidenceStore()
+        if evidence_store is not None:
+            self.evidence: ApprovalEvidenceStore = evidence_store
+        elif store is not None:
+            self.evidence = SQLiteApprovalEvidenceStore(store.db_path)
+        else:
+            self.evidence = ApprovalEvidenceStore()
         self.escalation_policy: EscalationPolicy = (
             escalation_policy or EscalationPolicy()
         )
