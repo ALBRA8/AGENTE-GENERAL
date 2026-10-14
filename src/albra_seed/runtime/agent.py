@@ -981,16 +981,24 @@ class Agent:
             def _redact_nested(value: Any) -> Any:
                 if isinstance(value, str):
                     return redact_secrets(value)
+                if isinstance(value, bytes):
+                    return redact_secrets(value.decode("utf-8", errors="replace"))
+                if value is None or isinstance(value, (bool, int, float)):
+                    return value
+                if hasattr(value, "model_dump"):
+                    return _redact_nested(value.model_dump(mode="json"))
                 if isinstance(value, list):
                     return [_redact_nested(item) for item in value]
                 if isinstance(value, tuple):
                     return tuple(_redact_nested(item) for item in value)
                 if isinstance(value, dict):
                     return {
-                        redact_secrets(key) if isinstance(key, str) else key: _redact_nested(item)
+                        redact_secrets(str(key)) if isinstance(key, str) else key: _redact_nested(item)
                         for key, item in value.items()
                     }
-                return value
+                # Unknown objects must not bypass the last-mile boundary.
+                # Convert their public representation to text and sanitize it.
+                return redact_secrets(str(value))
 
             content = redact_secrets(content)
             safe_results: list[ToolResult] = []
