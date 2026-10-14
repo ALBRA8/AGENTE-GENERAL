@@ -17,8 +17,10 @@
 
 ## Canonical Numbers
 
-Every value in this table was produced by running the actual verification
-script or by counting actual files. None are invented.
+The top-level test total and gate results below are verified against the code
+commit and CI run identified above. Detailed per-suite breakdowns in this
+table are historical figures unless explicitly re-counted; do not treat those
+subgroup counts as current certification evidence.
 
 | Metric                       | Value | Source                                                                  |
 | ---------------------------- | ----- | ----------------------------------------------------------------------- |
@@ -42,8 +44,8 @@ script or by counting actual files. None are invented.
 | Memory factual integrity     | 11    | `tests/unit/test_memory_factual_integrity.py` (BLOQ-MEM)                |
 | Memory forget / audit        | 10    | `tests/unit/test_memory_forget_audit.py` (BLOQ-MEM)                     |
 | Birth / readiness tests      | 8     | `tests/unit/test_birth_readiness.py`                                    |
-| Unit tests (total)           | 337   | `python -m pytest tests/unit/ --collect-only -q` (316 + 11 factual + 10 forget audit) |
-| Unit tests (excl. birth/readiness) | ~329 | 337 − 8                                                               |
+| Unit tests (total)           | Historical; not re-counted in this CI run | Re-run `python -m pytest tests/unit/ --collect-only -q` before using subgroup totals |
+| Unit tests (excl. birth/readiness) | Historical; not re-counted | Recompute from current collection output |
 
 ### Allowed specializations (8)
 
