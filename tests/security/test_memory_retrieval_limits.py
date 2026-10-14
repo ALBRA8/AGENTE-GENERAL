@@ -45,8 +45,6 @@ async def test_retriever_accepts_maximum_bounded_limit() -> None:
         == []
     )
 
-
-
 async def test_retriever_withholds_memory_when_lifecycle_history_is_unreadable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
