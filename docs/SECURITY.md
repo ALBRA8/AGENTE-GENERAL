@@ -33,7 +33,9 @@ Every primitive below is exercised by a security test under `tests/security/`. P
 It requires all of the following: a non-anonymous principal verified from a Bearer
 token, a configured policy engine and permission registry, an explicit
 `execution:run` policy rule for that principal, and an RBAC grant for the
-principal's role. `GET /api/v1/execution/{id}` separately requires
+principal's role. HITL approval list/decision/resume routes likewise require
+an explicit action-specific rule and a permission-registry grant for one of
+the authenticated principal's roles. `GET /api/v1/execution/{id}` separately requires
 `execution:read`; traces are owner-scoped unless `execution:read:any` is
 explicitly granted. Missing authentication returns 401; missing configuration
 fails closed; missing rule or grant returns 403. Do not use `NoopAuthenticator`
