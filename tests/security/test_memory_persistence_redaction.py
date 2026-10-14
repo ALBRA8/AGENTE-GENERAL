@@ -113,7 +113,7 @@ async def test_record_phase_skips_all_persistence_if_redaction_fails(
 
     memory = _MemoryCapture()
     agent = SimpleNamespace(runtime=_RuntimeCapture(memory))
-    ctx, run_ctx, _ = _context_with_secrets()
+    ctx, run_ctx, session = _context_with_secrets()
 
     def fail_redaction(_: str) -> str:
         raise output_redaction.RedactionError("must not leak details")
@@ -126,6 +126,12 @@ async def test_record_phase_skips_all_persistence_if_redaction_fails(
     assert memory.records == []
     assert run_ctx.errors == ["record output redaction failed; persistence skipped"]
     assert "TASKSECRET123" not in repr(run_ctx.errors)
+    assert run_ctx.task == "[REDACTED]"
+    assert run_ctx.inputs == {}
+    assert run_ctx.outputs == {}
+    assert session.messages == []
+    assert ctx["RECEIVE"] == {"content": "[REDACTED]"}
+    assert "TASKSECRET123" not in repr(ctx)
 
 
 
