@@ -139,6 +139,32 @@ async def test_recovery_rejects_tampered_arguments_digest(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_recovery_rejects_tampered_arguments_and_recomputed_digest(tmp_path):
+    from albra_seed.approvals.suspension import canonical_arguments_sha256
+
+    runtime, store, engine, agent, tool, identity, request = (
+        await _build_recovery_setup(tmp_path)
+    )
+    saved = engine.get(request.approval_id)
+    payload = saved.model_dump(mode="json")
+    payload["context_ref"]["arguments"]["to"] = "attacker@example.test"
+    payload["context_ref"]["arguments_sha256"] = canonical_arguments_sha256(
+        payload["context_ref"]["arguments"]
+    )
+    with store._connect() as connection:
+        connection.execute(
+            "UPDATE approvals SET request_json = ? WHERE approval_id = ?",
+            (json.dumps(payload), request.approval_id),
+        )
+
+    with pytest.raises(ValueError, match="evidence"):
+        await agent.resume_approved_approval(
+            request.approval_id, resumed_by="reviewer-1"
+        )
+    assert tool.calls == 0
+
+
+@pytest.mark.asyncio
 async def test_recovery_api_requires_authentication_and_explicit_permission(tmp_path):
     runtime, store, engine, agent, tool, identity, request = (
         await _build_recovery_setup(tmp_path, allowed_permissions=())
