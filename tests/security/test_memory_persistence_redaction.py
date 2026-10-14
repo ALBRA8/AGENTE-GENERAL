@@ -168,7 +168,6 @@ async def test_record_phase_skips_all_persistence_if_redaction_fails(
     assert "TASKSECRET123" not in repr(ctx)
 
 
-
 def test_build_response_redacts_exception_text_in_trace() -> None:
     from albra_seed.runtime.loop import PhaseEvent, PhaseStatus
 
@@ -196,7 +195,6 @@ def test_build_response_redacts_exception_text_in_trace() -> None:
     assert "TRACESECRET123" not in repr(run_ctx.outputs["trace"])
     assert "[REDACTED_SECRET]" in run_ctx.outputs["trace"][0]["error"]
     assert "TRACESECRET123" not in repr(response)
-
 
 
 @pytest.mark.asyncio
@@ -228,7 +226,6 @@ async def test_final_response_redacts_short_values_under_secret_mapping_keys() -
     assert "FINALARGSECRET123" not in repr(ctx["PLAN"]["tool_calls"])
     assert "FINALOUTPUTSECRET123" not in repr(response["tool_results"])
     assert "safe" in repr(response["tool_results"])
-
 
 
 class _FailingEvidence:
