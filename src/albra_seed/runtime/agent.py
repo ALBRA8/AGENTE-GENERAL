@@ -65,6 +65,49 @@ if TYPE_CHECKING:  # pragma: no cover
 log = structlog.get_logger("albra.agent")
 
 
+def _redact_persisted_value(value: Any) -> Any:
+    """Recursively redact text before execution data reaches persistence hooks."""
+    from datetime import date, datetime
+    from enum import Enum
+
+    from albra_seed.security.output_redaction import redact_secrets
+
+    if isinstance(value, str):
+        return redact_secrets(value)
+    if isinstance(value, bytes):
+        return redact_secrets(value.decode("utf-8", errors="replace"))
+    if value is None or isinstance(value, (bool, int, float, Enum, date, datetime)):
+        return value
+    if isinstance(value, dict):
+        return {
+            redact_secrets(str(key)) if not isinstance(key, (int, float, bool)) else key:
+            _redact_persisted_value(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_persisted_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_persisted_value(item) for item in value)
+
+    model_fields = getattr(type(value), "model_fields", None)
+    if model_fields and hasattr(value, "model_copy"):
+        updates: dict[str, Any] = {}
+        for field_name in model_fields:
+            field_value = getattr(value, field_name, None)
+            if isinstance(field_value, (str, bytes, dict, list, tuple)) or getattr(
+                type(field_value), "model_fields", None
+            ):
+                updates[field_name] = _redact_persisted_value(field_value)
+            elif field_value is not None and not isinstance(
+                field_value, (bool, int, float, Enum, date, datetime)
+            ):
+                updates[field_name] = redact_secrets(str(field_value))
+        return value.model_copy(update=updates)
+
+    # Unknown payload objects can expose secrets in their string representation.
+    return redact_secrets(str(value))
+
+
 class Agent:
     """A single ALBRA agent instance bound to a Runtime.
 
@@ -821,6 +864,37 @@ class Agent:
         directly).
         """
         run_ctx: RunContext = ctx["context"]
+
+        # RECORD runs before RESPOND, so the draft, tool payloads and run trace
+        # may still contain unredacted provider output. Sanitize every data
+        # surface before evidence, audit, or memory persistence sees it.
+        try:
+            for key in (
+                "RECEIVE", "UNDERSTAND", "REASON", "PLAN",
+                "CHECK_PERMISSIONS", "EXECUTE", "OBSERVE", "VALIDATE",
+                "RESPOND", "draft_response", "input_message",
+            ):
+                if key in ctx:
+                    ctx[key] = _redact_persisted_value(ctx[key])
+
+            safe_context = _redact_persisted_value(run_ctx)
+            for field_name in type(run_ctx).model_fields:
+                setattr(run_ctx, field_name, getattr(safe_context, field_name))
+            ctx["context"] = run_ctx
+
+            session = ctx.get("session")
+            if session is not None and hasattr(type(session), "model_fields"):
+                safe_session = _redact_persisted_value(session)
+                for field_name in type(session).model_fields:
+                    setattr(session, field_name, getattr(safe_session, field_name))
+                ctx["session"] = session
+        except Exception:  # noqa: BLE001
+            # Do not persist any part of an execution if redaction cannot
+            # complete. The response phase independently fails closed.
+            run_ctx.errors[:] = ["record output redaction failed; persistence skipped"]
+            run_ctx.warnings[:] = []
+            return {"recorded": False, "redaction_failed": True}
+
         evidence_collector = self.runtime.get_component(COMPONENT_EVIDENCE_COLLECTOR)
         audit = self.runtime.get_component(COMPONENT_AUDIT_LOGGER)
 
