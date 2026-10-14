@@ -269,7 +269,7 @@ def build_public_execution_router(ctx: RequestContext) -> Any:
         payload: dict[str, Any],
         authorization: str | None = Header(default=None, alias="Authorization"),
     ) -> Any:
-        principal = await verified_approval_principal(authorization)
+        principal = await verified_principal(authorization)
         await require_approval_permission(principal, "approval:decide")
         engine = ctx.runtime.get_component("approval_engine")
         if engine is None:
@@ -300,7 +300,7 @@ def build_public_execution_router(ctx: RequestContext) -> Any:
         authorization: str | None = Header(default=None, alias="Authorization"),
     ) -> Any:
         """Explicitly resume the exact persisted call; never rerun model reasoning."""
-        principal = await verified_approval_principal(authorization)
+        principal = await verified_principal(authorization)
         await require_approval_permission(principal, "approval:resume")
         engine = ctx.runtime.get_component("approval_engine")
         if engine is None:
