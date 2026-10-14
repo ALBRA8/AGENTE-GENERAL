@@ -23,7 +23,7 @@ The seed assumes three classes of threats:
 | Cascade failure         | One failing component triggers a destructive auto-recovery (e.g. wipes a DB).                | RecoveryManager refuses SECURITY/UNKNOWN classes + dangerous markers.       |
 | Runaway external action | A misconfigured provider or runaway loop hammers an external API.                            | KillSwitch (global) + RateLimiter + CooldownManager.                        |
 
-Every primitive below is exercised by a security test under `tests/security/`.
+Every primitive below is exercised by a security test under `tests/security/`. Provider-key handling for browser dashboards is specified in [`WEB_DASHBOARD_SECURITY.md`](WEB_DASHBOARD_SECURITY.md). The dashboard reported at `localhost:9000` is not present in this repository, so its browser storage and network behavior remain an external, unverified acceptance item.
 
 ---
 
