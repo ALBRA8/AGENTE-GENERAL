@@ -99,6 +99,9 @@ the clean-room script.)
 | Memory FACT rule            | PASS   | `pytest tests/unit/test_memory_factual_integrity.py` → **11 passed** (BLOQ-MEM; unified via `MemoryProvenance.validate_fact`) |
 | Memory forget / audit       | PASS   | `pytest tests/unit/test_memory_forget_audit.py` → **10 passed** (BLOQ-MEM; tombstone by/reason + audit_sink) |
 | Browser dashboard key handling | NOT VERIFIED | Dashboard source is not tracked in this repository; inspect/fix `localStorage` and direct provider calls against the actual UI using `WEB_DASHBOARD_SECURITY.md` |
+| Whole-repository Ruff | NOT CLEAN | A full scan reported 386 findings; targeted security files pass Ruff lint/format and Mypy, but repository-wide lint cleanliness is not certified |
+| Historical PRs #1/#2 | OPEN, NOT MERGED | PR #1 is a historical draft; PR #2 is an audit candidate based on stale main SHA `43563c8`. Neither is current-main evidence or a release approval |
+| HITL draft PR #3 | DRAFT, NOT MERGED | Process death cannot resume the suspended coroutine; SQLite coordination assumes a shared local filesystem; exactly-once external side effects are not guaranteed and ambiguous outcomes require reconciliation |
 | Production HITL / infrastructure acceptance | NOT VERIFIED | Requires real evidence for encrypted storage/backups, KMS, auth/RBAC, firewall/egress, restore drill, uncertain-side-effect reconciliation, and kill switch |
 | pyproject.toml parses       | PASS   | `python -c "import tomllib; tomllib.load(open('pyproject.toml','rb'))"` (8 optional-dependencies: openai/anthropic/groq/vector/api/otel/dev/all) |
 
