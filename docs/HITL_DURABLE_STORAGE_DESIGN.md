@@ -26,18 +26,27 @@
 
 ## Important limits — not production-complete
 
-The public approval API currently operates on the existing `ApprovalEngine`
-and its configured storage. The new `SQLiteSuspendedExecutionCoordinator`
-is a separate persistence primitive and is **not yet wired into
-`ApprovalEngine` or the Agent runtime**. The API therefore does not claim
-cross-worker persistence merely because the SQLite coordinator exists.
+The public approval API operates on the configured `ApprovalEngine`
+storage. With `SQLiteApprovalStore`, approval records survive process restart
+and a still-running waiter polls the durable record, so decisions made by a
+different worker can be observed. The API does not become cross-worker safe
+when each worker points at a different database file; workers must use the
+same SQLite database on a filesystem with reliable locking semantics.
+
+The `SQLiteSuspendedExecutionCoordinator` is a separate binding/claim
+primitive and is **not yet wired into `ApprovalEngine` or the Agent runtime**.
+It does not by itself resume tool execution.
 
 A durable approval row does not serialize or reconstruct the suspended
 `Agent.run()` coroutine, model/provider state, or live authorization context.
-After a process restart, this change does **not** automatically resume the
-original run. Never recreate a tool call from a model response or regenerate
-arguments during recovery; the exact original call must be durably bound and
-revalidated before any dispatch can be considered.
+After a process restart, approval status can be recovered and inspected, but
+the original run is **not automatically resumed**. Never recreate a tool call
+from a model response or regenerate arguments during recovery; the exact
+original call must be durably bound and revalidated before any dispatch can
+be considered. In particular, the current `SQLiteApprovalStore` serializes
+the `ApprovalRequest.context_ref`, including tool arguments, to its database;
+treat that database as sensitive and restrict filesystem access. The separate
+suspended-execution coordinator stores only an arguments digest.
 
 SQLite can ensure a claim is committed once, but it cannot make an arbitrary
 external side effect and a database commit atomic. If a worker dies after an
