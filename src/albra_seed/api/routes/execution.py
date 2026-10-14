@@ -1,18 +1,10 @@
-"""PUBLIC: POST /api/v1/execution, GET /api/v1/execution/{execution_id}.
+"""HTTP execution and approval routes with default-deny security boundaries.
 
-SECURITY CONTRACT (BLOQ 2 closure):
-The POST /execution endpoint calls agent.run() which may execute Tools.
-Tool execution requires a security perimeter (firewall + policy) configured
-on the Runtime. If the perimeter is absent, the endpoint refuses to execute
-and returns HTTP 503 (perimeter not configured).
-
-This contract enforces DEFAULT-DENY at the HTTP boundary:
-- CORE_ONLY without perimeter → 503 "security perimeter not configured"
-- CORE_ONLY with perimeter → 200 (tools go through firewall + policy)
-- Authenticated request with perimeter → 200 (subject to policy decision)
-
-The endpoint does NOT bypass Runtime security; it merely refuses to be an
-open door when the perimeter is absent.
+POST /api/v1/execution can execute tools, so it requires a configured runtime
+security perimeter, a verified non-anonymous Bearer principal, an explicit
+execution:run policy rule, and a matching role permission grant. Missing
+perimeter or auth/RBAC configuration fails closed. The request exception
+boundary never returns raw exception text because it may contain credentials.
 """
 
 from __future__ import annotations
