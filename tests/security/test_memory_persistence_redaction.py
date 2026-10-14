@@ -224,3 +224,24 @@ async def test_final_response_redacts_short_values_under_secret_mapping_keys() -
     assert "FINALARGSECRET123" not in repr(ctx["PLAN"]["tool_calls"])
     assert "FINALOUTPUTSECRET123" not in repr(response["tool_results"])
     assert "safe" in repr(response["tool_results"])
+
+
+
+class _FailingEvidence:
+    async def record(self, _: Any) -> None:
+        raise RuntimeError("provider password=EVIDENCESECRET123")
+
+
+@pytest.mark.asyncio
+async def test_persistence_sink_errors_do_not_leak_into_audit_or_memory() -> None:
+    memory = _MemoryCapture()
+    evidence = _FailingEvidence()
+    audit = _CaptureSink()
+    agent = SimpleNamespace(runtime=_RuntimeCapture(memory, evidence, audit))
+    ctx, run_ctx, _ = _context_with_secrets()
+
+    await Agent._phase_record(agent, None, ctx)
+
+    assert "EVIDENCESECRET123" not in repr(audit.payloads)
+    assert "EVIDENCESECRET123" not in repr(memory.records)
+    assert "details withheld" in repr(run_ctx.warnings)
