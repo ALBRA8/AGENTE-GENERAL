@@ -178,7 +178,7 @@ Endpoints:
 - `GET /api/v1/readiness` — boolean readiness
 - `GET /api/v1/agent/info` — agent manifest
 - `GET /api/v1/agent/capabilities` — capability list
-- `POST /api/v1/execution` — run an agent
+- `POST /api/v1/execution` — run an agent; requires a verified Bearer principal, explicit `execution:run` policy rule, RBAC grant, and configured security perimeter
 - `GET /api/v1/execution/{id}` — execution trace
 - `GET /internal/diagnostics` — Doctor report (internal)
 
