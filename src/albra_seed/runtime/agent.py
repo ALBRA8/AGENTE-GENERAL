@@ -536,6 +536,19 @@ class Agent:
             claim_token: str | None = None
             if dispatch_store is not None:
                 try:
+                    # Bind the durable approval to the exact tool name and
+                    # original arguments before creating a dispatch slot.
+                    # A matching call ID alone is not sufficient.
+                    approved_request = approval_engine.get(approval_id)
+                    approved_context = (
+                        getattr(approved_request, "context_ref", None) or {}
+                    ) if approved_request is not None else {}
+                    if (
+                        approved_request is None
+                        or approved_request.action != call.tool_name
+                        or approved_context.get("arguments") != call.arguments
+                    ):
+                        raise ValueError("approved tool binding does not match this call")
                     if not dispatch_store.prepare_dispatch(approval_id, call.id):
                         results.append(ToolResult(
                             call_id=call.id, success=False,
