@@ -42,6 +42,48 @@ def client(app: Any) -> TestClient:
         yield c
 
 
+class _ExecutionAuthenticator:
+    async def verify(self, token: str | None):
+        from albra_seed.security.auth import AuthPrincipal
+
+        if token != "valid-test-token":
+            return None
+        return AuthPrincipal(
+            kind="user",
+            identity="executor-1",
+            roles=["executor"],
+            auth_method="test",
+            is_anonymous=False,
+        )
+
+
+def _configure_execution_auth(runtime: Runtime) -> None:
+    from albra_seed.core.types import PolicyDecision, RiskLevel
+    from albra_seed.policy.engine import PolicyEngine
+    from albra_seed.policy.rules import PolicyRule, PolicyRuleSet
+    from albra_seed.security.permissions import Permission, PermissionRegistry
+    from albra_seed.security.roles import Role, RoleRegistry
+
+    roles = RoleRegistry()
+    roles.register(Role(role_id="executor", name="executor"))
+    permissions = PermissionRegistry(roles)
+    permissions.register(Permission(id="execution:run"))
+    permissions.grant("executor", "execution:run")
+    rules = PolicyRuleSet()
+    rules.add(PolicyRule(
+        name="allow execution API",
+        action_pattern="execution:run",
+        actor_pattern="executor-1",
+        risk_threshold=RiskLevel.UNKNOWN,
+        required_permission="execution:run",
+        decision=PolicyDecision.ALLOW,
+    ))
+    runtime.register("authenticator", _ExecutionAuthenticator())
+    runtime.register("policy_engine", PolicyEngine(
+        rule_set=rules, permission_registry=permissions
+    ))
+
+
 # =====================================================================
 # create_app returns a FastAPI instance
 # =====================================================================
@@ -191,6 +233,7 @@ def test_execution_endpoint_runs_agent_and_returns_trace(runtime: Runtime) -> No
         risk_threshold=RiskLevel.UNKNOWN, autonomy_required=0,
     ))
     runtime.register("firewall", fw)
+    _configure_execution_auth(runtime)
 
     identity = AgentIdentity(name="exec-agent", providers=["mock"])
     agent = Agent(identity=identity, runtime=runtime)
@@ -200,6 +243,7 @@ def test_execution_endpoint_runs_agent_and_returns_trace(runtime: Runtime) -> No
         r = client.post(
             "/api/v1/execution",
             json={"input": "hello"},
+            headers={"Authorization": "Bearer valid-test-token"},
         )
         assert r.status_code == 200, r.text
         body = r.json()
@@ -255,6 +299,7 @@ def test_execution_endpoint_does_not_echo_exception_secrets(
 ) -> None:
     """Unhandled execution errors must not expose provider credentials."""
     runtime.register("firewall", object())
+    _configure_execution_auth(runtime)
     identity = AgentIdentity(name="error-agent")
     agent = Agent(identity=identity, runtime=runtime)
     secret = "sk-proj-abcdefghijklmnopqrstuvwxyz123456"
@@ -265,7 +310,11 @@ def test_execution_endpoint_does_not_echo_exception_secrets(
     monkeypatch.setattr(agent, "run", fail_run)
     app = create_app(runtime, agents={identity.agent_id: agent})
     with TestClient(app) as client:
-        response = client.post("/api/v1/execution", json={"input": "hello"})
+        response = client.post(
+        "/api/v1/execution",
+        json={"input": "hello"},
+        headers={"Authorization": "Bearer valid-test-token"},
+    )
     assert response.status_code == 500
     assert secret not in response.text
     assert "execution failed: RuntimeError" in response.text
