@@ -237,10 +237,10 @@ block above `UNIVERSAL_DNA_COMPONENTS`).
 ## Final Status
 
 ```
-READY_TO_FREEZE
+CODE_GATES_PASS — PRODUCTION_NOT_VERIFIED
 ```
 
-All gates pass. The seed may be cloned to begin specialization work.
+Code-level CI gates passed on the verified code commit. Production readiness and final freeze remain blocked until the independent real-environment security/HITL acceptance is signed off. The seed may be cloned for isolated development and testing only.
 Specialization rules are in [`docs/SPECIALIZATION.md`](SPECIALIZATION.md).
 
 ---
@@ -266,7 +266,7 @@ This breaks down as:
 2. Required deps (`pydantic`, `structlog`, `dotenv`) are importable.
 3. `SeedConfig.from_env()` → CORE_ONLY.
 4. `Runtime.startup()` + `readiness() == True`.
-5. `pytest tests/` passes (487 tests).
+5. `pytest tests/` passes (612 tests on the verified code commit).
 6. `__seed_version__ == "ALBRA_SEED_V1.0"`.
 7. `Agent.run("hello")` returns `AgentResponse`.
 8. `runtime.health()` returns dict with `status` key.
@@ -361,7 +361,7 @@ python scripts/clean_room_verify.py    # 17/17 required + 2/2 optional PASS
 python scripts/audit_matrix.py         # 40/40 VERIFIED (writes docs/AUDIT_MATRIX.md)
 python scripts/parity_check.py         # exit 0, is_pure_seed=True, 106/106 DNA
 python scripts/contamination_scan.py   # exit 0, is_clean=True, 0 critical
-python -m pytest tests/ -q             # 487 passed
+python -m pytest tests/ -q             # 612 passed on verified code commit
 ```
 
 All gates must PASS. If any gate fails, the seed is NOT ready to freeze;
