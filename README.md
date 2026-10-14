@@ -84,19 +84,27 @@ export ALBRA_APPROVAL_DB_PATH="./data/approvals.sqlite3"
 ```
 
 ```python
+import asyncio
 from albra_seed import Runtime, SeedConfig
 
-config = SeedConfig.from_env()
-runtime = Runtime(config=config)
-await runtime.startup()
-approval_engine = runtime.get_component("approval_engine")
+async def main():
+    runtime = Runtime(config=SeedConfig.from_env())
+    await runtime.startup()
+    try:
+        approval_engine = runtime.get_component("approval_engine")
+        # Use approval_engine in your HITL integration.
+    finally:
+        await runtime.shutdown()
+
+asyncio.run(main())
 ```
 
 If `ALBRA_APPROVAL_DB_PATH` is set, startup creates the SQLite-backed
 `ApprovalEngine` unless the application registered its own approval engine.
 If SQLite initialization fails, startup fails rather than silently falling back
-to volatile approvals. Keep the database on storage shared by the cooperating
-workers; do not use separate database files per worker.
+to volatile approvals. Keep the database on a local filesystem accessible to all cooperating worker
+processes on the same host; do not use separate database files per worker or
+place a WAL-mode database on a network filesystem.
 
 The SQLite dispatch ledger exposes atomic `prepare_dispatch`,
 `claim_dispatch`, completion, and uncertain-outcome operations for dispatch
