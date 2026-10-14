@@ -25,11 +25,33 @@ class _MemoryCapture:
         self.records.append(kwargs)
 
 
-class _RuntimeCapture:
-    def __init__(self, memory: _MemoryCapture) -> None:
-        self.memory = memory
+class _CaptureSink:
+    def __init__(self) -> None:
+        self.payloads: list[str] = []
 
-    def get_component(self, _: str) -> None:
+    async def record(self, payload: Any) -> None:
+        self.payloads.append(repr(payload))
+
+    async def append(self, payload: Any) -> None:
+        self.payloads.append(repr(payload))
+
+
+class _RuntimeCapture:
+    def __init__(
+        self,
+        memory: _MemoryCapture,
+        evidence: _CaptureSink | None = None,
+        audit: _CaptureSink | None = None,
+    ) -> None:
+        self.memory = memory
+        self.evidence = evidence
+        self.audit = audit
+
+    def get_component(self, name: str) -> Any:
+        if "evidence" in name:
+            return self.evidence
+        if "audit" in name:
+            return self.audit
         return None
 
     def get_memory_manager(self) -> _MemoryCapture:
@@ -77,7 +99,9 @@ def _context_with_secrets() -> tuple[dict[str, Any], RunContext, Session]:
 @pytest.mark.asyncio
 async def test_record_phase_redacts_secrets_before_memory_persistence() -> None:
     memory = _MemoryCapture()
-    agent = SimpleNamespace(runtime=_RuntimeCapture(memory))
+    evidence = _CaptureSink()
+    audit = _CaptureSink()
+    agent = SimpleNamespace(runtime=_RuntimeCapture(memory, evidence, audit))
     ctx, run_ctx, session = _context_with_secrets()
 
     result = await Agent._phase_record(agent, None, ctx)
@@ -100,6 +124,9 @@ async def test_record_phase_redacts_secrets_before_memory_persistence() -> None:
         assert secret not in persisted
 
     assert "[REDACTED_SECRET]" in persisted or "<redacted>" in persisted
+    assert evidence.payloads and audit.payloads
+    assert "SECRET123" not in repr(evidence.payloads)
+    assert "SECRET123" not in repr(audit.payloads)
     assert "TASKSECRET123" not in run_ctx.task
     assert "USERSECRET123" not in session.messages[0].content
     assert "ASSISTANTSECRET123" not in ctx["draft_response"].content
