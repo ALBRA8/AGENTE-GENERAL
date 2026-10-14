@@ -33,7 +33,9 @@ Every primitive below is exercised by a security test under `tests/security/`. P
 It requires all of the following: a non-anonymous principal verified from a Bearer
 token, a configured policy engine and permission registry, an explicit
 `execution:run` policy rule for that principal, and an RBAC grant for the
-principal's role. Missing authentication returns 401; missing configuration
+principal's role. `GET /api/v1/execution/{id}` separately requires
+`execution:read`; traces are owner-scoped unless `execution:read:any` is
+explicitly granted. Missing authentication returns 401; missing configuration
 fails closed; missing rule or grant returns 403. Do not use `NoopAuthenticator`
 for an exposed API. Configure an actual authenticator and narrowly scoped
 permissions before enabling HTTP execution.
