@@ -92,9 +92,9 @@ class OpenAIProvider(LLMProvider):
         client = self._ensure_client()
         t0 = time.monotonic()
 
-        openai_messages = [
-            {"role": msg.role.value, "content": msg.content} for msg in messages
-        ]
+        from albra_seed.providers.message_serialization import serialize_openai_compatible_messages
+
+        openai_messages = serialize_openai_compatible_messages(messages)
         # If multiple system messages exist, merge them.
         # OpenAI prefers a single system message at the head.
 
