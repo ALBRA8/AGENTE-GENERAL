@@ -270,6 +270,24 @@ class Agent:
             raise ValueError("durable request lacks the exact original call/context; refusing recovery")
         if canonical_arguments_sha256(arguments) != digest:
             raise ValueError("saved tool arguments do not match the approved digest")
+        # The request row and its digest are stored in the same SQLite file;
+        # bind recovery to the separately hash-chained approval evidence too,
+        # so changing both arguments and digest in the request row is detected.
+        try:
+            if not approval.verify_evidence_chain():
+                raise RuntimeError("approval evidence chain verification failed")
+            evidence_records = approval.evidence.list_for(approval_id)
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError("approval evidence could not be verified") from exc
+        if not evidence_records:
+            raise ValueError("approved call has no durable decision evidence")
+        evidence = evidence_records[-1]
+        if (
+            evidence.status is not ApprovalStatus.APPROVED
+            or evidence.decided_by != request.decided_by
+            or evidence.metadata.get("arguments_sha256") != digest
+        ):
+            raise ValueError("approval evidence does not bind this exact tool call")
 
         run_context = RunContext.model_validate(snapshot)
         if (
