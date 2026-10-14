@@ -67,17 +67,18 @@ def _configure_execution_auth(runtime: Runtime) -> None:
     roles = RoleRegistry()
     roles.register(Role(role_id="executor", name="executor"))
     permissions = PermissionRegistry(roles)
-    permissions.register(Permission(id="execution:run"))
-    permissions.grant("executor", "execution:run")
     rules = PolicyRuleSet()
-    rules.add(PolicyRule(
-        name="allow execution API",
-        action_pattern="execution:run",
-        actor_pattern="executor-1",
-        risk_threshold=RiskLevel.UNKNOWN,
-        required_permission="execution:run",
-        decision=PolicyDecision.ALLOW,
-    ))
+    for action in ("execution:run", "execution:read", "execution:read:any"):
+        permissions.register(Permission(id=action))
+        permissions.grant("executor", action)
+        rules.add(PolicyRule(
+            name=f"allow {action} API",
+            action_pattern=action,
+            actor_pattern="executor-1",
+            risk_threshold=RiskLevel.UNKNOWN,
+            required_permission=action,
+            decision=PolicyDecision.ALLOW,
+        ))
     runtime.register("authenticator", _ExecutionAuthenticator())
     runtime.register("policy_engine", PolicyEngine(
         rule_set=rules, permission_registry=permissions
@@ -253,7 +254,12 @@ def test_execution_endpoint_runs_agent_and_returns_trace(runtime: Runtime) -> No
         assert "hello" in body["content"].lower()
 
         # Trace lookup
-        r2 = client.get(f"/api/v1/execution/{body['execution_id']}")
+        anonymous_trace = client.get(f"/api/v1/execution/{body['execution_id']}")
+        assert anonymous_trace.status_code == 401
+        r2 = client.get(
+            f"/api/v1/execution/{body['execution_id']}",
+            headers={"Authorization": "Bearer valid-test-token"},
+        )
         assert r2.status_code == 200
         body2 = r2.json()
         assert body2["execution_id"] == body["execution_id"]
