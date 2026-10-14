@@ -179,7 +179,7 @@ Endpoints:
 - `GET /api/v1/agent/info` — agent manifest
 - `GET /api/v1/agent/capabilities` — capability list
 - `POST /api/v1/execution` — run an agent; requires a verified Bearer principal, explicit `execution:run` policy rule, RBAC grant, and configured security perimeter
-- `GET /api/v1/execution/{id}` — execution trace
+- `GET /api/v1/execution/{id}` — execution trace; requires verified Bearer authentication and `execution:read` RBAC; traces are owner-scoped unless `execution:read:any` is explicitly granted
 - `GET /internal/diagnostics` — Doctor report (internal)
 
 ---
