@@ -1,8 +1,9 @@
 """INTERNAL: GET /internal/diagnostics — runs Doctor.
 
 This endpoint is INTERNAL — not part of the public API. It is intended
-for operators and SREs. It MUST NOT be exposed to end-users without
-additional auth gating (out of scope for the seed).
+for operators and SREs. It enforces a verified Bearer principal and an
+explicit diagnostics:read RBAC grant; network-layer restriction is still
+required as defense in depth.
 """
 
 from __future__ import annotations
