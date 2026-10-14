@@ -346,6 +346,33 @@ class TestBloq2HTTPExecutionPerimeter:
             )
             assert r.status_code == 200, r.text
 
+    def test_execution_endpoint_requires_explicit_rbac_rule(self):
+        """Valid authentication alone is insufficient without execution:run policy."""
+        runtime = Runtime(config=SeedConfig())
+        from albra_seed.providers.mock import MockProvider
+        runtime.register_provider(MockProvider())
+        fw = ActionFirewall()
+        fw.add_rule(FirewallRule(
+            action_pattern="*", actor_pattern="*", decision="allow",
+            risk_threshold=RiskLevel.UNKNOWN, autonomy_required=0,
+        ))
+        runtime.register("firewall", fw)
+        _configure_execution_api_auth(runtime)
+        # Remove the action-specific rule while retaining the role permission.
+        policy = runtime.get_component("policy_engine")
+        policy.rule_set = PolicyRuleSet()
+        identity = AgentIdentity(name="no-rbac-agent")
+        agent = Agent(identity=identity, runtime=runtime)
+        app = create_app(runtime, agents={identity.agent_id: agent})
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/v1/execution",
+                json={"input": "hello"},
+                headers={"Authorization": "Bearer valid-test-token"},
+            )
+        assert response.status_code == 403
+        assert "explicit execution:run policy grant" in response.json()["detail"]
+
     def test_execution_endpoint_does_not_leak_token_in_response(self):
         """Verify Authorization header is NEVER echoed in response body."""
         runtime = Runtime(config=SeedConfig())
