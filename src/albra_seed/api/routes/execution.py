@@ -234,7 +234,7 @@ def build_public_execution_router(ctx: RequestContext) -> Any:
                 detail=f"no execution trace cached for id={execution_id}",
             )
         owner = trace.get("requested_by")
-        if owner and owner != principal.identity:
+        if owner != principal.identity:
             await require_execution_permission(principal, "execution:read:any")
         return TraceResponse(
             execution_id=execution_id,
