@@ -144,6 +144,23 @@ class SQLiteApprovalStore:
                     conn.rollback()
                     return False
                 request = ApprovalRequest.model_validate_json(row["request_json"])
+                # Enforce the deadline inside the same write transaction as the
+                # decision. A caller-side check alone races with concurrent workers.
+                deadline = request.deadline
+                now_dt = utc_now()
+                if deadline is not None:
+                    if deadline.tzinfo is None:
+                        deadline = deadline.replace(tzinfo=now_dt.tzinfo)
+                    if deadline <= now_dt:
+                        request.mark_expired()
+                        conn.execute(
+                            "UPDATE approvals SET status=?,request_json=?,updated_at=? "
+                            "WHERE approval_id=? AND status=?",
+                            (ApprovalStatus.EXPIRED.value, self._dump(request),
+                             now_dt.isoformat(), approval_id, ApprovalStatus.PENDING.value),
+                        )
+                        conn.commit()
+                        return False
                 if target == ApprovalStatus.APPROVED:
                     request.mark_approved(by=decided_by or "unknown")
                 elif target == ApprovalStatus.REJECTED:
