@@ -28,6 +28,7 @@ from albra_seed.core.identity import AgentIdentity
 from albra_seed.core.types import (
     AgentResponse,
     AutonomyLevel,
+    ExecutionStatus,
     MemoryType,
     Message,
     Role,
@@ -222,7 +223,7 @@ class Agent:
             try:
                 await loop.run(phase_fns, ctx_dict)
             except asyncio.CancelledError:
-                context.status = "cancelled"
+                context.status = ExecutionStatus.CANCELLED
                 context.errors.append("execution cancelled")
                 raise
 
@@ -239,9 +240,9 @@ class Agent:
             )
             session.touch()
             context.finished_at = utc_now()
-            context.status = "succeeded" if not context.errors else "failed"
+            context.status = ExecutionStatus.SUCCEEDED if not context.errors else ExecutionStatus.FAILED
 
-            if context.status == "succeeded":
+            if context.status == ExecutionStatus.SUCCEEDED:
                 self.state.finish_execution(response)
             else:
                 self.state.fail_execution(
@@ -403,7 +404,7 @@ class Agent:
             "context": run_context,
         }
         execution = await self._phase_execute(self, phase_context)
-        results = execution.get("results", [])
+        results: list[ToolResult] = execution.get("results", [])
         if len(results) != 1:
             raise RuntimeError("recovery dispatch did not produce exactly one result")
         return results[0]
@@ -728,9 +729,14 @@ class Agent:
                     # original arguments before creating a dispatch slot.
                     # A matching call ID alone is not sufficient.
                     approved_request = approval_engine.get(approval_id)
-                    approved_context = (
-                        getattr(approved_request, "context_ref", None) or {}
-                    ) if approved_request is not None else {}
+                    raw_context = (
+                        getattr(approved_request, "context_ref", None)
+                        if approved_request is not None
+                        else None
+                    )
+                    approved_context: dict[str, Any] = (
+                        raw_context if isinstance(raw_context, dict) else {}
+                    )
                     if (
                         approved_request is None
                         or approved_request.action != call.tool_name
