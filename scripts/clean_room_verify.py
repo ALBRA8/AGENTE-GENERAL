@@ -293,7 +293,7 @@ def check_test_run(rep: Report) -> None:
     for line in proc.stdout.splitlines()[::-1]:
         # Pytest 8/9 may put failures before passes ("8 failed, 604 passed")
         # or after passes ("604 passed, 8 failed"). Parse both orders.
-        m = re.search(r"(?:(\d+) failed,?\\s*)?(\d+) passed(?:,?\\s*(\d+) failed)?", line)
+        m = re.search(r"(?:(\d+) failed,?\s*)?(\d+) passed(?:,?\s*(\d+) failed)?", line)
         if m:
             summary = line.strip()
             passed = int(m.group(2))
