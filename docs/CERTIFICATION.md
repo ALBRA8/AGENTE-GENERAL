@@ -7,11 +7,11 @@
 > copy of the numbers. When any number here changes, all referencing docs are
 > out of date until refreshed from this file.
 
-**Last verified:** 2026-10-12 (historical baseline only; not valid for the current security remediation branch)
-**Commit:** `ab1415432055c26700f2c1c07009112309d7bb33` — previous main baseline; remediation branch pending CI
-**Status:** `NOT_VERIFIED — FREEZE BLOCKED`
+**Last verified:** 2026-10-14
+**Verified code commit:** `8f8c6f2c5e1577380777027561b6cc5a2db3903e` (security remediation branch)
+**Status:** `CODE GATES PASS — PRODUCTION NOT VERIFIED`
 
-> **Certification hold (2026-10-14):** security remediation is in progress. The historical test counts and gate results below have NOT been rerun against this branch and must not be represented as current evidence. Re-certify only after the complete test suite, audit matrix, clean-room verification, and focused security tests run against the final commit. Do not freeze or release based on the historical numbers below.
+> **Verification evidence (2026-10-14):** GitHub Actions run [38531085169](https://github.com/ALBRA8/AGENTE-GENERAL/actions/runs/38531085169) passed on Python 3.10, 3.11, and 3.12 for clean-room verification, audit matrix, parity, contamination scan, and full pytest. The full suite reported 612 passed and 1 warning on Python 3.11. This certifies the tested code commit above, not production deployment. Do not mark production ready or perform a final freeze until the independent real-environment security/HITL acceptance is signed off.
 
 ---
 
@@ -26,7 +26,7 @@ script or by counting actual files. None are invented.
 | A2A helper modules (NOT DNA)| 3   | `a2a.wire`, `a2a.exposition`, `a2a.observers` — see § "A2A Helper Modules" |
 | Allowed specializations      | 8     | `src/albra_seed/parity/dna.py` `ALLOWED_SPECIALIZATIONS`                |
 | Audit matrix probes          | 40    | `scripts/audit_matrix.py` `PROBES` list (33 original + 7 gap closures)  |
-| Total tests                   | 487   | `python -m pytest tests/ --collect-only -q`                             |
+| Total tests                   | 612   | `python -m pytest tests/ -q` on verified code commit                             |
 | A2A tests                    | 81    | `python -m pytest tests/a2a/ --collect-only -q` (28 main + 16 wire + 10 routes + 18 external interop + 9 security perimeter) |
 | A2A tests — main             | 28    | `tests/a2a/test_a2a.py`                                                 |
 | A2A tests — wire format      | 16    | `tests/a2a/test_a2a_wire.py`                                             |
@@ -77,11 +77,11 @@ the clean-room script.)
 
 ---
 
-## Gate Results (verified 2026-10-12)
+## Gate Results (verified 2026-10-14)
 
 | Gate                       | Result | Evidence                                                                              |
 | -------------------------- | ------ | ------------------------------------------------------------------------------------- |
-| Tests                       | PASS   | `python -m pytest tests/ -q` → **487 passed in ~8s**                                  |
+| Tests                       | PASS   | `python -m pytest tests/ -q` → **612 passed, 1 warning** (Python 3.11; CI run 38531085169; Python 3.10/3.12 also passed)                                  |
 | Audit Matrix               | PASS   | `python scripts/audit_matrix.py` → **40/40 VERIFIED**                                 |
 | Genetic Parity             | PASS   | `python scripts/parity_check.py` → exit 0, `is_pure_seed=True`, 106/106 DNA present   |
 | Genetic Contamination      | PASS   | `python scripts/contamination_scan.py` → exit 0, `is_clean=True`, 0 critical, 0 warnings, 249 files scanned |
