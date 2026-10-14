@@ -267,7 +267,7 @@ python scripts/contamination_scan.py
 - 4 contract tests (interface compliance)
 - 5 security tests (secrets, firewall, tamper detection)
 - 17 genetic parity tests (106 DNA entries verified)
-- 12 genetic contamination tests (249 files scanned, 0 critical)
+- 12 genetic contamination tests (255 files scanned, 0 critical)
 - **Current test totals and CI evidence:** see [`docs/CERTIFICATION.md`](docs/CERTIFICATION.md); numbers in this historical example are not certification evidence.
 
 ---
