@@ -1168,16 +1168,35 @@ class Agent:
         ):
             errors.append("one or more phases failed; see trace")
 
-        # Build the execution trace on the RunContext (reconstructable).
-        context.outputs["trace"] = [
-            {
-                "phase": e.phase,
-                "status": e.status.value,
-                "duration_ms": e.duration_ms,
-                "error": e.error,
-            }
-            for e in trace
-        ]
+        # Build a reconstructable trace without exposing raw exception text.
+        # Provider/tool exceptions can contain credentials or request payloads.
+        try:
+            from albra_seed.security.output_redaction import redact_secrets
+
+            safe_trace = []
+            for event in trace:
+                try:
+                    error = redact_secrets(event.error) if event.error else None
+                except Exception:  # noqa: BLE001
+                    error = "phase error withheld"
+                safe_trace.append({
+                    "phase": event.phase,
+                    "status": event.status.value,
+                    "duration_ms": event.duration_ms,
+                    "error": error,
+                })
+            context.outputs["trace"] = safe_trace
+        except Exception:  # noqa: BLE001
+            # Fail closed if the redaction module itself is unavailable.
+            context.outputs["trace"] = [
+                {
+                    "phase": event.phase,
+                    "status": event.status.value,
+                    "duration_ms": event.duration_ms,
+                    "error": "phase error withheld" if event.error else None,
+                }
+                for event in trace
+            ]
 
         return AgentResponse(
             content=content,
