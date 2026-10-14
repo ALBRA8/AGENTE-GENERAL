@@ -46,8 +46,8 @@ def build_public_execution_router(ctx: RequestContext) -> Any:
 
     router = APIRouter(tags=["execution"])
 
-    async def verified_approval_principal(authorization: str | None) -> Any:
-        """Authenticate approval API callers; the default Noop authenticator fails closed."""
+    async def verified_principal(authorization: str | None) -> Any:
+        """Authenticate API callers; anonymous/default Noop principals fail closed."""
         if not authorization:
             raise HTTPException(status_code=401, detail="bearer authentication required")
         scheme, separator, credential = authorization.partition(" ")
@@ -97,6 +97,54 @@ def build_public_execution_router(ctx: RequestContext) -> Any:
         if not getattr(verdict, "allowed", False):
             raise HTTPException(status_code=403, detail="approval action is not authorized")
 
+    async def require_execution_permission(principal: Any) -> None:
+        """Require an explicit execution:run RBAC grant and policy allow."""
+        from albra_seed.core.types import RiskLevel
+
+        action = "execution:run"
+        policy = ctx.runtime.get_component("policy_engine")
+        rule_set = getattr(policy, "rule_set", None)
+        permission_registry = getattr(policy, "permission_registry", None)
+        if (
+            policy is None
+            or rule_set is None
+            or permission_registry is None
+            or not hasattr(permission_registry, "has_any")
+            or not hasattr(policy, "evaluate")
+        ):
+            raise HTTPException(
+                status_code=503,
+                detail="execution authentication/RBAC is not configured",
+            )
+        roles = list(getattr(principal, "roles", []) or [])
+        try:
+            rule = rule_set.first_match(
+                action_name=action,
+                actor_id=principal.identity,
+                risk=RiskLevel.UNKNOWN,
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=403, detail="execution policy lookup failed") from exc
+        if rule is None or getattr(rule, "required_permission", None) != action:
+            raise HTTPException(
+                status_code=403,
+                detail="explicit execution:run policy grant is required",
+            )
+        try:
+            if not permission_registry.has_any(roles, action):
+                raise HTTPException(status_code=403, detail="execution:run permission denied")
+            verdict = await policy.evaluate(
+                action,
+                actor_roles=roles,
+                actor_id=principal.identity,
+            )
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=403, detail="execution authorization failed") from exc
+        if not getattr(verdict, "allowed", False):
+            raise HTTPException(status_code=403, detail="execution action is not authorized")
+
     @router.post(
         "/execution",
         response_model=ExecutionResponse,
@@ -106,7 +154,10 @@ def build_public_execution_router(ctx: RequestContext) -> Any:
             503: {"model": ErrorResponse},
         },
     )
-    async def execute(req: ExecutionRequest) -> Any:
+    async def execute(
+        req: ExecutionRequest,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> Any:
         agent = ctx.get_agent(req.agent_id)
         if agent is None:
             raise HTTPException(
@@ -125,6 +176,8 @@ def build_public_execution_router(ctx: RequestContext) -> Any:
                     "Register one before exposing /execution over HTTP."
                 ),
             )
+        principal = await verified_principal(authorization)
+        await require_execution_permission(principal)
         try:
             response = await agent.run(
                 req.input,
@@ -187,7 +240,7 @@ def build_public_execution_router(ctx: RequestContext) -> Any:
     async def list_pending_approvals(
         authorization: str | None = Header(default=None, alias="Authorization"),
     ) -> Any:
-        principal = await verified_approval_principal(authorization)
+        principal = await verified_principal(authorization)
         await require_approval_permission(principal, "approval:list")
         engine = ctx.runtime.get_component("approval_engine")
         if engine is None or not hasattr(engine, "list_pending"):
