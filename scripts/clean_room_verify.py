@@ -296,10 +296,18 @@ def check_test_run(rep: Report) -> None:
             summary, passed = line.strip(), int(m.group(1))
             failed = int(m.group(2) or 0)
             break
+    failure_lines = [
+        line.strip()
+        for line in proc.stdout.splitlines()
+        if line.strip().startswith(("FAILED ", "ERROR "))
+    ][-12:]
+    details = summary or proc.stderr.strip()[:200]
+    if failed:
+        details = (details + "\\n" + "\\n".join(failure_lines))[:1800]
     rep.add(CheckResult(
         f"5. TEST-RUN (pytest: {passed} passed, {failed} failed)",
         proc.returncode == 0 and passed > 0 and failed == 0,
-        details=summary or proc.stderr.strip()[:200],
+        details=details,
     ))
 
 
