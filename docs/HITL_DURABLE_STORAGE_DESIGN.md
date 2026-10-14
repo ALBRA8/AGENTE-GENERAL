@@ -101,10 +101,9 @@ claim exactly-once effects for arbitrary tools.
    outcome. Verify that every recovery path treats the outcome as uncertain
    and never retries automatically. Continue testing corruption and missing
    evidence/records as explicit fail-closed cases.
-5. Add schema migration/versioning and a documented retention/backup recovery
-   procedure for `SQLiteApprovalStore`; the separate suspended-execution
-   coordinator has schema versioning, but the approval store does not yet
-   expose a migration protocol.
+5. Extend `SQLiteApprovalStore` schema migrations beyond the initial
+   version-0-to-version-1 initialization and define a documented retention,
+   backup, and restore procedure. Unknown schema versions now fail closed.
 6. Keep running the full clean-room and security test suite on Python 3.10,
    3.11, and 3.12 for every change; no external tool can provide exactly-once
    guarantees without downstream idempotency support.

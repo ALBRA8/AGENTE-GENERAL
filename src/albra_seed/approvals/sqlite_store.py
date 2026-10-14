@@ -29,6 +29,8 @@ _ALLOWED = {
     }
 }
 
+_SCHEMA_VERSION = 1
+
 
 class SQLiteApprovalStore:
     """Durable approval records and a fail-closed dispatch ledger.
@@ -48,17 +50,35 @@ class SQLiteApprovalStore:
         # ApprovalRequest.context_ref contains the original tool arguments and
         # RunContext snapshot. Create new files as owner-only before SQLite
         # opens them, then tighten permissions on existing databases too.
-        if not path.exists() and os.name == "posix":
+        if os.name == "posix":
+            if not path.exists():
+                try:
+                    fd = os.open(
+                        self.db_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600
+                    )
+                except FileExistsError:
+                    pass
+                else:
+                    os.close(fd)
             try:
-                fd = os.open(self.db_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-            except FileExistsError:
-                pass
-            else:
-                os.close(fd)
+                # Tighten existing files before schema checks can fail, too.
+                os.chmod(self.db_path, 0o600)
+            except OSError as exc:
+                raise RuntimeError(
+                    "unable to restrict SQLite approval database permissions"
+                ) from exc
         self.busy_timeout_ms = busy_timeout_ms
         with closing(self._connect()) as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA synchronous=FULL")
+            schema_version = conn.execute("PRAGMA user_version").fetchone()[0]
+            if schema_version not in (0, _SCHEMA_VERSION):
+                raise RuntimeError(
+                    f"unsupported SQLite approval schema version: {schema_version}"
+                )
+            # Schema changes are idempotent. Keep user_version at 0 until
+            # all CREATE statements succeed so an interrupted initialization
+            # can safely retry on the next startup.
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS approvals (
                     approval_id TEXT PRIMARY KEY,
@@ -85,16 +105,7 @@ class SQLiteApprovalStore:
                 CREATE INDEX IF NOT EXISTS idx_dispatch_state
                     ON approval_dispatch(state);
             """)
-        if os.name == "posix":
-            try:
-                os.chmod(self.db_path, 0o600)
-            except OSError as exc:
-                # This database contains approved tool arguments. Do not
-                # continue with a file whose access permissions are unknown.
-                raise RuntimeError(
-                    "unable to restrict SQLite approval database permissions"
-                ) from exc
-
+            conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(
             self.db_path, timeout=self.busy_timeout_ms / 1000,
