@@ -8,10 +8,10 @@
 > out of date until refreshed from this file.
 
 **Last verified:** 2026-10-14
-**Verified code commit:** `8086c44e82e4b855d37ce9e11078637e291beb59` (merged main; CI-tested tree at PR head `ba7b9b030f4c982d368270bea2a8c8c1564511a3`)
+**Verified code commit:** `70832bb5dab22dd062a3bfe35200edfe8947c08b` (merged main; CI-tested tree at PR head `f35bb65d759ca3e2a1dd8d6b2398c9bcb0d4dac8`)
 **Status:** `CODE GATES PASS — PRODUCTION NOT VERIFIED`
 
-> **Verification evidence (2026-10-14):** GitHub Actions run [38594856845](https://github.com/ALBRA8/AGENTE-GENERAL/actions/runs/38594856845) passed on Python 3.10, 3.11, and 3.12 for clean-room verification, audit matrix, parity, contamination scan, and full pytest. The full suite reported 648 passed and 1 warning on each Python version; all three Python-version jobs passed. The CI-tested PR head was merged into main as `8086c44e82e4b855d37ce9e11078637e291beb59`. This certifies the tested code commit above, not production deployment. The separate dashboard reported at `localhost:9000` is not included in this repository, so its `localStorage` handling and provider-call path remain NOT VERIFIED; see [`WEB_DASHBOARD_SECURITY.md`](WEB_DASHBOARD_SECURITY.md). Do not mark production ready or perform a final freeze until that dashboard is audited and the independent real-environment security/HITL acceptance is signed off.
+> **Verification evidence (2026-10-14):** GitHub Actions run [38596117353](https://github.com/ALBRA8/AGENTE-GENERAL/actions/runs/38596117353) passed on Python 3.10, 3.11, and 3.12 for clean-room verification, audit matrix, parity, contamination scan, and full pytest. The full suite reported 648 passed and 1 warning on each Python version; all three Python-version jobs passed. The CI-tested PR head was merged into main as `70832bb5dab22dd062a3bfe35200edfe8947c08b`. This certifies the tested code commit above, not production deployment. The CI workflow now explicitly grants only `contents: read`; Ruff lint/format and Mypy passed for the security-critical files in the matrix. A separate whole-repository Ruff run reported 386 findings, so full-repository lint cleanliness is NOT certified and remains documented debt. The separate dashboard reported at `localhost:9000` is not included in this repository, so its `localStorage` handling and provider-call path remain NOT VERIFIED; see [`WEB_DASHBOARD_SECURITY.md`](WEB_DASHBOARD_SECURITY.md). Do not mark production ready or perform a final freeze until that dashboard is audited and the independent real-environment security/HITL acceptance is signed off.
 
 ---
 
@@ -83,12 +83,12 @@ the clean-room script.)
 
 | Gate                       | Result | Evidence                                                                              |
 | -------------------------- | ------ | ------------------------------------------------------------------------------------- |
-| Tests                       | PASS   | `python -m pytest tests/ -q` → **648 passed, 1 warning** (Python 3.11; CI run 38594856845; Python 3.10/3.12 also passed)                                  |
+| Tests                       | PASS   | `python -m pytest tests/ -q` → **648 passed, 1 warning** (Python 3.11; CI run 38596117353; Python 3.10/3.12 also passed)                                  |
 | Audit Matrix               | PASS   | `python scripts/audit_matrix.py` → **40/40 VERIFIED**                                 |
 | Genetic Parity             | PASS   | `python scripts/parity_check.py` → exit 0, `is_pure_seed=True`, 106/106 DNA present   |
 | Genetic Contamination      | PASS   | `python scripts/contamination_scan.py` → exit 0, `is_clean=True`, 0 critical, 0 warnings, 255 files scanned |
 | Clean-room                 | PASS   | `python scripts/clean_room_verify.py` → **17/17 required + 2/2 optional** PASS (16 real PASS/FAIL gates + 1 informational scope-doc check R; see Clean-room scope §) |
-| **CI (GitHub Actions)**     | **PASS** | workflow `.github/workflows/clean-room.yml` on PR head `ba7b9b0` (merged as `8086c44`) → **3/3 jobs success** (Python 3.10, 3.11, 3.12 on ubuntu-latest); run_id `38594856845` |
+| **CI (GitHub Actions)**     | **PASS** | workflow `.github/workflows/clean-room.yml` on PR head `f35bb65` (merged as `70832bb`) → **3/3 jobs success** (Python 3.10, 3.11, 3.12 on ubuntu-latest); run_id `38596117353` |
 | CORE_ONLY birth            | PASS   | Birth check inside `clean_room_verify.py` (check #3 + #4) + `tests/unit/test_birth_readiness.py` (8 tests) |
 | A2A wire format             | PASS   | `pytest tests/a2a/test_a2a_wire.py` → **16 passed**                                   |
 | A2A routes                  | PASS   | `pytest tests/a2a/test_a2a_routes.py` → **10 passed**                                 |
