@@ -82,3 +82,47 @@ def test_independent_engine_rejection_is_observed_and_never_claimed(tmp_path):
         assert not origin.claim_approved_tool_call(pending.approval_id, call, context)
 
     asyncio.run(scenario())
+
+
+
+def test_unauthorized_durable_decision_fails_closed_and_preserves_pending(tmp_path):
+    import pytest
+
+    from albra_seed.approvals.sqlite_store import SuspendedExecutionError
+
+    database = tmp_path / "hitl-unauthorized.sqlite3"
+    origin = ApprovalEngine(
+        suspension_store=SQLiteSuspendedExecutionCoordinator(database)
+    )
+    reviewer = ApprovalEngine(
+        suspension_store=SQLiteSuspendedExecutionCoordinator(database)
+    )
+    context = RunContext(agent_id="integration-agent", task="protected operation")
+    call = ToolCall(
+        id="call-unauthorized",
+        tool_name="protected_tool",
+        arguments={"resource_id": "protected-test-resource"},
+    )
+
+    async def scenario():
+        pending = await origin.request(
+            call, context=context, deadline=utc_now() + timedelta(minutes=2)
+        )
+        with pytest.raises(SuspendedExecutionError, match="authenticated approval permission required"):
+            await reviewer.approve(
+                pending.approval_id, "client-supplied-reviewer", authorized=False
+            )
+
+        # A rejected unauthenticated attempt must not consume or mutate the
+        # pending record; a separately authorized decision can still win.
+        record = origin_store.get(pending.approval_id)
+        assert record.state.value == "awaiting_approval"
+
+        approved = await reviewer.approve(
+            pending.approval_id, "verified-reviewer", authorized=True
+        )
+        assert approved.status is ApprovalStatus.APPROVED
+        assert approved.decided_by == "verified-reviewer"
+
+    origin_store = origin._suspension_store
+    asyncio.run(scenario())
