@@ -46,11 +46,11 @@ class _ExecutionAuthenticator:
     async def verify(self, token: str | None):
         from albra_seed.security.auth import AuthPrincipal
 
-        if token != "valid-test-token":
+        if token not in {"valid-test-token", "other-test-token"}:
             return None
         return AuthPrincipal(
             kind="user",
-            identity="executor-1",
+            identity="executor-1" if token == "valid-test-token" else "executor-2",
             roles=["executor"],
             auth_method="test",
             is_anonymous=False,
@@ -68,13 +68,13 @@ def _configure_execution_auth(runtime: Runtime) -> None:
     roles.register(Role(role_id="executor", name="executor"))
     permissions = PermissionRegistry(roles)
     rules = PolicyRuleSet()
-    for action in ("execution:run", "execution:read", "execution:read:any"):
+    for action in ("execution:run", "execution:read"):
         permissions.register(Permission(id=action))
         permissions.grant("executor", action)
         rules.add(PolicyRule(
             name=f"allow {action} API",
             action_pattern=action,
-            actor_pattern="executor-1",
+            actor_pattern="executor-1" if action == "execution:run" else "*",
             risk_threshold=RiskLevel.UNKNOWN,
             required_permission=action,
             decision=PolicyDecision.ALLOW,
@@ -265,6 +265,14 @@ def test_execution_endpoint_runs_agent_and_returns_trace(runtime: Runtime) -> No
         assert body2["execution_id"] == body["execution_id"]
         assert body2["found"] is True
         assert isinstance(body2["trace"], list)
+
+        # Another authenticated user with the read role still cannot inspect
+        # this principal's trace without the separate execution:read:any grant.
+        other_user = client.get(
+            f"/api/v1/execution/{body['execution_id']}",
+            headers={"Authorization": "Bearer other-test-token"},
+        )
+        assert other_user.status_code == 403
 
 
 # =====================================================================
