@@ -86,3 +86,33 @@ async def test_agent_response_fails_closed_if_redactor_raises(monkeypatch: pytes
     assert result["content"] == "Response withheld because output security validation failed."
     assert "sensitive raw provider output" not in result["content"]
     assert run_context.errors
+
+
+async def test_agent_response_redacts_tool_outputs_and_trace_messages() -> None:
+    from types import SimpleNamespace
+
+    from albra_seed.core.types import AgentResponse, ToolResult
+    from albra_seed.runtime.agent import Agent
+
+    secret = "ghp_abcdefghijklmnopqrstuvwxyz1234567890"
+    run_context = SimpleNamespace(errors=[f"provider error: {secret}"], warnings=[])
+    draft = AgentResponse(
+        content="Completed safely.",
+        execution_id="exec_test",
+        correlation_id="corr_test",
+    )
+    tool_result = ToolResult(
+        call_id="call_test",
+        success=True,
+        output={"nested": [f"tool returned {secret}"]}
+    )
+    ctx = {
+        "context": run_context,
+        "draft_response": draft,
+        "EXECUTE": {"results": [tool_result]},
+    }
+    result = await Agent._phase_respond(None, None, ctx)  # type: ignore[arg-type]
+    assert secret not in str(result["tool_results"][0].output)
+    assert "[REDACTED_SECRET]" in str(result["tool_results"][0].output)
+    assert secret not in " ".join(run_context.errors)
+    assert "[REDACTED_SECRET]" in " ".join(run_context.errors)
