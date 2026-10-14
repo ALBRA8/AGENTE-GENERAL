@@ -73,6 +73,48 @@ The workflow at `.github/workflows/clean-room.yml` runs the clean-room
 verification on a fresh checkout + fresh virtualenv + multiple Python
 versions (3.10, 3.11, 3.12). Trigger on push to `main` or PR.
 
+### Durable approvals (optional SQLite)
+
+Human-in-the-loop approvals remain in-memory by default. To enable durable
+approval records and state recovery, configure a file-backed SQLite database
+before constructing the runtime:
+
+```bash
+export ALBRA_APPROVAL_DB_PATH="./data/approvals.sqlite3"
+```
+
+```python
+import asyncio
+from albra_seed import Runtime, SeedConfig
+
+async def main():
+    runtime = Runtime(config=SeedConfig.from_env())
+    await runtime.startup()
+    try:
+        approval_engine = runtime.get_component("approval_engine")
+        # Use approval_engine in your HITL integration.
+    finally:
+        await runtime.shutdown()
+
+asyncio.run(main())
+```
+
+If `ALBRA_APPROVAL_DB_PATH` is set, startup creates the SQLite-backed
+`ApprovalEngine` unless the application registered its own approval engine.
+If SQLite initialization fails, startup fails rather than silently falling back
+to volatile approvals. Keep the database on a local filesystem accessible to all cooperating worker
+processes on the same host; do not use separate database files per worker or
+place a WAL-mode database on a network filesystem.
+
+The SQLite dispatch ledger exposes atomic `prepare_dispatch`,
+`claim_dispatch`, completion, and uncertain-outcome operations for dispatch
+adapters. **Configuring SQLite does not automatically wrap arbitrary external
+tool handlers.** A dispatcher must use the ledger before calling a provider,
+pass the persisted `call_id` as the provider's idempotency key when supported,
+and treat an interrupted/uncertain dispatch as requiring reconciliation rather
+than automatic retry. SQLite alone cannot guarantee exactly-once effects in a
+remote service.
+
 ### Minimal agent run (CORE_ONLY — no external credentials)
 
 ```python
