@@ -688,9 +688,24 @@ class Agent:
                             call.id, claim_token, result.model_dump(mode="json")
                         )
                         if not recorded:
+                            try:
+                                dispatch_store.fail_dispatch(
+                                    call.id, claim_token,
+                                    "completion record missing; external outcome is uncertain",
+                                )
+                            except Exception:  # noqa: BLE001
+                                run_ctx.warnings.append(
+                                    f"could not record uncertain outcome for {call.tool_name}; "
+                                    "the durable claim remains non-reclaimable"
+                                )
                             run_ctx.warnings.append(
                                 f"tool {call.tool_name} returned, but durable completion "
                                 "was not recorded; automatic retry remains blocked"
+                            )
+                            result = ToolResult(
+                                call_id=call.id,
+                                success=False,
+                                error="external outcome uncertain: durable completion was not recorded",
                             )
                     else:
                         dispatch_store.fail_dispatch(
