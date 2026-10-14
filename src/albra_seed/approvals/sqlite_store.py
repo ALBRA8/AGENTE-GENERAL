@@ -403,6 +403,57 @@ class SQLiteSuspendedExecutionCoordinator:
         except sqlite3.Error as exc:
             raise SuspendedExecutionError("HITL dispatch outcome write failed") from exc
 
+    def recover_interrupted_dispatches(
+        self, *, observed_at: datetime | None = None
+    ) -> list[DispatchOutcome]:
+        """Record unresolved claims as unknown after dispatch workers are fenced.
+
+        Operators MUST stop/fence every worker that can dispatch before calling
+        this method. It never resets a claim or makes it retryable; it only
+        records that the external outcome could not be observed before a crash.
+        Repeated calls are safe and return only outcomes created by this call.
+        """
+        timestamp = self._now(observed_at)
+        recovered: list[DispatchOutcome] = []
+        try:
+            with self._connection() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                try:
+                    rows = connection.execute(
+                        """
+                        SELECT s.approval_id
+                        FROM hitl_suspended_executions AS s
+                        LEFT JOIN hitl_dispatch_outcomes AS o
+                          ON o.approval_id = s.approval_id
+                        WHERE s.state = 'claimed' AND o.approval_id IS NULL
+                        ORDER BY s.created_at, s.approval_id
+                        """
+                    ).fetchall()
+                    for row in rows:
+                        approval_id = row["approval_id"]
+                        detail = "recovered_interrupted_claim; reconcile before any retry"
+                        connection.execute(
+                            """
+                            INSERT INTO hitl_dispatch_outcomes
+                                (approval_id, outcome, detail, observed_at)
+                            VALUES (?, 'unknown', ?, ?)
+                            """,
+                            (approval_id, detail, timestamp.isoformat()),
+                        )
+                        recovered.append(
+                            DispatchOutcome(approval_id, "unknown", timestamp, detail)
+                        )
+                    connection.commit()
+                except Exception:
+                    if connection.in_transaction:
+                        connection.rollback()
+                    raise
+            return recovered
+        except sqlite3.Error as exc:
+            raise SuspendedExecutionError(
+                "HITL interrupted dispatch recovery failed"
+            ) from exc
+
     def get_dispatch_outcome(self, approval_id: str) -> DispatchOutcome | None:
         try:
             with self._connection() as connection:
