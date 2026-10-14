@@ -916,6 +916,8 @@ class Agent:
             session = ctx.get("session")
             if session is not None and hasattr(session, "messages"):
                 session.messages.clear()
+                if isinstance(getattr(session, "metadata", None), dict):
+                    session.metadata.clear()
             ctx["input_message"] = Message(role=Role.USER, content="[REDACTED]")
             for key in ("UNDERSTAND", "REASON", "CHECK_PERMISSIONS", "OBSERVE", "VALIDATE", "RESPOND"):
                 ctx[key] = {}
