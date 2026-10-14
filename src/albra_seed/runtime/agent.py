@@ -905,6 +905,9 @@ class Agent:
             session = ctx.get("session")
             if session is not None and hasattr(session, "messages"):
                 session.messages.clear()
+            ctx["input_message"] = Message(role=Role.USER, content="[REDACTED]")
+            for key in ("UNDERSTAND", "REASON", "CHECK_PERMISSIONS", "OBSERVE", "VALIDATE", "RESPOND"):
+                ctx[key] = {}
             ctx["RECEIVE"] = {"content": "[REDACTED]"}
             ctx["PLAN"] = {"tool_calls": []}
             ctx["EXECUTE"] = {"results": []}
