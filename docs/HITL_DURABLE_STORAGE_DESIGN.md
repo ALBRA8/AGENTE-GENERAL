@@ -2,8 +2,16 @@
 
 ## Implemented in this change
 
-- The public API exposes `GET /api/v1/approvals/pending` and
-  `POST /api/v1/approvals/{approval_id}/decision`.
+- The public API exposes `GET /api/v1/approvals/pending`,
+  `POST /api/v1/approvals/{approval_id}/decision`, and an explicit
+  `POST /api/v1/approvals/{approval_id}/resume` recovery operation.
+- Recovery requires the exact `approval:resume` permission, a persisted
+  APPROVED request, the saved original RunContext snapshot and argument digest,
+  an unexpired deadline, and current policy/firewall approval. It does not
+  invoke an LLM or accept replacement arguments from the caller.
+- Recovery dispatches only the saved call and returns its tool result; it does
+  not reconstruct the full conversational response or continue the original
+  in-memory coroutine.
 - Both endpoints require a Bearer credential verified by the registered
   `authenticator`, reject anonymous principals, and fail closed when
   authentication is not configured.
@@ -39,14 +47,16 @@ It does not by itself resume tool execution.
 
 A durable approval row does not serialize or reconstruct the suspended
 `Agent.run()` coroutine, model/provider state, or live authorization context.
-After a process restart, approval status can be recovered and inspected, but
-the original run is **not automatically resumed**. Never recreate a tool call
-from a model response or regenerate arguments during recovery; the exact
-original call must be durably bound and revalidated before any dispatch can
-be considered. In particular, the current `SQLiteApprovalStore` serializes
-the `ApprovalRequest.context_ref`, including tool arguments, to its database;
-treat that database as sensitive and restrict filesystem access. The separate
-suspended-execution coordinator stores only an arguments digest.
+After a process restart, approval status can be recovered and inspected.
+The original run is **not automatically resumed**; an authorized operator must
+explicitly invoke the recovery endpoint for an approved call. Never recreate a
+tool call from a model response or regenerate arguments during recovery; the
+exact original call must be durably bound and revalidated before any dispatch
+can be considered. In particular, the current `SQLiteApprovalStore` serializes
+the `ApprovalRequest.context_ref`, including tool arguments and a RunContext
+snapshot, to its database; treat that database as sensitive and restrict
+filesystem access. The separate suspended-execution coordinator stores only
+an arguments digest and remains a separate primitive.
 
 SQLite can ensure a claim is committed once, but it cannot make an arbitrary
 external side effect and a database commit atomic. If a worker dies after an
