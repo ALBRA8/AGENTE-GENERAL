@@ -72,8 +72,10 @@ claim exactly-once effects for arbitrary tools.
 - Add explicit, narrowly scoped policy rules for each approval permission.
 - Use a local filesystem with reliable SQLite locking; do not assume an
   unverified network filesystem is safe.
-- Protect the database and its parent directory with restrictive OS
-  permissions and backups appropriate to the deployment.
+- On POSIX, `SQLiteApprovalStore` creates the database with mode
+  `0600` and rejects a symlink database path. Newly created parent directories
+  use mode `0700`; operators must still verify permissions on pre-existing
+  parent directories, WAL/SHM sidecars, backups, and deployment volumes.
 - Before dispatch/resume, revalidate the exact call binding, deadline,
   current policy, firewall/kill-switch state, and trusted principal.
 - Treat database errors, corrupt records, authorization failures, and
