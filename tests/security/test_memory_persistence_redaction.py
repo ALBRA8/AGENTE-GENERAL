@@ -126,3 +126,33 @@ async def test_record_phase_skips_all_persistence_if_redaction_fails(
     assert memory.records == []
     assert run_ctx.errors == ["record output redaction failed; persistence skipped"]
     assert "TASKSECRET123" not in repr(run_ctx.errors)
+
+
+
+def test_build_response_redacts_exception_text_in_trace() -> None:
+    from albra_seed.runtime.loop import PhaseEvent, PhaseStatus
+
+    run_ctx = RunContext(agent_id="agent-test", task="safe task")
+    session = Session(agent_id="agent-test")
+    agent = SimpleNamespace(identity=SimpleNamespace(agent_id="agent-test"))
+    phase = PhaseEvent(
+        phase="EXECUTE",
+        status=PhaseStatus.FAILURE,
+        execution_id=run_ctx.execution_id,
+        error="provider failed with password=TRACESECRET123",
+    )
+
+    response = Agent._build_response(
+        agent,
+        run_ctx,
+        session,
+        {
+            "RESPOND": {"content": "safe response", "confidence": 0.8, "tool_results": []},
+            "PLAN": {"tool_calls": []},
+        },
+        [phase],
+    )
+
+    assert "TRACESECRET123" not in repr(run_ctx.outputs["trace"])
+    assert "[REDACTED_SECRET]" in run_ctx.outputs["trace"][0]["error"]
+    assert "TRACESECRET123" not in repr(response)
