@@ -247,3 +247,25 @@ def test_root_endpoint_returns_metadata(client: TestClient) -> None:
     assert body["name"] == "albra-seed-api"
     assert body["public_prefix"] == "/api/v1"
     assert body["internal_prefix"] == "/internal"
+
+
+
+def test_execution_endpoint_does_not_echo_exception_secrets(
+    runtime: Runtime, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unhandled execution errors must not expose provider credentials."""
+    runtime.register("firewall", object())
+    identity = AgentIdentity(name="error-agent")
+    agent = Agent(identity=identity, runtime=runtime)
+    secret = "sk-proj-abcdefghijklmnopqrstuvwxyz123456"
+
+    async def fail_run(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError(f"provider failed with credential {secret}")
+
+    monkeypatch.setattr(agent, "run", fail_run)
+    app = create_app(runtime, agents={identity.agent_id: agent})
+    with TestClient(app) as client:
+        response = client.post("/api/v1/execution", json={"input": "hello"})
+    assert response.status_code == 500
+    assert secret not in response.text
+    assert "execution failed: RuntimeError" in response.text
