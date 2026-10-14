@@ -156,6 +156,26 @@ class Runtime:
 
         self._bootstrap_source = bootstrap_source
 
+        # Durable HITL approvals are opt-in. Explicitly registered components
+        # always win; when configured, startup fails closed if SQLite cannot
+        # be initialized instead of silently falling back to volatile memory.
+        if (
+            self.config.approval_db_path
+            and COMPONENT_APPROVAL_ENGINE not in self._components
+        ):
+            from albra_seed.approvals.engine import ApprovalEngine
+            from albra_seed.approvals.sqlite_store import SQLiteApprovalStore
+
+            approval_store = SQLiteApprovalStore(self.config.approval_db_path)
+            self._components[COMPONENT_APPROVAL_ENGINE] = ApprovalEngine(
+                store=approval_store
+            )
+            log.info(
+                "runtime.bootstrap.approval_engine",
+                source="sqlite",
+                db_path=self.config.approval_db_path,
+            )
+
         log.info(
             "runtime.startup",
             core_only=self.config.is_core_only(),
