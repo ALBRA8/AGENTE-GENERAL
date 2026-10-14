@@ -68,7 +68,7 @@ def _configure_execution_auth(runtime: Runtime) -> None:
     roles.register(Role(role_id="executor", name="executor"))
     permissions = PermissionRegistry(roles)
     rules = PolicyRuleSet()
-    for action in ("execution:run", "execution:read"):
+    for action in ("execution:run", "execution:read", "diagnostics:read"):
         permissions.register(Permission(id=action))
         permissions.grant("executor", action)
         rules.add(PolicyRule(
@@ -197,11 +197,15 @@ def test_secrets_are_redacted_in_config_endpoint(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setenv("OPENAI_API_KEY", "sk-leak-attempt-12345678901234567890")
 
     rt = Runtime()
+    _configure_execution_auth(rt)
     app = create_app(rt)
     with TestClient(app) as client:
         # The diagnostics endpoint runs the Doctor and returns its report;
-        # it should never echo secret values.
-        r = client.get("/internal/diagnostics")
+        # it should never echo secret values, even for authenticated callers.
+        r = client.get(
+            "/internal/diagnostics",
+            headers={"Authorization": "Bearer valid-test-token"},
+        )
         assert r.status_code == 200
         text = r.text
         assert "sk-leak-attempt" not in text
@@ -280,9 +284,16 @@ def test_execution_endpoint_runs_agent_and_returns_trace(runtime: Runtime) -> No
 # =====================================================================
 
 
-def test_internal_diagnostics_endpoint_returns_report(client: TestClient) -> None:
-    """GET /internal/diagnostics runs the Doctor and returns the report."""
-    r = client.get("/internal/diagnostics")
+def test_internal_diagnostics_endpoint_returns_report(runtime: Runtime) -> None:
+    """GET /internal/diagnostics requires auth/RBAC and returns the report."""
+    _configure_execution_auth(runtime)
+    with TestClient(create_app(runtime)) as client:
+        anonymous = client.get("/internal/diagnostics")
+        assert anonymous.status_code == 401
+        r = client.get(
+            "/internal/diagnostics",
+            headers={"Authorization": "Bearer valid-test-token"},
+        )
     assert r.status_code == 200
     body = r.json()
     assert "generated_at" in body
