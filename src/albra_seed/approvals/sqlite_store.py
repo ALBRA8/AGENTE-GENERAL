@@ -37,10 +37,13 @@ class SQLiteApprovalStore:
 
     def __init__(self, db_path: str | Path, *, busy_timeout_ms: int = 5000) -> None:
         self.db_path = str(db_path)
-        if self.db_path != ":memory:":
-            Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+        if self.db_path == ":memory:":
+            raise ValueError("SQLiteApprovalStore requires a file-backed database shared by workers")
+        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         self.busy_timeout_ms = busy_timeout_ms
         with self._connect() as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=FULL")
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS approvals (
                     approval_id TEXT PRIMARY KEY,
@@ -75,9 +78,6 @@ class SQLiteApprovalStore:
         )
         conn.row_factory = sqlite3.Row
         conn.execute(f"PRAGMA busy_timeout={int(self.busy_timeout_ms)}")
-        if self.db_path != ":memory:":
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA synchronous=FULL")
         return conn
 
     @staticmethod
