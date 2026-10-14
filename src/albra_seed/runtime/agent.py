@@ -18,6 +18,7 @@ only identity + a reference to the Runtime.
 from __future__ import annotations
 
 import asyncio
+import uuid
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -386,6 +387,7 @@ class Agent:
         approval = self.runtime.get_component(COMPONENT_APPROVAL_ENGINE)
 
         for call in plan:
+            approval_id: str | None = None
             # DEFAULT-DENY: a Tool call requires AT LEAST ONE active gate
             # (firewall OR policy engine). If BOTH are absent, DENY.
             # The decision only becomes "allow" if an active gate explicitly
@@ -480,7 +482,10 @@ class Agent:
                         f"human approval did not authorize tool call "
                         f"({status_value}): {call.tool_name}"
                     )
-            decisions.append({"tool": call.tool_name, "decision": decision})
+            decision_record = {"tool": call.tool_name, "decision": decision}
+            if approval_id:
+                decision_record["approval_id"] = approval_id
+            decisions.append(decision_record)
             if decision == "deny":
                 run_ctx.warnings.append(
                     f"tool call denied: {call.tool_name}"
@@ -519,11 +524,76 @@ class Agent:
                     error=f"tool not found: {call.tool_name}",
                 ))
                 continue
+            # Durable HITL dispatch is guarded by SQLite before entering the
+            # tool. A committed claim is never reclaimed automatically: if
+            # the outcome becomes ambiguous, a duplicate run must fail closed.
+            approval_id = decision.get("approval_id")
+            approval_engine = (
+                self.runtime.get_component(COMPONENT_APPROVAL_ENGINE)
+                if approval_id else None
+            )
+            dispatch_store = getattr(approval_engine, "store", None)
+            claim_token: str | None = None
+            if dispatch_store is not None:
+                try:
+                    if not dispatch_store.prepare_dispatch(approval_id, call.id):
+                        results.append(ToolResult(
+                            call_id=call.id, success=False,
+                            error="blocked: durable dispatch is already claimed or not eligible",
+                        ))
+                        continue
+                    claim_token = uuid.uuid4().hex
+                    if not dispatch_store.claim_dispatch(call.id, claim_token):
+                        results.append(ToolResult(
+                            call_id=call.id, success=False,
+                            error="blocked: durable dispatch claim was not acquired",
+                        ))
+                        continue
+                except Exception as exc:  # noqa: BLE001
+                    results.append(ToolResult(
+                        call_id=call.id, success=False,
+                        error=f"blocked: durable dispatch guard failed ({type(exc).__name__})",
+                    ))
+                    run_ctx.errors.append(
+                        f"durable dispatch guard failed for {call.tool_name}: {type(exc).__name__}"
+                    )
+                    continue
+
             try:
                 result = await tool.execute(call.arguments, context=run_ctx)
+                if dispatch_store is not None and claim_token is not None:
+                    if result.success:
+                        recorded = dispatch_store.complete_dispatch(
+                            call.id, claim_token, result.model_dump(mode="json")
+                        )
+                        if not recorded:
+                            run_ctx.warnings.append(
+                                f"tool {call.tool_name} returned, but durable completion "
+                                "was not recorded; automatic retry remains blocked"
+                            )
+                    else:
+                        dispatch_store.fail_dispatch(
+                            call.id, claim_token,
+                            result.error or "tool returned unsuccessful result; outcome may be uncertain",
+                        )
                 results.append(result)
-                run_ctx.tools_used.append(call.tool_name)
+                if result.success:
+                    run_ctx.tools_used.append(call.tool_name)
             except Exception as exc:  # noqa: BLE001
+                if dispatch_store is not None and claim_token is not None:
+                    try:
+                        dispatch_store.fail_dispatch(
+                            call.id, claim_token,
+                            f"{type(exc).__name__}: outcome may be uncertain",
+                        )
+                    except Exception:  # noqa: BLE001
+                        # The durable claim is still non-reclaimable. Do not
+                        # retry the external action merely because outcome
+                        # recording itself failed.
+                        run_ctx.warnings.append(
+                            f"could not record dispatch outcome for {call.tool_name}; "
+                            "the durable claim must be reconciled manually"
+                        )
                 results.append(ToolResult(
                     call_id=call.id, success=False,
                     error=f"{type(exc).__name__}: {exc}",
