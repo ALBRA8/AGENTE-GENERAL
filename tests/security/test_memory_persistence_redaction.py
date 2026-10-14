@@ -103,6 +103,9 @@ async def test_record_phase_redacts_secrets_before_memory_persistence() -> None:
     assert "TASKSECRET123" not in run_ctx.task
     assert "USERSECRET123" not in session.messages[0].content
     assert "ASSISTANTSECRET123" not in ctx["draft_response"].content
+    assert isinstance(ctx["PLAN"]["tool_calls"][0], ToolCall)
+    assert isinstance(ctx["EXECUTE"]["results"][0], ToolResult)
+    assert isinstance(ctx["draft_response"], AgentResponse)
 
 
 @pytest.mark.asyncio
