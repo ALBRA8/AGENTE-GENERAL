@@ -50,13 +50,23 @@ class SQLiteApprovalStore:
         # ApprovalRequest.context_ref contains the original tool arguments and
         # RunContext snapshot. Create new files as owner-only before SQLite
         # opens them, then tighten permissions on existing databases too.
-        if not path.exists() and os.name == "posix":
+        if os.name == "posix":
+            if not path.exists():
+                try:
+                    fd = os.open(
+                        self.db_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600
+                    )
+                except FileExistsError:
+                    pass
+                else:
+                    os.close(fd)
             try:
-                fd = os.open(self.db_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-            except FileExistsError:
-                pass
-            else:
-                os.close(fd)
+                # Tighten existing files before schema checks can fail, too.
+                os.chmod(self.db_path, 0o600)
+            except OSError as exc:
+                raise RuntimeError(
+                    "unable to restrict SQLite approval database permissions"
+                ) from exc
         self.busy_timeout_ms = busy_timeout_ms
         with closing(self._connect()) as conn:
             conn.execute("PRAGMA journal_mode=WAL")
@@ -96,16 +106,6 @@ class SQLiteApprovalStore:
                     ON approval_dispatch(state);
             """)
             conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
-        if os.name == "posix":
-            try:
-                os.chmod(self.db_path, 0o600)
-            except OSError as exc:
-                # This database contains approved tool arguments. Do not
-                # continue with a file whose access permissions are unknown.
-                raise RuntimeError(
-                    "unable to restrict SQLite approval database permissions"
-                ) from exc
-
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(
             self.db_path, timeout=self.busy_timeout_ms / 1000,
