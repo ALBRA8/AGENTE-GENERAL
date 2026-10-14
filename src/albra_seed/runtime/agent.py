@@ -986,7 +986,10 @@ class Agent:
                 if isinstance(value, tuple):
                     return tuple(_redact_nested(item) for item in value)
                 if isinstance(value, dict):
-                    return {key: _redact_nested(item) for key, item in value.items()}
+                    return {
+                        redact_secrets(key) if isinstance(key, str) else key: _redact_nested(item)
+                        for key, item in value.items()
+                    }
                 return value
 
             content = redact_secrets(content)
