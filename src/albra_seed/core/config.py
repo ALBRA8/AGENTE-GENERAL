@@ -69,6 +69,8 @@ class SeedConfig(BaseModel):
 
     guardrails_enabled: bool = True
     audit_log_path: str = "./logs/audit.jsonl"
+    # Optional durable HITL approval store; None preserves in-memory defaults.
+    approval_db_path: str | None = None
     secrets_backend: SecretsBackend = SecretsBackend.ENV
     vault_url: str | None = None
     vault_token: str | None = None
@@ -130,6 +132,7 @@ class SeedConfig(BaseModel):
             vector_dimension=_getint("VECTOR_DIMENSION", 1536),
             guardrails_enabled=_getbool("GUARDRAILS_ENABLED", True),
             audit_log_path=_get("AUDIT_LOG_PATH", "./logs/audit.jsonl"),
+            approval_db_path=_get("APPROVAL_DB_PATH"),
             secrets_backend=SecretsBackend(_get("SECRETS_BACKEND", "env")),
             vault_url=_get("VAULT_URL"),
             vault_token=_get("VAULT_TOKEN"),
