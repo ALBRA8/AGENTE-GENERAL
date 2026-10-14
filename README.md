@@ -115,6 +115,21 @@ and treat an interrupted/uncertain dispatch as requiring reconciliation rather
 than automatic retry. SQLite alone cannot guarantee exactly-once effects in a
 remote service.
 
+### HITL production operations
+
+Before deploying durable approvals, follow [the production operations runbook](docs/HITL_PRODUCTION_OPERATIONS.md). It defines encryption-at-rest and backup key separation, retention, restore drills, auth/RBAC/firewall checks, live acceptance testing, and reconciliation for uncertain external effects. File permissions alone are not encryption, and CI does not certify a real deployment.
+
+A read-only deployment smoke test checks anonymous/invalid-token rejection and the approval-list permission boundary. Run it only against a staging/canary deployment with short-lived test credentials:
+
+```bash
+export ALBRA_HITL_BASE_URL="https://agent.example.internal"
+export ALBRA_HITL_VALID_TOKEN="<short-lived staging token with approval:list>"
+export ALBRA_HITL_NO_LIST_TOKEN="<optional valid token without approval:list>"
+python scripts/hitl_acceptance_check.py
+```
+
+The script never prints tokens and does not create, decide, or resume approvals. It cannot verify encryption, backup restoration, infrastructure firewall rules, or provider side effects; the full runbook requires separate evidence for those controls.
+
 ### Minimal agent run (CORE_ONLY — no external credentials)
 
 ```python
