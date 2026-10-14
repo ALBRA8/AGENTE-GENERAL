@@ -192,3 +192,35 @@ def test_build_response_redacts_exception_text_in_trace() -> None:
     assert "TRACESECRET123" not in repr(run_ctx.outputs["trace"])
     assert "[REDACTED_SECRET]" in run_ctx.outputs["trace"][0]["error"]
     assert "TRACESECRET123" not in repr(response)
+
+
+
+@pytest.mark.asyncio
+async def test_final_response_redacts_short_values_under_secret_mapping_keys() -> None:
+    run_ctx = RunContext(agent_id="agent-test", task="safe task")
+    draft = AgentResponse(
+        content="safe response",
+        execution_id=run_ctx.execution_id,
+        correlation_id=run_ctx.correlation_id,
+    )
+    call = ToolCall(
+        tool_name="secret_tool",
+        arguments={"api_key": "FINALARGSECRET123", "ordinary": "safe"},
+    )
+    result = ToolResult(
+        call_id=call.id,
+        success=True,
+        output={"client_secret": "FINALOUTPUTSECRET123", "ordinary": "safe"},
+    )
+    ctx: dict[str, Any] = {
+        "context": run_ctx,
+        "draft_response": draft,
+        "PLAN": {"tool_calls": [call]},
+        "EXECUTE": {"results": [result]},
+    }
+
+    response = await Agent._phase_respond(SimpleNamespace(), None, ctx)
+
+    assert "FINALARGSECRET123" not in repr(ctx["PLAN"]["tool_calls"])
+    assert "FINALOUTPUTSECRET123" not in repr(response["tool_results"])
+    assert "safe" in repr(response["tool_results"])
