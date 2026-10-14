@@ -372,6 +372,21 @@ The agent loop's `RECORD` phase (`albra_seed/runtime/agent.py`) automatically:
 The seed ships NO domain memory writes — every specialization layer is
 responsible for its own domain memories (with provenance + evidence).
 
+### 9.1 Retrieval limits and trust boundary
+
+- Retrieval ranks a configurable candidate pool (`RetrievalConfig.candidate_limit`,
+  default 1,000) before applying `top_k` and `max_context_chars`.
+- The pool is deliberately bounded. The current `MemoryStore.query()`
+  contract does not expose cursor pagination, so very large stores cannot
+  promise exhaustive retrieval of every older relevant record. For large-scale
+  deployments, add deterministic cursor/page support to each store and test
+  recall across page boundaries before increasing this limit indiscriminately.
+- Retrieved memories enter the agent's internal message stream as
+  `Role.TOOL`, not `Role.SYSTEM`. Provider adapters preserve this trust
+  boundary using provider-valid tool messages where a real tool-call ID exists,
+  or explicitly delimited untrusted data otherwise. Memory text must never be
+  promoted into system instructions.
+
 ---
 
 ## 10. Invariant Checklist
