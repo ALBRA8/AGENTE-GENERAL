@@ -66,8 +66,19 @@ def build_public_execution_router(ctx: RequestContext) -> Any:
 
         policy = ctx.runtime.get_component("policy_engine")
         rule_set = getattr(policy, "rule_set", None)
-        if policy is None or rule_set is None or not hasattr(policy, "evaluate"):
-            raise HTTPException(status_code=403, detail="approval authorization is not configured")
+        permission_registry = getattr(policy, "permission_registry", None)
+        if (
+            policy is None
+            or rule_set is None
+            or permission_registry is None
+            or not hasattr(permission_registry, "has_any")
+            or not hasattr(policy, "evaluate")
+        ):
+            raise HTTPException(
+                status_code=503,
+                detail="approval authentication/RBAC is not configured",
+            )
+        roles = list(getattr(principal, "roles", []) or [])
         try:
             rule = rule_set.first_match(
                 action_name=action,
@@ -79,11 +90,15 @@ def build_public_execution_router(ctx: RequestContext) -> Any:
         if rule is None or getattr(rule, "required_permission", None) != action:
             raise HTTPException(status_code=403, detail="explicit approval permission grant is required")
         try:
+            if not permission_registry.has_any(roles, action):
+                raise HTTPException(status_code=403, detail=f"{action} permission denied")
             verdict = await policy.evaluate(
                 action,
-                actor_roles=list(getattr(principal, "roles", []) or []),
+                actor_roles=roles,
                 actor_id=principal.identity,
             )
+        except HTTPException:
+            raise
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=403, detail="approval authorization failed") from exc
         if not getattr(verdict, "allowed", False):
