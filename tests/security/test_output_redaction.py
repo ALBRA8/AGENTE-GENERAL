@@ -196,7 +196,7 @@ async def test_agent_response_fail_closed_clears_tool_calls(
 
 def test_build_response_withholds_raw_draft_when_respond_phase_is_missing() -> None:
     from albra_seed.core.identity import AgentIdentity
-    from albra_seed.core.types import AgentResponse, RunContext, Session
+    from albra_seed.core.types import AgentResponse, RunContext, Session, ToolCall
     from albra_seed.runtime.agent import Agent
     from albra_seed.runtime.runtime import Runtime
 
@@ -209,9 +209,11 @@ def test_build_response_withholds_raw_draft_when_respond_phase_is_missing() -> N
         correlation_id=context.correlation_id,
     )
     agent = Agent(AgentIdentity(name="redaction-test-agent"), Runtime())
+    call = ToolCall(id="call_test", tool_name="tool.example", arguments={"api_key": secret})
     result = agent._build_response(
-        context, session, {"draft_response": draft, "PLAN": {"tool_calls": []}}, []
+        context, session, {"draft_response": draft, "PLAN": {"tool_calls": [call]}}, []
     )
     assert secret not in result.content
+    assert result.tool_calls == []
     assert result.content == "Response withheld because output security validation did not run."
     assert any("response security phase missing" in error for error in result.errors)
