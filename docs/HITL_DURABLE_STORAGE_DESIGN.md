@@ -81,29 +81,23 @@ claim exactly-once effects for arbitrary tools.
 - Treat database errors, corrupt records, authorization failures, and
   ambiguous dispatch outcomes as fail-closed conditions.
 
-## Remaining follow-up before production use
+## Production hardening status and remaining work
 
-1. Consolidate the parallel `SQLiteApprovalStore` and
-   `SQLiteSuspendedExecutionCoordinator` implementations behind a storage
-   protocol, or document why both remain necessary. The recovery endpoint
-   currently uses `SQLiteApprovalStore` and its dispatch ledger.
-2. Define encryption/key-management and retention policies for the original
-   tool arguments and RunContext snapshot. POSIX mode `0600` limits ordinary
-   local access but does not protect data from a privileged host operator or
-   stolen backups.
-3. Decide whether the product needs full conversational continuation after a
-   process death. The current recovery operation safely dispatches only the
-   exact approved tool call and returns its result; it does not restore the
-   dead coroutine, regenerate the final assistant response, or update every
-   session/trace artifact.
-4. Add process-level fault injection for the precise window where an external
-   provider accepts a side effect but the worker dies before persisting its
-   outcome. Verify that every recovery path treats the outcome as uncertain
-   and never retries automatically. Continue testing corruption and missing
-   evidence/records as explicit fail-closed cases.
-5. Extend `SQLiteApprovalStore` schema migrations beyond the initial
-   version-0-to-version-1 initialization and define a documented retention,
-   backup, and restore procedure. Unknown schema versions now fail closed.
-6. Keep running the full clean-room and security test suite on Python 3.10,
-   3.11, and 3.12 for every change; no external tool can provide exactly-once
-   guarantees without downstream idempotency support.
+The operational policy is documented in [HITL_PRODUCTION_OPERATIONS.md](HITL_PRODUCTION_OPERATIONS.md). It defines an encrypted-volume baseline, independent backup encryption and key separation, a proposed retention schedule, restore drills, live deployment acceptance checks, and an operator reconciliation process. These are deployment requirements, not claims that a target environment has already been configured.
+
+Completed in repository:
+1. SQLite schema is versioned and unknown future versions fail closed.
+2. Security tests cover API authentication, explicit action-specific permissions, durable recovery, and argument/evidence binding.
+3. Process-level crash injection verifies that a simulated external effect followed by abrupt worker termination is recovered as uncertain and is not automatically replayed.
+4. The read-only `scripts/hitl_acceptance_check.py` checks the deployed approval-list endpoint for anonymous/invalid-token rejection and, optionally, a valid identity without list permission. It never creates or resumes a call.
+
+Still required outside or beyond this repository:
+1. Provision and verify encrypted persistent storage, backup encryption/KMS, secret custody, rotation, retention/legal-hold controls, and a successful isolated restore drill.
+2. Deploy a real authenticator and least-privilege policy. Verify decide and resume permissions with distinct identities; the smoke script only checks list access.
+3. Verify actual ingress, egress, security groups, application firewall, kill switch, and production tool allowlists in the target environment. Repository tests cannot inspect deployed network controls.
+4. Run the full staging/canary acceptance protocol and attach evidence to the change record. No deployment environment credentials or endpoint are available to this repository change, so live acceptance has not been performed.
+5. Decide whether the product needs full conversational continuation after process death. Current recovery dispatches only the exact approved tool call and returns its result; it does not restore the dead coroutine, regenerate the final assistant response, or update every session/trace artifact.
+6. Decide whether to consolidate `SQLiteApprovalStore` and `SQLiteSuspendedExecutionCoordinator` behind a shared storage protocol.
+7. Implement an approved, tested retention/purge job only after product/legal sign-off. The runbook proposes a policy but this repository does not automatically purge records.
+
+Continue running the clean-room and security test suite on Python 3.10, 3.11, and 3.12. No local database can guarantee exactly-once effects in arbitrary remote services without downstream idempotency support.
