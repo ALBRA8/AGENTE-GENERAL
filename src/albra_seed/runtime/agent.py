@@ -975,16 +975,38 @@ class Agent:
             content = ctx["RECEIVE"]["content"]
             confidence = 0.0
 
-        # Mandatory last-mile secret redaction. Fail closed: if the sanitizer
-        # itself fails, never return the raw provider response to the caller.
+        # Mandatory last-mile secret redaction for every user-visible surface:
+        # assistant text, tool outputs/errors, and execution warnings/errors.
+        # Any sanitizer failure withholds the entire response surface.
         try:
             from albra_seed.security.output_redaction import redact_secrets
 
+            def _redact_nested(value: Any) -> Any:
+                if isinstance(value, str):
+                    return redact_secrets(value)
+                if isinstance(value, list):
+                    return [_redact_nested(item) for item in value]
+                if isinstance(value, tuple):
+                    return tuple(_redact_nested(item) for item in value)
+                if isinstance(value, dict):
+                    return {key: _redact_nested(item) for key, item in value.items()}
+                return value
+
             content = redact_secrets(content)
+            safe_results: list[ToolResult] = []
+            for result in results:
+                safe_results.append(result.model_copy(update={
+                    "output": _redact_nested(result.output),
+                    "error": redact_secrets(result.error) if result.error else None,
+                }))
+            run_ctx.warnings[:] = [redact_secrets(str(item)) for item in run_ctx.warnings]
+            run_ctx.errors[:] = [redact_secrets(str(item)) for item in run_ctx.errors]
+            results = safe_results
         except Exception as exc:  # noqa: BLE001
             content = "Response withheld because output security validation failed."
-            run_ctx.errors.append("final output redaction failed; response withheld")
-            run_ctx.warnings.append(f"output redaction failure: {type(exc).__name__}")
+            results = []
+            run_ctx.errors[:] = ["final output security validation failed; response withheld"]
+            run_ctx.warnings[:] = [f"output security validation failed: {type(exc).__name__}"]
 
         return {
             "content": content,
