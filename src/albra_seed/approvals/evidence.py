@@ -18,7 +18,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
+from contextlib import closing
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -108,5 +111,90 @@ class ApprovalEvidenceStore:
             prev = r.record_hash
         return True
 
+class SQLiteApprovalEvidenceStore(ApprovalEvidenceStore):
+    """Durable, process-safe hash-chained approval evidence in SQLite.
 
-__all__ = ["ApprovalEvidence", "ApprovalEvidenceStore"]
+    The chain is shared by every worker using the same database. Appends use
+    a write transaction so concurrent writers cannot fork the chain.
+    """
+
+    def __init__(self, db_path: str | Path, *, busy_timeout_ms: int = 5000) -> None:
+        self.db_path = str(db_path)
+        if self.db_path == ":memory:":
+            raise ValueError("SQLiteApprovalEvidenceStore requires a file-backed database")
+        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+        self.busy_timeout_ms = busy_timeout_ms
+        with closing(self._connect()) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=FULL")
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS approval_evidence (
+                    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                    evidence_id TEXT NOT NULL UNIQUE,
+                    approval_id TEXT NOT NULL,
+                    record_hash TEXT NOT NULL,
+                    record_json TEXT NOT NULL
+                )
+            """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_approval_evidence_approval "
+                "ON approval_evidence(approval_id, sequence)"
+            )
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(
+            self.db_path, timeout=self.busy_timeout_ms / 1000, isolation_level=None
+        )
+        conn.row_factory = sqlite3.Row
+        conn.execute(f"PRAGMA busy_timeout={int(self.busy_timeout_ms)}")
+        return conn
+
+    @property
+    def head_hash(self) -> str:
+        with closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT record_hash FROM approval_evidence ORDER BY sequence DESC LIMIT 1"
+            ).fetchone()
+        return row["record_hash"] if row else ApprovalEvidenceStore.GENESIS_HASH
+
+    def append(self, record: ApprovalEvidence) -> ApprovalEvidence:
+        """Atomically append evidence to the one durable chain."""
+        with closing(self._connect()) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = conn.execute(
+                    "SELECT record_hash FROM approval_evidence ORDER BY sequence DESC LIMIT 1"
+                ).fetchone()
+                record.prev_hash = row["record_hash"] if row else ApprovalEvidenceStore.GENESIS_HASH
+                record.record_hash = record.compute_hash()
+                conn.execute(
+                    "INSERT INTO approval_evidence"
+                    "(evidence_id,approval_id,record_hash,record_json) VALUES(?,?,?,?)",
+                    (record.evidence_id, record.approval_id, record.record_hash, record.model_dump_json()),
+                )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return record
+
+    def list_for(self, approval_id: str) -> list[ApprovalEvidence]:
+        return [r for r in self.all_records() if r.approval_id == approval_id]
+
+    def all_records(self) -> list[ApprovalEvidence]:
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                "SELECT record_json FROM approval_evidence ORDER BY sequence"
+            ).fetchall()
+        return [ApprovalEvidence.model_validate_json(row["record_json"]) for row in rows]
+
+    def verify_chain(self) -> bool:
+        previous = ApprovalEvidenceStore.GENESIS_HASH
+        for record in self.all_records():
+            if not record.verify(previous):
+                return False
+            previous = record.record_hash
+        return True
+
+
+__all__ = ["ApprovalEvidence", "ApprovalEvidenceStore", "SQLiteApprovalEvidenceStore"]
