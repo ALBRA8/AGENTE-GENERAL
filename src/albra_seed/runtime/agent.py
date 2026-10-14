@@ -412,15 +412,12 @@ class Agent:
         that register a custom provider directly via `register_provider()`
         working unchanged.
 
-        MEM-READ: before calling the provider, this phase now consults the
-        ``MemoryManager`` (auto-provisioned by ``Runtime.birth()``) through
-        a deterministic ``MemoryRetriever``. Retrieved memories are wrapped
-        as a clearly-delimited SYSTEM message and inserted at the START of
-        the messages list — they are DATA, never INSTRUCTIONS. The
-        retriever is wrapped in try/except so any failure (missing manager,
-        store error, lifecycle hiccup) falls back to the pre-MEM-READ
-        behavior of ``messages = [ctx["input_message"]]``. CORE_ONLY safety
-        is preserved: the loop never crashes because of memory retrieval.
+        MEM-READ: before calling the provider, this phase consults the
+        ``MemoryManager`` through a deterministic ``MemoryRetriever``.
+        Trusted system policy remains a SYSTEM message; retrieved memories
+        are a separate Role.TOOL message with untrusted-memory metadata.
+        Provider adapters must preserve that trust boundary. Retrieval errors
+        fall back to the input-only message list and are recorded as warnings.
         """
         messages: list[Message] = [ctx["input_message"]]
         run_ctx: RunContext = ctx["context"]
@@ -999,12 +996,28 @@ class Agent:
                     "output": _redact_nested(result.output),
                     "error": redact_secrets(result.error) if result.error else None,
                 }))
+
+            # Tool-call arguments are included in AgentResponse/API payloads;
+            # redact them too instead of treating only assistant prose as output.
+            plan = ctx.get("PLAN", {}) or {}
+            safe_calls: list[ToolCall] = []
+            for call in plan.get("tool_calls", []) or []:
+                safe_calls.append(call.model_copy(update={
+                    "arguments": _redact_nested(call.arguments),
+                }))
+            if plan:
+                plan["tool_calls"] = safe_calls
+
             run_ctx.warnings[:] = [redact_secrets(str(item)) for item in run_ctx.warnings]
             run_ctx.errors[:] = [redact_secrets(str(item)) for item in run_ctx.errors]
             results = safe_results
         except Exception as exc:  # noqa: BLE001
             content = "Response withheld because output security validation failed."
             results = []
+            # Fail closed for every surface that could expose unsanitized data.
+            plan = ctx.get("PLAN", {}) or {}
+            if plan:
+                plan["tool_calls"] = []
             run_ctx.errors[:] = ["final output security validation failed; response withheld"]
             run_ctx.warnings[:] = [f"output security validation failed: {type(exc).__name__}"]
 
