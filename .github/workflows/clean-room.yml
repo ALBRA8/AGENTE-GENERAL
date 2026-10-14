@@ -108,7 +108,7 @@ jobs:
         # Audit the resolved runtime + CI dependency environment, including transitive packages.
         # This does not replace a lockfile or a production-image/SBOM audit.
         run: |
-          python -m pip install --upgrade pip-audit
+          python -m pip install --upgrade "setuptools>=83.0.0" pip-audit
           pip-audit
 
       - name: Clean-room verification
