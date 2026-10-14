@@ -734,13 +734,13 @@ class Agent:
                         if approved_request is not None
                         else None
                     )
-                    approved_context: dict[str, Any] = (
-                        raw_context if isinstance(raw_context, dict) else {}
-                    )
+                    approved_context_arguments: Any = None
+                    if isinstance(raw_context, dict):
+                        approved_context_arguments = raw_context.get("arguments")
                     if (
                         approved_request is None
                         or approved_request.action != call.tool_name
-                        or approved_context.get("arguments") != call.arguments
+                        or approved_context_arguments != call.arguments
                     ):
                         raise ValueError("approved tool binding does not match this call")
                     if not dispatch_store.prepare_dispatch(approval_id, call.id):
