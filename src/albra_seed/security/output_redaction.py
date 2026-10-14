@@ -4,6 +4,7 @@ Detection and suspicion share one registry: every recognized pattern is
 redacted by the same pattern that classifies it. Keep provider-specific token
 formats here so new adapters cannot silently bypass the output boundary.
 """
+
 from __future__ import annotations
 
 import re
@@ -84,10 +85,7 @@ def redact_secrets(text: str) -> str:
             if pattern.name == "credential_assignment":
                 result = pattern.regex.sub(
                     lambda match: (
-                        match.group(1)
-                        + match.group(2)
-                        + "[REDACTED_SECRET]"
-                        + match.group(4)
+                        match.group(1) + match.group(2) + "[REDACTED_SECRET]" + match.group(4)
                     ),
                     result,
                 )
