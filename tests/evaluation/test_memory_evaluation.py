@@ -24,12 +24,12 @@ For each task run, the test records:
     * isolation_violations           — count of memories retrieved from
                                         a DIFFERENT user/context bucket
     * context_chars_added            — memory ON only (length of the
-                                        SYSTEM DATA block inserted)
+                                        untrusted memory data block inserted)
 
-The Mock provider used here echoes the union of (retrieved SYSTEM DATA
+The Mock provider used here echoes the union of (retrieved TOOL DATA
 text) + (user input). When memory is OFF, the response contains only the
 user input. When memory is ON, the response contains the relevant info
-extracted from the SYSTEM block + the user input.
+extracted from the system/tool context + the user input.
 
 Assertions:
     * With memory OFF, response_contains_relevant_info is False for all
@@ -114,8 +114,8 @@ class _EvalMockProvider(LLMProvider):
     ) -> AgentResponse:
         self.received_messages.append(list(messages))
 
-        system_blob = "\n".join(
-            m.content for m in messages if m.role == Role.SYSTEM
+        context_blob = "\n".join(
+            m.content for m in messages if m.role in {Role.SYSTEM, Role.TOOL}
         )
         user_text = ""
         for msg in reversed(messages):
@@ -369,7 +369,7 @@ async def _run_with_memory_on(
 
     assert len(recording.received_messages) == 1
     msgs = recording.received_messages[0]
-    system_blob = "\n".join(m.content for m in msgs if m.role == Role.SYSTEM)
+    system_blob = "\n".join(m.content for m in msgs if m.role in {Role.SYSTEM, Role.TOOL})
     system_chars = len(system_blob)
 
     # Count relevant / irrelevant retrieved memories by inspecting the
