@@ -82,14 +82,9 @@ class AnthropicProvider(LLMProvider):
         client = self._ensure_client()
         t0 = time.monotonic()
 
-        system_text = " ".join(
-            msg.content for msg in messages if msg.role == Role.SYSTEM
-        )
-        convo = [
-            {"role": msg.role.value, "content": msg.content}
-            for msg in messages
-            if msg.role != Role.SYSTEM
-        ]
+        from albra_seed.providers.message_serialization import serialize_anthropic_messages
+
+        system_text, convo = serialize_anthropic_messages(messages)
 
         kwargs: dict[str, Any] = {
             "model": model or self.model,
