@@ -285,12 +285,16 @@ class Agent:
         firewall = self.runtime.get_component(COMPONENT_FIREWALL)
         if policy is None and firewall is None:
             raise PermissionError("current security perimeter is not configured")
-        if policy is not None and hasattr(policy, "evaluate"):
+        if policy is not None:
+            if not hasattr(policy, "evaluate"):
+                raise PermissionError("current policy engine cannot authorize recovery")
             verdict = await policy.evaluate(call, context=run_context)
             policy_decision = getattr(verdict, "decision", None)
             if policy_decision not in {"allow", "require_hitl"}:
                 raise PermissionError("current policy does not authorize recovery")
-        if firewall is not None and hasattr(firewall, "check"):
+        if firewall is not None:
+            if not hasattr(firewall, "check"):
+                raise PermissionError("current firewall cannot authorize recovery")
             firewall_decision = await firewall.check(call, context=run_context)
             if getattr(firewall_decision, "allowed", False) is not True:
                 raise PermissionError("current firewall does not authorize recovery")
