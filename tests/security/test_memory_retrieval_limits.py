@@ -16,9 +16,7 @@ from albra_seed.memory import InMemoryMemoryStore, MemoryManager, MemoryRetrieve
         ("max_context_chars", 1_000_001),
     ],
 )
-def test_retrieval_config_rejects_invalid_or_unbounded_limits(
-    field: str, value: int
-) -> None:
+def test_retrieval_config_rejects_invalid_or_unbounded_limits(field: str, value: int) -> None:
     with pytest.raises(ValueError):
         RetrievalConfig(**{field: value})
 
@@ -38,11 +36,14 @@ async def test_retriever_rejects_invalid_limit_overrides(limit: object) -> None:
 async def test_retriever_accepts_maximum_bounded_limit() -> None:
     retriever = MemoryRetriever(MemoryManager(store=InMemoryMemoryStore()))
 
-    assert await retriever.retrieve(
-        agent_id="agent-test",
-        query="bounded retrieval",
-        limit=10_000,
-    ) == []
+    assert (
+        await retriever.retrieve(
+            agent_id="agent-test",
+            query="bounded retrieval",
+            limit=10_000,
+        )
+        == []
+    )
 
 
 
