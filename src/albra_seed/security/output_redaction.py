@@ -52,10 +52,12 @@ _SECRET_PATTERNS = (
     ),
     # Handles plain assignments and quoted JSON/YAML-like fields, e.g.
     # api_key=abc, "api_key":"abc", or Authorization: Bearer ...
+    # Credential-labelled values are redacted even when short: length is not
+    # a reliable indicator of secrecy, and short test/dev credentials exist.
     SecretPattern(
         "credential_assignment",
         re.compile(
-            r"""(?i)(["']?(?:api[_-]?(?:key|token|secret)|access[_-]?token|refresh[_-]?token|id[_-]?token|session[_-]?token|token|password|passwd|secret|client[_-]?secret|secret[_-]?key|private[_-]?key|authorization|credential|bearer)["']?\s*[:=]\s*)(["']?)(?!\[REDACTED_SECRET\])([^\s,;'"<>}]{8,})(["']?)"""
+            r"""(?i)(["']?(?:api[_-]?(?:key|token|secret)|access[_-]?token|refresh[_-]?token|id[_-]?token|session[_-]?token|token|password|passwd|secret|client[_-]?secret|secret[_-]?key|private[_-]?key|authorization|credential|bearer)["']?\s*[:=]\s*)(["']?)(?!\[REDACTED_SECRET\])([^\s,;'"<>}]+)(["']?)"""
         ),
     ),
 )
