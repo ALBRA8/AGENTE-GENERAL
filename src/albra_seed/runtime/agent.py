@@ -1083,26 +1083,10 @@ class Agent:
             from albra_seed.security.output_redaction import redact_secrets
 
             def _redact_nested(value: Any) -> Any:
-                if isinstance(value, str):
-                    return redact_secrets(value)
-                if isinstance(value, bytes):
-                    return redact_secrets(value.decode("utf-8", errors="replace"))
-                if value is None or isinstance(value, (bool, int, float)):
-                    return value
-                if hasattr(value, "model_dump"):
-                    return _redact_nested(value.model_dump(mode="json"))
-                if isinstance(value, list):
-                    return [_redact_nested(item) for item in value]
-                if isinstance(value, tuple):
-                    return tuple(_redact_nested(item) for item in value)
-                if isinstance(value, dict):
-                    return {
-                        redact_secrets(str(key)) if not isinstance(key, (int, float, bool)) else key: _redact_nested(item)
-                        for key, item in value.items()
-                    }
-                # Unknown objects must not bypass the last-mile boundary.
-                # Convert their public representation to text and sanitize it.
-                return redact_secrets(str(value))
+                # Use the same key-aware recursive sanitizer as persistence:
+                # {"api_key": "short"} must be redacted even though the value
+                # alone does not match a token-format regular expression.
+                return _redact_persisted_value(value)
 
             content = redact_secrets(content)
             safe_results: list[ToolResult] = []
