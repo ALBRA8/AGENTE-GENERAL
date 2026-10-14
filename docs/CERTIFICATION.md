@@ -7,9 +7,11 @@
 > copy of the numbers. When any number here changes, all referencing docs are
 > out of date until refreshed from this file.
 
-**Last verified:** 2026-10-12
-**Commit:** `8437f2a` — `fix: close 2 security blockers — fail-open perimeter + HTTP execution boundary`
-**Status:** `READY_TO_FREEZE`
+**Last verified:** 2026-10-12 (historical baseline only; not valid for the current security remediation branch)
+**Commit:** `ab1415432055c26700f2c1c07009112309d7bb33` — previous main baseline; remediation branch pending CI
+**Status:** `NOT_VERIFIED — FREEZE BLOCKED`
+
+> **Certification hold (2026-10-14):** security remediation is in progress. The historical test counts and gate results below have NOT been rerun against this branch and must not be represented as current evidence. Re-certify only after the complete test suite, audit matrix, clean-room verification, and focused security tests run against the final commit. Do not freeze or release based on the historical numbers below.
 
 ---
 
