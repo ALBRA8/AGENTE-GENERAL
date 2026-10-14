@@ -1073,7 +1073,10 @@ class Agent:
             content = respond_out["content"]
         else:
             content = "Response withheld because output security validation did not run."
-            context.errors.append("response security phase missing; raw draft withheld")
+            # The normal sanitizer did not run, so do not trust any prior
+            # warning/error text either; it may contain raw provider/tool data.
+            context.errors[:] = ["response security phase missing; raw output withheld"]
+            context.warnings[:] = []
             # Do not let an absent/broken RESPOND phase leak tool payloads
             # through the separate tool_calls/results fields.
             tool_calls = []
