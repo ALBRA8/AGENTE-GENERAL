@@ -28,6 +28,7 @@ from albra_seed.core.identity import AgentIdentity
 from albra_seed.core.types import (
     AgentResponse,
     AutonomyLevel,
+    ExecutionStatus,
     MemoryType,
     Message,
     Role,
@@ -222,7 +223,7 @@ class Agent:
             try:
                 await loop.run(phase_fns, ctx_dict)
             except asyncio.CancelledError:
-                context.status = "cancelled"
+                context.status = ExecutionStatus.CANCELLED
                 context.errors.append("execution cancelled")
                 raise
 
@@ -239,9 +240,9 @@ class Agent:
             )
             session.touch()
             context.finished_at = utc_now()
-            context.status = "succeeded" if not context.errors else "failed"
+            context.status = ExecutionStatus.SUCCEEDED if not context.errors else ExecutionStatus.FAILED
 
-            if context.status == "succeeded":
+            if context.status == ExecutionStatus.SUCCEEDED:
                 self.state.finish_execution(response)
             else:
                 self.state.fail_execution(
@@ -403,7 +404,7 @@ class Agent:
             "context": run_context,
         }
         execution = await self._phase_execute(self, phase_context)
-        results = execution.get("results", [])
+        results: list[ToolResult] = execution.get("results", [])
         if len(results) != 1:
             raise RuntimeError("recovery dispatch did not produce exactly one result")
         return results[0]
@@ -698,7 +699,7 @@ class Agent:
         run_ctx: RunContext = ctx["context"]
         results: list[ToolResult] = []
 
-        for call, decision in zip(plan, decisions):
+        for call, decision in zip(plan, decisions, strict=True):
             if decision["decision"] != "allow":
                 results.append(ToolResult(
                     call_id=call.id, success=False,
@@ -722,19 +723,24 @@ class Agent:
             )
             dispatch_store = getattr(approval_engine, "store", None)
             claim_token: str | None = None
-            if dispatch_store is not None:
+            if approval_engine is not None and dispatch_store is not None:
                 try:
                     # Bind the durable approval to the exact tool name and
                     # original arguments before creating a dispatch slot.
                     # A matching call ID alone is not sufficient.
                     approved_request = approval_engine.get(approval_id)
-                    approved_context = (
-                        getattr(approved_request, "context_ref", None) or {}
-                    ) if approved_request is not None else {}
+                    raw_context = (
+                        getattr(approved_request, "context_ref", None)
+                        if approved_request is not None
+                        else None
+                    )
+                    approved_context_arguments: Any = None
+                    if isinstance(raw_context, dict):
+                        approved_context_arguments = raw_context.get("arguments")
                     if (
                         approved_request is None
                         or approved_request.action != call.tool_name
-                        or approved_context.get("arguments") != call.arguments
+                        or approved_context_arguments != call.arguments
                     ):
                         raise ValueError("approved tool binding does not match this call")
                     if not dispatch_store.prepare_dispatch(approval_id, call.id):
@@ -937,13 +943,13 @@ class Agent:
                     run_ctx.evidence_ids.append(
                         getattr(ev, "evidence_id", "unknown")
                     )
-            except Exception as exc:  # noqa: BLE001
+            except Exception:  # noqa: BLE001
                 run_ctx.warnings.append("evidence collector failed; details withheld")
 
         if audit is not None and hasattr(audit, "append"):
             try:
                 await audit.append(run_ctx)
-            except Exception as exc:  # noqa: BLE001
+            except Exception:  # noqa: BLE001
                 run_ctx.warnings.append("audit log failed; details withheld")
 
         # MEM-WRITE: prefer MemoryManager over the raw store.
@@ -1038,7 +1044,7 @@ class Agent:
                 execution_id=run_ctx.execution_id,
                 correlation_id=run_ctx.correlation_id,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             run_ctx.warnings.append("memory manager WORKING write failed; details withheld")
 
         # 2. Also write a low-priority EPISODIC memory of the raw user input
@@ -1060,7 +1066,7 @@ class Agent:
                 execution_id=run_ctx.execution_id,
                 correlation_id=run_ctx.correlation_id,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             run_ctx.warnings.append("memory manager EPISODIC write failed; details withheld")
 
         return {"recorded": True}
@@ -1152,7 +1158,6 @@ class Agent:
     ) -> AgentResponse:
         """Assemble the final AgentResponse from loop outputs + trace."""
         respond_out = ctx.get("RESPOND", {}) or {}
-        draft: AgentResponse | None = ctx.get("draft_response")
         results: list[ToolResult] = respond_out.get("tool_results", [])
         tool_calls: list[ToolCall] = ctx.get("PLAN", {}).get("tool_calls", [])
 

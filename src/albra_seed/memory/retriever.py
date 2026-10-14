@@ -400,7 +400,8 @@ class MemoryRetriever:
                 return str(content)
         if hasattr(content, "model_dump_json"):
             try:
-                return content.model_dump_json()
+                serialized = content.model_dump_json()
+                return serialized if isinstance(serialized, str) else str(serialized)
             except Exception:  # noqa: BLE001
                 return str(content)
         return str(content)
