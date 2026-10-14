@@ -84,9 +84,9 @@ class ZAIProvider(LLMProvider):
         client = self._ensure_client()
         t0 = time.monotonic()
 
-        chat_messages = [
-            {"role": msg.role.value, "content": msg.content} for msg in messages
-        ]
+        from albra_seed.providers.message_serialization import serialize_openai_compatible_messages
+
+        chat_messages = serialize_openai_compatible_messages(messages)
         kwargs: dict[str, Any] = {
             "model": model or self.model,
             "messages": chat_messages,
