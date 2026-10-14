@@ -6,9 +6,9 @@ from concurrent.futures import ThreadPoolExecutor
 
 from albra_seed.approvals import (
     ApprovalEngine,
+    ApprovalEvidence,
     SQLiteApprovalEvidenceStore,
     SQLiteApprovalStore,
-    ApprovalEvidence,
 )
 from albra_seed.core.types import ApprovalStatus
 
@@ -17,7 +17,7 @@ def test_sqlite_engine_evidence_survives_restart(tmp_path):
     db_path = tmp_path / "approvals.sqlite3"
     engine = ApprovalEngine(store=SQLiteApprovalStore(db_path))
     pending = asyncio.run(engine.request("external.send"))
-    result = __import__("asyncio").run(engine.approve(pending.approval_id, "reviewer"))
+    result = asyncio.run(engine.approve(pending.approval_id, "reviewer"))
     assert result.status == ApprovalStatus.APPROVED
     assert engine.verify_evidence_chain()
 
