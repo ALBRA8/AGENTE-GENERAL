@@ -43,3 +43,27 @@ async def test_retriever_accepts_maximum_bounded_limit() -> None:
         query="bounded retrieval",
         limit=10_000,
     ) == []
+
+
+
+async def test_retriever_withholds_memory_when_lifecycle_history_is_unreadable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = MemoryManager(store=InMemoryMemoryStore())
+    record = await manager.remember(
+        agent_id="agent-test",
+        content="forgotten private memory",
+    )
+    retriever = MemoryRetriever(manager)
+
+    def broken_history(_: str) -> list[object]:
+        raise RuntimeError("lifecycle storage unavailable")
+
+    monkeypatch.setattr(manager.lifecycle, "history", broken_history)
+    results = await retriever.retrieve(
+        agent_id="agent-test",
+        query="private memory",
+    )
+
+    assert results == []
+    assert all(item.record.record_id != record.record_id for item in results)
