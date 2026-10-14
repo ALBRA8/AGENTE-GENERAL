@@ -893,10 +893,22 @@ class Agent:
                     setattr(session, field_name, getattr(safe_session, field_name))
                 ctx["session"] = session
         except Exception:  # noqa: BLE001
-            # Do not persist any part of an execution if redaction cannot
-            # complete. The response phase independently fails closed.
+            # Do not persist or retain any part of an execution if redaction
+            # cannot complete. Replace data-bearing surfaces with safe blanks.
+            run_ctx.task = "[REDACTED]"
+            run_ctx.inputs.clear()
+            run_ctx.outputs.clear()
+            run_ctx.tools_used.clear()
+            run_ctx.providers_used.clear()
             run_ctx.errors[:] = ["record output redaction failed; persistence skipped"]
             run_ctx.warnings[:] = []
+            session = ctx.get("session")
+            if session is not None and hasattr(session, "messages"):
+                session.messages.clear()
+            ctx["RECEIVE"] = {"content": "[REDACTED]"}
+            ctx["PLAN"] = {"tool_calls": []}
+            ctx["EXECUTE"] = {"results": []}
+            ctx["draft_response"] = None
             return {"recorded": False, "redaction_failed": True}
 
         evidence_collector = self.runtime.get_component(COMPONENT_EVIDENCE_COLLECTOR)
