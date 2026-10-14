@@ -326,11 +326,12 @@ class ApprovalEngine:
         )
 
     async def wait_for_decision(self, approval_id: str) -> ApprovalResult:
-        """Wait until a pending approval is decided or its deadline expires.
+        """Wait for a terminal decision, observing durable stores across workers.
 
-        This waits only within the current process/event loop. A decision made
-        in another worker will not signal this event; deployments with multiple
-        workers need a durable notification/polling coordinator.
+        In-memory engines use a process-local event. When a SQLite store is
+        configured, poll its source-of-truth record so a decision made by a
+        different worker is observed. This does not recover a coroutine after
+        its originating process has restarted.
         """
         req = self.get(approval_id)
         if req is None:
@@ -346,6 +347,34 @@ class ApprovalEngine:
                 decided_by=req.decided_by,
                 reason=req.reason,
             )
+
+        if self.store is not None:
+            while True:
+                current = self.get(approval_id)
+                if current is None:
+                    return ApprovalResult(
+                        approval_id=approval_id,
+                        status=ApprovalStatus.EXPIRED,
+                        reason="not_pending_or_missing",
+                    )
+                if current.status != ApprovalStatus.PENDING:
+                    return ApprovalResult(
+                        approval_id=approval_id,
+                        status=current.status,
+                        decided_by=current.decided_by,
+                        reason=current.reason,
+                    )
+                timeout: float | None = None
+                if current.deadline is not None:
+                    deadline = current.deadline
+                    now = utc_now()
+                    if deadline.tzinfo is None:
+                        deadline = deadline.replace(tzinfo=now.tzinfo)
+                    timeout = max(0.0, (deadline - now).total_seconds())
+                if timeout == 0:
+                    await self.expire(approval_id)
+                    continue
+                await asyncio.sleep(min(0.1, timeout) if timeout is not None else 0.1)
 
         event = self._decision_events.setdefault(approval_id, asyncio.Event())
         timeout: float | None = None
@@ -445,13 +474,21 @@ class ApprovalEngine:
     # ------------------------------------------------------------------
 
     def _get_pending(self, approval_id: str) -> ApprovalRequest | None:
-        req = self._requests.get(approval_id)
-        if req is None or req.status != ApprovalStatus.PENDING:
+        # With durable storage the database, not this worker's cache, is the
+        # authority. Refresh before every transition so another worker's
+        # decision cannot be overwritten by a stale local PENDING record.
+        req = self.store.get(approval_id) if self.store is not None else self._requests.get(approval_id)
+        if req is None:
+            return None
+        self._requests[approval_id] = req
+        if req.status != ApprovalStatus.PENDING:
             return None
         return req
 
     def _status_of(self, approval_id: str) -> ApprovalStatus:
-        req = self._requests.get(approval_id)
+        req = self.store.get(approval_id) if self.store is not None else self._requests.get(approval_id)
+        if req is not None:
+            self._requests[approval_id] = req
         return req.status if req is not None else ApprovalStatus.EXPIRED
 
     def _record_evidence(
