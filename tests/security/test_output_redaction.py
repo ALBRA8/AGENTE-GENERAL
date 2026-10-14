@@ -31,6 +31,17 @@ def test_redaction_removes_every_detected_secret(secret: str) -> None:
     assert assess_suspicion(redacted) == []
 
 
+def test_redaction_handles_generic_token_and_secret_assignments() -> None:
+    for raw, value in (
+        ("token=opaque-secret-value-123456", "opaque-secret-value-123456"),
+        ('"secret":"opaque-secret-value-123456"', "opaque-secret-value-123456"),
+    ):
+        redacted = redact_secrets(raw)
+        assert value not in redacted
+        assert "[REDACTED_SECRET]" in redacted
+        assert assess_suspicion(redacted) == []
+
+
 def test_redaction_handles_quoted_json_credentials_and_is_idempotent() -> None:
     raw = '{"api_key":"json-secret-value-123456"}'
     redacted = redact_secrets(raw)
