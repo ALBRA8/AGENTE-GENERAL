@@ -104,6 +104,13 @@ jobs:
           src/albra_seed/memory/retriever.py
           src/albra_seed/security/output_redaction.py
 
+      - name: Dependency vulnerability audit
+        # Audit the resolved runtime + CI dependency environment, including transitive packages.
+        # This does not replace a lockfile or a production-image/SBOM audit.
+        run: |
+          python -m pip install --upgrade "setuptools>=83.0.0" pip-audit
+          pip-audit
+
       - name: Clean-room verification
         # 16 real PASS/FAIL gates + 1 informational scope-doc check R
         # + 2 optional checks. Expected: required 17/17 + optional 2/2.
