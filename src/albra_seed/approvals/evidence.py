@@ -111,7 +111,7 @@ class ApprovalEvidenceStore:
             prev = r.record_hash
         return True
 
-class SQLiteApprovalEvidenceStore:
+class SQLiteApprovalEvidenceStore(ApprovalEvidenceStore):
     """Durable, process-safe hash-chained approval evidence in SQLite.
 
     The chain is shared by every worker using the same database. Appends use
