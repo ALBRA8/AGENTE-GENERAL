@@ -464,7 +464,6 @@ class Agent:
                             role=Role.TOOL,
                             content=retriever.format_for_context(memories),
                             name="memory_retrieval",
-                            tool_call_id="memory-retrieval",
                             metadata={"trust_boundary": "untrusted_memory"},
                         ),
                         ctx["input_message"],
