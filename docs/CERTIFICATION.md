@@ -98,7 +98,7 @@ the clean-room script.)
 | Security fail-open closure  | PASS   | Included in the verified **624-test full suite**; the updated per-file count was not separately recorded (BLOQ 1 + BLOQ 2; DEFAULT-DENY, authenticated RBAC, trace ownership, and no token leakage) |
 | Memory FACT rule            | PASS   | `pytest tests/unit/test_memory_factual_integrity.py` → **11 passed** (BLOQ-MEM; unified via `MemoryProvenance.validate_fact`) |
 | Memory forget / audit       | PASS   | `pytest tests/unit/test_memory_forget_audit.py` → **10 passed** (BLOQ-MEM; tombstone by/reason + audit_sink) |
-| Browser dashboard key handling | NOT VERIFIED | Dashboard source is not tracked in this repository; inspect/fix `localStorage` and direct provider calls against the actual UI using `WEB_DASHBOARD_SECURITY.md` 
+| Browser dashboard key handling | NOT VERIFIED | Dashboard source is not tracked in this repository; inspect/fix `localStorage` and direct provider calls against the actual UI using `WEB_DASHBOARD_SECURITY.md` |
 | Production HITL / infrastructure acceptance | NOT VERIFIED | Requires real evidence for encrypted storage/backups, KMS, auth/RBAC, firewall/egress, restore drill, uncertain-side-effect reconciliation, and kill switch |
 | pyproject.toml parses       | PASS   | `python -c "import tomllib; tomllib.load(open('pyproject.toml','rb'))"` (8 optional-dependencies: openai/anthropic/groq/vector/api/otel/dev/all) |
 
