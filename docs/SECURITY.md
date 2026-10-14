@@ -27,6 +27,19 @@ Every primitive below is exercised by a security test under `tests/security/`. P
 
 ---
 
+## 1.1 HTTP execution authentication and RBAC
+
+`POST /api/v1/execution` is not authorized merely because a firewall is present.
+It requires all of the following: a non-anonymous principal verified from a Bearer
+token, a configured policy engine and permission registry, an explicit
+`execution:run` policy rule for that principal, and an RBAC grant for the
+principal's role. Missing authentication returns 401; missing configuration
+fails closed; missing rule or grant returns 403. Do not use `NoopAuthenticator`
+for an exposed API. Configure an actual authenticator and narrowly scoped
+permissions before enabling HTTP execution.
+
+---
+
 ## 2. Action Firewall
 
 **Location**: `albra_seed/firewall/firewall.py`
