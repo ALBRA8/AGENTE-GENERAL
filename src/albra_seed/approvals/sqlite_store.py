@@ -10,8 +10,8 @@ idempotency using the returned call_id.
 from __future__ import annotations
 
 import json
-from contextlib import closing
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
