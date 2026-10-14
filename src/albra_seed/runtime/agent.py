@@ -1067,13 +1067,13 @@ class Agent:
         tool_calls: list[ToolCall] = ctx.get("PLAN", {}).get("tool_calls", [])
 
         # RESPOND is the mandatory last-mile security boundary. Never
-        # fall back to the provider's raw draft if that phase produced an
-        # empty/falsey value; a missing RESPOND output is handled explicitly.
-        content = (
-            respond_out["content"]
-            if "content" in respond_out
-            else (draft.content if draft else "")
-        )
+        # fall back to the provider's raw draft if the phase did not run or
+        # did not produce its sanitized content.
+        if "content" in respond_out:
+            content = respond_out["content"]
+        else:
+            content = "Response withheld because output security validation did not run."
+            context.errors.append("response security phase missing; raw draft withheld")
         confidence = float(respond_out.get("confidence", 0.0))
 
         warnings = list(context.warnings)
