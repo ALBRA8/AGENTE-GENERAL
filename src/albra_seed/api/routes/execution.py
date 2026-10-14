@@ -265,9 +265,14 @@ def build_public_execution_router(ctx: RequestContext) -> Any:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
         except (ValueError, RuntimeError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        dispatch_status = (
+            "completed" if result.success
+            else "blocked" if (result.error or "").startswith("blocked:")
+            else "uncertain"
+        )
         return {
             "approval_id": approval_id,
-            "status": "completed" if result.success else "uncertain",
+            "status": dispatch_status,
             "resumed_by": principal.identity,
             "tool_result": result.model_dump(mode="json"),
         }
