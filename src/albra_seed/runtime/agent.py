@@ -434,15 +434,51 @@ class Agent:
             if require_hitl:
                 decision = "require_hitl"
 
-            # Approval engine: HITL.
+            # Approval engine: HITL. A pending request suspends this
+            # execution phase until a terminal decision or its deadline.
+            # This is an in-process wait; durable cross-worker resume is a
+            # separate coordinator concern and is not implied here.
             if decision == "require_hitl" and approval is not None:
                 approval_result = await approval.request(call, context=run_ctx)
-                if getattr(approval_result, "status", None) != "approved":
-                    decision = "deny"
-                else:
+                status = getattr(approval_result, "status", None)
+                status_value = getattr(status, "value", status)
+                approval_id = getattr(approval_result, "approval_id", None)
+
+                if status_value == "pending" and approval_id and hasattr(
+                    approval, "wait_for_decision"
+                ):
+                    waiter = asyncio.create_task(
+                        approval.wait_for_decision(approval_id)
+                    )
+                    cancel_event: asyncio.Event = ctx["cancel_event"]
+                    cancelled = asyncio.create_task(cancel_event.wait())
+                    done, pending_tasks = await asyncio.wait(
+                        {waiter, cancelled},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if cancelled in done and cancel_event.is_set():
+                        waiter.cancel()
+                        await asyncio.gather(waiter, return_exceptions=True)
+                        decision = "deny"
+                        ctx["abort"] = True
+                        run_ctx.warnings.append(
+                            f"approval wait cancelled: {call.tool_name}"
+                        )
+                    else:
+                        cancelled.cancel()
+                        await asyncio.gather(cancelled, return_exceptions=True)
+                        approval_result = waiter.result()
+                        status = getattr(approval_result, "status", None)
+                        status_value = getattr(status, "value", status)
+
+                if status_value == "approved":
                     decision = "allow"
-                    run_ctx.approvals.append(
-                        getattr(approval_result, "approval_id", "unknown")
+                    run_ctx.approvals.append(approval_id or "unknown")
+                else:
+                    decision = "deny"
+                    run_ctx.warnings.append(
+                        f"human approval did not authorize tool call "
+                        f"({status_value}): {call.tool_name}"
                     )
             decisions.append({"tool": call.tool_name, "decision": decision})
             if decision == "deny":
