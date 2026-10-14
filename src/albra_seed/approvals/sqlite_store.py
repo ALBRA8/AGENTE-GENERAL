@@ -10,6 +10,7 @@ idempotency using the returned call_id.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from contextlib import closing
 from pathlib import Path
@@ -40,7 +41,20 @@ class SQLiteApprovalStore:
         self.db_path = str(db_path)
         if self.db_path == ":memory:":
             raise ValueError("SQLiteApprovalStore requires a file-backed database shared by workers")
-        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+        path = Path(self.db_path)
+        if path.is_symlink():
+            raise ValueError("SQLiteApprovalStore database path must not be a symlink")
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        # ApprovalRequest.context_ref contains the original tool arguments and
+        # RunContext snapshot. Create new files as owner-only before SQLite
+        # opens them, then tighten permissions on existing databases too.
+        if not path.exists() and os.name == "posix":
+            try:
+                fd = os.open(self.db_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            except FileExistsError:
+                pass
+            else:
+                os.close(fd)
         self.busy_timeout_ms = busy_timeout_ms
         with closing(self._connect()) as conn:
             conn.execute("PRAGMA journal_mode=WAL")
@@ -71,6 +85,15 @@ class SQLiteApprovalStore:
                 CREATE INDEX IF NOT EXISTS idx_dispatch_state
                     ON approval_dispatch(state);
             """)
+        if os.name == "posix":
+            try:
+                os.chmod(self.db_path, 0o600)
+            except OSError as exc:
+                # This database contains approved tool arguments. Do not
+                # continue with a file whose access permissions are unknown.
+                raise RuntimeError(
+                    "unable to restrict SQLite approval database permissions"
+                ) from exc
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(
