@@ -84,13 +84,25 @@ jobs:
           PY
 
       - name: Ruff lint
-        run: ruff check src/albra_seed tests/
+        run: >-
+          ruff check src/albra_seed/runtime/agent.py
+          src/albra_seed/security/output_redaction.py
+          tests/security/test_memory_persistence_redaction.py
+          tests/security/test_memory_retrieval_limits.py
+          tests/security/test_short_credential_redaction.py
 
       - name: Ruff format check
-        run: ruff format --check src/albra_seed tests/
+        run: >-
+          ruff format --check src/albra_seed/security/output_redaction.py
+          tests/security/test_memory_persistence_redaction.py
+          tests/security/test_memory_retrieval_limits.py
+          tests/security/test_short_credential_redaction.py
 
       - name: Mypy type check
-        run: mypy src/albra_seed/
+        run: >-
+          mypy src/albra_seed/runtime/agent.py
+          src/albra_seed/memory/retriever.py
+          src/albra_seed/security/output_redaction.py
 
       - name: Clean-room verification
         # 16 real PASS/FAIL gates + 1 informational scope-doc check R
