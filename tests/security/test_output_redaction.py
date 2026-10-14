@@ -31,6 +31,15 @@ def test_redaction_removes_every_detected_secret(secret: str) -> None:
     assert assess_suspicion(redacted) == []
 
 
+def test_redaction_handles_quoted_json_credentials_and_is_idempotent() -> None:
+    raw = '{"api_key":"json-secret-value-123456"}'
+    redacted = redact_secrets(raw)
+    assert "json-secret-value-123456" not in redacted
+    assert "[REDACTED_SECRET]" in redacted
+    assert redact_secrets(redacted) == redacted
+    assert assess_suspicion(redacted) == []
+
+
 def test_redaction_preserves_safe_text() -> None:
     assert redact_secrets("Hello, this is safe output.") == "Hello, this is safe output."
     assert assess_suspicion("ordinary words") == []
@@ -107,7 +116,7 @@ async def test_agent_response_redacts_tool_outputs_and_trace_messages() -> None:
     tool_result = ToolResult(
         call_id="call_test",
         success=True,
-        output={"nested": [f"tool returned {secret}"]}
+        output={"nested": [f"tool returned {secret}"], secret: "secret used as a mapping key"}
     )
     ctx = {
         "context": run_context,
