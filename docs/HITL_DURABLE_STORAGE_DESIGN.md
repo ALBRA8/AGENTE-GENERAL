@@ -81,17 +81,30 @@ claim exactly-once effects for arbitrary tools.
 - Treat database errors, corrupt records, authorization failures, and
   ambiguous dispatch outcomes as fail-closed conditions.
 
-## Required follow-up before production use
+## Remaining follow-up before production use
 
-1. Define a storage protocol and integrate the SQLite coordinator into
-   `ApprovalEngine` without changing existing in-memory behavior.
-2. Persist the original validated tool-call payload securely if replay requires
-   it; persist only a digest when the payload must not be retained.
-3. Add a recovery protocol that reconstitutes only the original validated
-   execution state, obtains fresh trusted authorization, and never reruns
-   reasoning to regenerate a pending action.
-4. Add fault-injection tests for crashes before dispatch, after dispatch, and
-   before recording the outcome; verify that unknown outcomes are never
-   automatically retried.
-5. Run the complete suite on Python 3.10, 3.11, and 3.12 and merge only after
-   all required checks pass.
+1. Consolidate the parallel `SQLiteApprovalStore` and
+   `SQLiteSuspendedExecutionCoordinator` implementations behind a storage
+   protocol, or document why both remain necessary. The recovery endpoint
+   currently uses `SQLiteApprovalStore` and its dispatch ledger.
+2. Define encryption/key-management and retention policies for the original
+   tool arguments and RunContext snapshot. POSIX mode `0600` limits ordinary
+   local access but does not protect data from a privileged host operator or
+   stolen backups.
+3. Decide whether the product needs full conversational continuation after a
+   process death. The current recovery operation safely dispatches only the
+   exact approved tool call and returns its result; it does not restore the
+   dead coroutine, regenerate the final assistant response, or update every
+   session/trace artifact.
+4. Add process-level fault injection for the precise window where an external
+   provider accepts a side effect but the worker dies before persisting its
+   outcome. Verify that every recovery path treats the outcome as uncertain
+   and never retries automatically. Continue testing corruption and missing
+   evidence/records as explicit fail-closed cases.
+5. Add schema migration/versioning and a documented retention/backup recovery
+   procedure for `SQLiteApprovalStore`; the separate suspended-execution
+   coordinator has schema versioning, but the approval store does not yet
+   expose a migration protocol.
+6. Keep running the full clean-room and security test suite on Python 3.10,
+   3.11, and 3.12 for every change; no external tool can provide exactly-once
+   guarantees without downstream idempotency support.
