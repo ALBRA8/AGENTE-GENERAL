@@ -198,11 +198,15 @@ async def test_persistent_preference_remembered() -> None:
     # The Mock provider received the untrusted memory data block carrying the
     # retrieved preference memory.
     assert len(recording.received_messages) == 1
-    system_blob = "\n".join(
+    context_blob = "\n".join(
         m.content for m in recording.received_messages[0] if m.role in {Role.SYSTEM, Role.TOOL}
     )
-    assert "[RETRIEVED MEMORIES" in system_blob
-    assert "the user prefers Python over JavaScript" in system_blob
+    assert "[RETRIEVED MEMORIES" in context_blob
+    assert "the user prefers Python over JavaScript" in context_blob
+    system_text = "\n".join(
+        m.content for m in recording.received_messages[0] if m.role == Role.SYSTEM
+    )
+    assert "the user prefers Python over JavaScript" not in system_text
     # The user's input is still there as the LAST message.
     assert recording.received_messages[0][-1].role == Role.USER
 
