@@ -150,6 +150,8 @@ def build_public_execution_router(ctx: RequestContext) -> Any:
         response_model=ExecutionResponse,
         responses={
             400: {"model": ErrorResponse},
+            401: {"model": ErrorResponse},
+            403: {"model": ErrorResponse},
             404: {"model": ErrorResponse},
             503: {"model": ErrorResponse},
         },
