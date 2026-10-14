@@ -452,7 +452,7 @@ class Agent:
                     )
                     cancel_event: asyncio.Event = ctx["cancel_event"]
                     cancelled = asyncio.create_task(cancel_event.wait())
-                    done, pending_tasks = await asyncio.wait(
+                    done, _ = await asyncio.wait(
                         {waiter, cancelled},
                         return_when=asyncio.FIRST_COMPLETED,
                     )
