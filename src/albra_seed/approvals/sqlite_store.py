@@ -240,6 +240,38 @@ class SQLiteApprovalStore:
             conn.commit()
             return cur.rowcount == 1
 
+    def escalate(self, parent_id: str, child: ApprovalRequest) -> bool:
+        """Atomically escalate a pending parent and persist its child request."""
+        now = utc_now().isoformat()
+        with closing(self._connect()) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = conn.execute(
+                    "SELECT request_json FROM approvals WHERE approval_id=? AND status=?",
+                    (parent_id, ApprovalStatus.PENDING.value),
+                ).fetchone()
+                if row is None:
+                    conn.rollback()
+                    return False
+                parent = ApprovalRequest.model_validate_json(row["request_json"])
+                parent.mark_escalated()
+                conn.execute(
+                    "UPDATE approvals SET status=?,request_json=?,updated_at=? "
+                    "WHERE approval_id=? AND status=?",
+                    (parent.status.value, self._dump(parent), now, parent_id,
+                     ApprovalStatus.PENDING.value),
+                )
+                conn.execute(
+                    "INSERT INTO approvals(approval_id,call_id,status,request_json,updated_at) "
+                    "VALUES(?,?,?,?,?)",
+                    (child.approval_id, None, child.status.value, self._dump(child), now),
+                )
+                conn.commit()
+                return True
+            except Exception:
+                conn.rollback()
+                raise
+
     def recover_interrupted_dispatches(self) -> int:
         """Fail closed after restart: claimed means outcome may be externally unknown."""
         with closing(self._connect()) as conn:
