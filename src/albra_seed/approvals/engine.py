@@ -118,7 +118,7 @@ class ApprovalEngine:
             evidence_ids=list(evidence_ids or []),
         )
         if self.store is not None:
-            req = self.store.create(req)
+            req = self.store.create(req, call_id=action.id if isinstance(action, ToolCall) else None)
         self._requests[req.approval_id] = req
         log.info(
             "approvals.request",
