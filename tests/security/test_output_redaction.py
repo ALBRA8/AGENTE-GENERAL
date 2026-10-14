@@ -206,9 +206,15 @@ def test_build_response_withholds_raw_draft_when_respond_phase_is_missing() -> N
         execution_id=context.execution_id,
         correlation_id=context.correlation_id,
     )
-    result = Agent._build_response(
-        None, context, session, {"draft_response": draft, "PLAN": {"tool_calls": []}}, []
-    )  # type: ignore[arg-type]
+    agent = Agent(
+        __import__("albra_seed.core.identity", fromlist=["AgentIdentity"]).AgentIdentity(
+            name="redaction-test-agent"
+        ),
+        __import__("albra_seed.runtime.runtime", fromlist=["Runtime"]).Runtime(),
+    )
+    result = agent._build_response(
+        context, session, {"draft_response": draft, "PLAN": {"tool_calls": []}}, []
+    )
     assert secret not in result.content
     assert result.content == "Response withheld because output security validation did not run."
     assert any("response security phase missing" in error for error in result.errors)
