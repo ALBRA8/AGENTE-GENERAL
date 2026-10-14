@@ -42,9 +42,60 @@ def _runtime_has_security_perimeter(runtime: Any) -> bool:
 
 def build_public_execution_router(ctx: RequestContext) -> Any:
     """Return a FastAPI APIRouter for the public execution endpoints."""
-    from fastapi import APIRouter, HTTPException  # lazy
+    from fastapi import APIRouter, Header, HTTPException  # lazy
 
     router = APIRouter(tags=["execution"])
+
+    async def verified_approval_principal(authorization: str | None) -> Any:
+        """Authenticate approval API callers; the default Noop authenticator fails closed."""
+        if not authorization:
+            raise HTTPException(status_code=401, detail="bearer authentication required")
+        scheme, separator, credential = authorization.partition(" ")
+        if not separator or scheme.lower() != "bearer" or not credential.strip():
+            raise HTTPException(status_code=401, detail="invalid authorization header")
+        authenticator = ctx.runtime.get_component("authenticator")
+        if authenticator is None:
+            raise HTTPException(status_code=503, detail="authentication is not configured")
+        try:
+            principal = await authenticator.verify(credential.strip())
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=401, detail="invalid bearer credential") from exc
+        if (
+            principal is None
+            or getattr(principal, "is_anonymous", True)
+            or not getattr(principal, "identity", None)
+        ):
+            raise HTTPException(status_code=401, detail="authenticated principal required")
+        return principal
+
+    async def require_approval_permission(principal: Any, action: str) -> None:
+        """Require an explicit action-specific RBAC policy grant, default deny."""
+        from albra_seed.core.types import RiskLevel
+
+        policy = ctx.runtime.get_component("policy_engine")
+        rule_set = getattr(policy, "rule_set", None)
+        if policy is None or rule_set is None or not hasattr(policy, "evaluate"):
+            raise HTTPException(status_code=403, detail="approval authorization is not configured")
+        try:
+            rule = rule_set.first_match(
+                action_name=action,
+                actor_id=principal.identity,
+                risk=RiskLevel.UNKNOWN,
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=403, detail="approval permission policy failed") from exc
+        if rule is None or getattr(rule, "required_permission", None) != action:
+            raise HTTPException(status_code=403, detail="explicit approval permission grant is required")
+        try:
+            verdict = await policy.evaluate(
+                action,
+                actor_roles=list(getattr(principal, "roles", []) or []),
+                actor_id=principal.identity,
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=403, detail="approval authorization failed") from exc
+        if not getattr(verdict, "allowed", False):
+            raise HTTPException(status_code=403, detail="approval action is not authorized")
 
     @router.post(
         "/execution",
@@ -128,6 +179,62 @@ def build_public_execution_router(ctx: RequestContext) -> Any:
             trace=list(trace.get("trace", [])),
             metadata=ctx.redacted(trace.get("metadata", {})),
         )
+
+
+    @router.get("/approvals/pending")
+    async def list_pending_approvals(
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> Any:
+        principal = await verified_approval_principal(authorization)
+        await require_approval_permission(principal, "approval:list")
+        engine = ctx.runtime.get_component("approval_engine")
+        if engine is None or not hasattr(engine, "list_pending"):
+            raise HTTPException(status_code=503, detail="approval engine is not configured")
+        return {
+            "storage_scope": "process-local",
+            "approvals": [
+                {
+                    "approval_id": item.approval_id,
+                    "action": item.action,
+                    "deadline": item.deadline.isoformat() if item.deadline else None,
+                    "execution_id": (item.context_ref or {}).get("execution_id"),
+                    "correlation_id": (item.context_ref or {}).get("correlation_id"),
+                    "status": "awaiting_approval",
+                }
+                for item in engine.list_pending()
+            ],
+        }
+
+    @router.post("/approvals/{approval_id}/decision")
+    async def decide_approval(
+        approval_id: str,
+        payload: dict[str, Any],
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> Any:
+        principal = await verified_approval_principal(authorization)
+        await require_approval_permission(principal, "approval:decide")
+        engine = ctx.runtime.get_component("approval_engine")
+        if engine is None:
+            raise HTTPException(status_code=503, detail="approval engine is not configured")
+        decision = payload.get("decision")
+        if decision not in {"approve", "reject"}:
+            raise HTTPException(status_code=400, detail="decision must be approve or reject")
+        reason = payload.get("reason", "")
+        if not isinstance(reason, str) or len(reason) > 1000:
+            raise HTTPException(status_code=400, detail="reason must be a string of at most 1000 characters")
+        request = engine.get(approval_id) if hasattr(engine, "get") else None
+        if request is None:
+            raise HTTPException(status_code=404, detail="approval not found")
+        if decision == "approve":
+            result = await engine.approve(approval_id, approver=principal.identity)
+        else:
+            result = await engine.reject(approval_id, approver=principal.identity, reason=reason)
+        return {
+            "approval_id": result.approval_id,
+            "status": getattr(result.status, "value", result.status),
+            "decided_by": result.decided_by,
+            "reason": result.reason,
+        }
 
     return router
 
