@@ -723,7 +723,7 @@ class Agent:
             )
             dispatch_store = getattr(approval_engine, "store", None)
             claim_token: str | None = None
-            if dispatch_store is not None:
+            if approval_engine is not None and dispatch_store is not None:
                 try:
                     # Bind the durable approval to the exact tool name and
                     # original arguments before creating a dispatch slot.
