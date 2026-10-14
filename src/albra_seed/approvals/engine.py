@@ -38,6 +38,7 @@ from albra_seed.core.types import (
 from albra_seed.approvals.evidence import ApprovalEvidence, ApprovalEvidenceStore
 from albra_seed.approvals.escalation import EscalationPolicy
 from albra_seed.approvals.request import ApprovalRequest
+from albra_seed.approvals.sqlite_store import SQLiteApprovalStore
 
 log = structlog.get_logger("albra.approvals")
 
@@ -67,8 +68,12 @@ class ApprovalEngine:
         evidence_store: ApprovalEvidenceStore | None = None,
         escalation_policy: EscalationPolicy | None = None,
         default_deadline_seconds: float = 3600.0,
+        store: SQLiteApprovalStore | None = None,
     ) -> None:
-        self._requests: dict[str, ApprovalRequest] = {}
+        self.store = store
+        self._requests: dict[str, ApprovalRequest] = {
+            req.approval_id: req for req in (store.list() if store else [])
+        }
         self.evidence: ApprovalEvidenceStore = evidence_store or ApprovalEvidenceStore()
         self.escalation_policy: EscalationPolicy = (
             escalation_policy or EscalationPolicy()
@@ -112,6 +117,8 @@ class ApprovalEngine:
             scope=scope,
             evidence_ids=list(evidence_ids or []),
         )
+        if self.store is not None:
+            req = self.store.create(req)
         self._requests[req.approval_id] = req
         log.info(
             "approvals.request",
@@ -138,7 +145,17 @@ class ApprovalEngine:
                 status=self._status_of(approval_id),
                 reason="not_pending_or_missing",
             )
-        req.mark_approved(by=approver)
+        if self.store is not None:
+            if not self.store.transition(approval_id, ApprovalStatus.APPROVED, decided_by=approver):
+                current = self.store.get(approval_id)
+                if current is not None:
+                    self._requests[approval_id] = current
+                return ApprovalResult(approval_id=approval_id, status=self._status_of(approval_id), reason="not_pending_or_missing")
+            req = self.store.get(approval_id)
+            assert req is not None
+            self._requests[approval_id] = req
+        else:
+            req.mark_approved(by=approver)
         self._record_evidence(req, decided_by=approver)
         log.info("approvals.approve", approval_id=approval_id, approver=approver)
         return ApprovalResult(
@@ -161,7 +178,17 @@ class ApprovalEngine:
                 status=self._status_of(approval_id),
                 reason="not_pending_or_missing",
             )
-        req.mark_rejected(by=approver, reason=reason)
+        if self.store is not None:
+            if not self.store.transition(approval_id, ApprovalStatus.REJECTED, decided_by=approver, reason=reason):
+                current = self.store.get(approval_id)
+                if current is not None:
+                    self._requests[approval_id] = current
+                return ApprovalResult(approval_id=approval_id, status=self._status_of(approval_id), reason="not_pending_or_missing")
+            req = self.store.get(approval_id)
+            assert req is not None
+            self._requests[approval_id] = req
+        else:
+            req.mark_rejected(by=approver, reason=reason)
         self._record_evidence(req, decided_by=approver)
         log.info(
             "approvals.reject",
@@ -185,7 +212,17 @@ class ApprovalEngine:
                 status=self._status_of(approval_id),
                 reason="not_pending_or_missing",
             )
-        req.mark_expired()
+        if self.store is not None:
+            if not self.store.transition(approval_id, ApprovalStatus.EXPIRED):
+                current = self.store.get(approval_id)
+                if current is not None:
+                    self._requests[approval_id] = current
+                return ApprovalResult(approval_id=approval_id, status=self._status_of(approval_id), reason="not_pending_or_missing")
+            req = self.store.get(approval_id)
+            assert req is not None
+            self._requests[approval_id] = req
+        else:
+            req.mark_expired()
         self._record_evidence(req)
         log.info("approvals.expire", approval_id=approval_id)
         return ApprovalResult(
@@ -287,12 +324,25 @@ class ApprovalEngine:
     # ------------------------------------------------------------------
 
     def get(self, approval_id: str) -> ApprovalRequest | None:
+        if self.store is not None:
+            req = self.store.get(approval_id)
+            if req is not None:
+                self._requests[approval_id] = req
+            return req
         return self._requests.get(approval_id)
 
     def list_pending(self) -> list[ApprovalRequest]:
+        if self.store is not None:
+            pending = self.store.list(status=ApprovalStatus.PENDING)
+            self._requests.update({r.approval_id: r for r in pending})
+            return pending
         return [r for r in self._requests.values() if r.status == ApprovalStatus.PENDING]
 
     def list_all(self) -> list[ApprovalRequest]:
+        if self.store is not None:
+            records = self.store.list()
+            self._requests.update({r.approval_id: r for r in records})
+            return records
         return list(self._requests.values())
 
     def verify_evidence_chain(self) -> bool:
