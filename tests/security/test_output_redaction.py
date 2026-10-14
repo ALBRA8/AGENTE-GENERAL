@@ -213,6 +213,8 @@ def test_build_response_withholds_raw_draft_when_respond_phase_is_missing() -> N
 
     secret = "sk-proj-abcdefghijklmnopqrstuvwxyz123456"
     context = RunContext(agent_id="agent_test", session_id="session_test", task="test")
+    context.errors.append(f"raw provider error {secret}")
+    context.warnings.append(f"raw tool warning {secret}")
     session = Session(agent_id="agent_test")
     draft = AgentResponse(
         content=f"raw provider output {secret}",
@@ -226,5 +228,7 @@ def test_build_response_withholds_raw_draft_when_respond_phase_is_missing() -> N
     )
     assert secret not in result.content
     assert result.tool_calls == []
+    assert secret not in str(result.errors)
+    assert secret not in str(result.warnings)
     assert result.content == "Response withheld because output security validation did not run."
     assert any("response security phase missing" in error for error in result.errors)
