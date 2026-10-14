@@ -33,6 +33,11 @@ on:
   # Allow manual triggering from the Actions tab.
   workflow_dispatch:
 
+# The workflow only needs to read repository contents; do not grant write access
+# to the automatically provided token to test code from pull requests.
+permissions:
+  contents: read
+
 jobs:
   clean-room:
     name: Python ${{ matrix.python-version }} on ubuntu-latest
@@ -77,6 +82,15 @@ jobs:
           assert not missing, f"missing optional-dependencies: {missing}"
           print("optional-dependencies keys OK:", sorted(opt))
           PY
+
+      - name: Ruff lint
+        run: ruff check src/albra_seed tests/
+
+      - name: Ruff format check
+        run: ruff format --check src/albra_seed tests/
+
+      - name: Mypy type check
+        run: mypy src/albra_seed/
 
       - name: Clean-room verification
         # 16 real PASS/FAIL gates + 1 informational scope-doc check R
