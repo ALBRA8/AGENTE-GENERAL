@@ -213,8 +213,9 @@ class MemoryRetriever:
                 if self._is_alive(lifecycle, record.record_id, dead_states):
                     alive.append(record)
             except Exception:  # noqa: BLE001
-                # Defensive: lifecycle bugs must not break retrieval.
-                alive.append(record)
+                # If lifecycle state cannot be verified, withhold the record.
+                # Treating an unknown state as alive could resurrect forgotten data.
+                continue
 
         if not alive:
             return []
@@ -266,9 +267,9 @@ class MemoryRetriever:
             ...
             [END RETRIEVED MEMORIES]
 
-        The delimiter makes it explicit to the model that these are DATA,
-        not orders. The caller wraps the returned string as a SYSTEM
-        message (or as an INFO-anchored prefix) — never as a USER message.
+        The delimiters are defense in depth, not a trust boundary by
+        themselves. The caller MUST represent this content using an
+        untrusted role (Role.TOOL) and MUST NOT promote it to Role.SYSTEM.
         """
         if not memories:
             # Return an empty marker so the caller can still insert the
@@ -445,8 +446,9 @@ class MemoryRetriever:
         try:
             events = lifecycle.history(record_id)
         except Exception:  # noqa: BLE001
-            # Defensive: if we can't read history, treat as alive.
-            return True
+            # Fail closed: an unreadable lifecycle history cannot prove that
+            # the record has not been deleted, forgotten, or archived.
+            return False
         for ev in events:
             state = getattr(getattr(ev, "state", None), "value", None) or str(
                 getattr(ev, "state", "")
