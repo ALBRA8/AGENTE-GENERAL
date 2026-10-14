@@ -121,3 +121,31 @@ async def test_changed_arguments_cannot_use_an_existing_approval(tmp_path):
             "SELECT COUNT(*) FROM approval_dispatch WHERE call_id = ?", ("call-1",)
         ).fetchone()[0]
     assert count == 0
+
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_dispatch_is_not_retried_after_store_and_engine_restart(tmp_path):
+    """Reopening SQLite after an ambiguous provider failure must not replay the call."""
+    tool = _Tool(raises=True)
+    agent, context, store = await _approved_context(tmp_path, tool)
+
+    first = await agent._phase_execute(agent, context)
+    assert first["results"][0].success is False
+    assert tool.calls == 1
+
+    # Simulate a worker restart by constructing a new store and engine over the
+    # same durable database. The original call and approval evidence are unchanged.
+    recovered_store = SQLiteApprovalStore(store.db_path)
+    recovered_approval = ApprovalEngine(store=recovered_store)
+    agent.runtime.approval = recovered_approval
+
+    second = await agent._phase_execute(agent, context)
+
+    assert second["results"][0].success is False
+    assert tool.calls == 1
+    with sqlite3.connect(store.db_path) as connection:
+        state = connection.execute(
+            "SELECT state FROM approval_dispatch WHERE call_id = ?", ("call-1",)
+        ).fetchone()[0]
+    assert state == "uncertain"
