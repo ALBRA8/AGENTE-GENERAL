@@ -1055,8 +1055,13 @@ class Agent:
         results: list[ToolResult] = respond_out.get("tool_results", [])
         tool_calls: list[ToolCall] = ctx.get("PLAN", {}).get("tool_calls", [])
 
-        content = respond_out.get("content") or (
-            draft.content if draft else ""
+        # RESPOND is the mandatory last-mile security boundary. Never
+        # fall back to the provider's raw draft if that phase produced an
+        # empty/falsey value; a missing RESPOND output is handled explicitly.
+        content = (
+            respond_out["content"]
+            if "content" in respond_out
+            else (draft.content if draft else "")
         )
         confidence = float(respond_out.get("confidence", 0.0))
 
