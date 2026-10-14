@@ -1,20 +1,22 @@
 """Durability and concurrency tests for SQLite approval evidence."""
 from __future__ import annotations
 
+import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
 from albra_seed.approvals import (
     ApprovalEngine,
-    ApprovalStatus,
     SQLiteApprovalEvidenceStore,
     SQLiteApprovalStore,
+    ApprovalEvidence,
 )
+from albra_seed.core.types import ApprovalStatus
 
 
 def test_sqlite_engine_evidence_survives_restart(tmp_path):
     db_path = tmp_path / "approvals.sqlite3"
     engine = ApprovalEngine(store=SQLiteApprovalStore(db_path))
-    pending = __import__("asyncio").run(engine.request("external.send"))
+    pending = asyncio.run(engine.request("external.send"))
     result = __import__("asyncio").run(engine.approve(pending.approval_id, "reviewer"))
     assert result.status == ApprovalStatus.APPROVED
     assert engine.verify_evidence_chain()
@@ -32,8 +34,6 @@ def test_concurrent_sqlite_evidence_appends_preserve_one_chain(tmp_path):
     stores = [SQLiteApprovalEvidenceStore(db_path) for _ in range(8)]
 
     def append(index):
-        from albra_seed.approvals.evidence import ApprovalEvidence
-
         record = ApprovalEvidence(
             approval_id=f"approval-{index}",
             status=ApprovalStatus.APPROVED,
