@@ -698,7 +698,7 @@ class Agent:
         run_ctx: RunContext = ctx["context"]
         results: list[ToolResult] = []
 
-        for call, decision in zip(plan, decisions):
+        for call, decision in zip(plan, decisions, strict=True):
             if decision["decision"] != "allow":
                 results.append(ToolResult(
                     call_id=call.id, success=False,
@@ -937,13 +937,13 @@ class Agent:
                     run_ctx.evidence_ids.append(
                         getattr(ev, "evidence_id", "unknown")
                     )
-            except Exception as exc:  # noqa: BLE001
+            except Exception:  # noqa: BLE001
                 run_ctx.warnings.append("evidence collector failed; details withheld")
 
         if audit is not None and hasattr(audit, "append"):
             try:
                 await audit.append(run_ctx)
-            except Exception as exc:  # noqa: BLE001
+            except Exception:  # noqa: BLE001
                 run_ctx.warnings.append("audit log failed; details withheld")
 
         # MEM-WRITE: prefer MemoryManager over the raw store.
@@ -1038,7 +1038,7 @@ class Agent:
                 execution_id=run_ctx.execution_id,
                 correlation_id=run_ctx.correlation_id,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             run_ctx.warnings.append("memory manager WORKING write failed; details withheld")
 
         # 2. Also write a low-priority EPISODIC memory of the raw user input
@@ -1060,7 +1060,7 @@ class Agent:
                 execution_id=run_ctx.execution_id,
                 correlation_id=run_ctx.correlation_id,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             run_ctx.warnings.append("memory manager EPISODIC write failed; details withheld")
 
         return {"recorded": True}
@@ -1152,7 +1152,6 @@ class Agent:
     ) -> AgentResponse:
         """Assemble the final AgentResponse from loop outputs + trace."""
         respond_out = ctx.get("RESPOND", {}) or {}
-        draft: AgentResponse | None = ctx.get("draft_response")
         results: list[ToolResult] = respond_out.get("tool_results", [])
         tool_calls: list[ToolCall] = ctx.get("PLAN", {}).get("tool_calls", [])
 
