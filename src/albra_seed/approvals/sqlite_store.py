@@ -29,6 +29,8 @@ _ALLOWED = {
     }
 }
 
+_SCHEMA_VERSION = 1
+
 
 class SQLiteApprovalStore:
     """Durable approval records and a fail-closed dispatch ledger.
@@ -59,6 +61,14 @@ class SQLiteApprovalStore:
         with closing(self._connect()) as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA synchronous=FULL")
+            schema_version = conn.execute("PRAGMA user_version").fetchone()[0]
+            if schema_version not in (0, _SCHEMA_VERSION):
+                raise RuntimeError(
+                    f"unsupported SQLite approval schema version: {schema_version}"
+                )
+            # Schema changes are idempotent. Keep user_version at 0 until
+            # all CREATE statements succeed so an interrupted initialization
+            # can safely retry on the next startup.
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS approvals (
                     approval_id TEXT PRIMARY KEY,
@@ -85,6 +95,7 @@ class SQLiteApprovalStore:
                 CREATE INDEX IF NOT EXISTS idx_dispatch_state
                     ON approval_dispatch(state);
             """)
+            conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
         if os.name == "posix":
             try:
                 os.chmod(self.db_path, 0o600)
