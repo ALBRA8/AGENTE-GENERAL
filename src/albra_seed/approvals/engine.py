@@ -250,7 +250,12 @@ class ApprovalEngine:
         chain = list(req.escalation_chain) + [req.approval_id]
         if not self.escalation_policy.can_escalate(chain):
             # Auto-expire when cap hit.
-            req.mark_expired()
+            if self.store is not None:
+                self.store.transition(approval_id, ApprovalStatus.EXPIRED)
+                req = self.store.get(approval_id) or req
+                self._requests[approval_id] = req
+            else:
+                req.mark_expired()
             self._record_evidence(req)
             log.warning(
                 "approvals.escalation_cap_exceeded",
@@ -263,10 +268,7 @@ class ApprovalEngine:
                 reason="max_escalations_exceeded",
             )
 
-        # Mark parent ESCALATED, then spawn the child request.
-        req.mark_escalated()
-        self._record_evidence(req)
-
+        # Build the child first; durable stores commit parent + child atomically.
         child = ApprovalRequest(
             action=req.action,
             actor=req.actor,
@@ -282,6 +284,17 @@ class ApprovalEngine:
                 "escalated_to": self.escalation_policy.escalate_to,
             },
         )
+        if self.store is not None:
+            if not self.store.escalate(approval_id, child):
+                current = self.store.get(approval_id)
+                if current is not None:
+                    self._requests[approval_id] = current
+                return ApprovalResult(approval_id=approval_id, status=self._status_of(approval_id), reason="not_pending_or_missing")
+            req = self.store.get(approval_id) or req
+            self._requests[approval_id] = req
+        else:
+            req.mark_escalated()
+        self._record_evidence(req)
         self._requests[child.approval_id] = child
         log.info(
             "approvals.escalate",
