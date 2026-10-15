@@ -58,9 +58,9 @@ class TaskResult(BaseModel):
 
 
 class RetryPolicy(BaseModel):
-    max_attempts: int = 1
-    backoff_base: float = 0.5
-    backoff_cap: float = 10.0
+    max_attempts: int = Field(default=1, ge=1)
+    backoff_base: float = Field(default=0.5, ge=0)
+    backoff_cap: float = Field(default=10.0, ge=0)
 
     def backoff(self, attempt: int) -> float:
         return min(self.backoff_base * (2 ** attempt), self.backoff_cap)
@@ -72,7 +72,7 @@ class Task(BaseModel):
     name: str
     callable_desc: str = ""  # human-readable description
     dependencies: list[str] = Field(default_factory=list)
-    timeout: float = 60.0
+    timeout: float = Field(default=60.0, gt=0)
     retry: RetryPolicy = Field(default_factory=RetryPolicy)
     required: bool = True  # if True, failure cancels dependents
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -181,6 +181,10 @@ class Orchestrator:
         max_concurrency: int = 4,
         default_timeout: float = 60.0,
     ) -> None:
+        if max_concurrency < 1:
+            raise ValueError("max_concurrency must be at least 1")
+        if default_timeout <= 0:
+            raise ValueError("default_timeout must be greater than 0")
         self.max_concurrency = max_concurrency
         self.default_timeout = default_timeout
         self._semaphore: asyncio.Semaphore | None = None
