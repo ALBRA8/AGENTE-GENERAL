@@ -290,12 +290,18 @@ class TestProviderSettingsEndpoints:
         )
 
     def test_rejects_missing_or_invalid_bearer_token(self, client):
-        r = client.get(
+        missing = client.get(
+            "/api/v1/provider/config",
+            headers={"Authorization": ""},
+        )
+        assert missing.status_code == 401
+
+        invalid = client.get(
             "/api/v1/provider/config",
             headers={"Authorization": "Bearer incorrect-token"},
         )
-        assert r.status_code == 401
-        assert r.headers.get("www-authenticate") == "Bearer"
+        assert invalid.status_code == 401
+        assert invalid.headers.get("www-authenticate") == "Bearer"
 
     def test_fails_closed_when_token_is_not_configured(self, client, monkeypatch):
         monkeypatch.delenv("ALBRA_PROVIDER_SETTINGS_TOKEN")
