@@ -28,6 +28,9 @@ dependencies = [
     "structlog>=23.2.0",
 ]
 
+[project.scripts]
+albra = "albra_seed.cli:main"
+
 [project.optional-dependencies]
 openai = ["openai>=1.10.0"]
 anthropic = ["anthropic>=0.18.0"]
