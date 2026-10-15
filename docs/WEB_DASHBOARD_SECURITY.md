@@ -79,3 +79,21 @@ to the intended dashboard origin, and rotate the token if exposed. Keep
 `SETTINGS_ENCRYPTION_KEY` configured separately for encryption of stored
 provider API keys. Never reuse the provider API key as the dashboard access
 token.
+
+
+## Hardening implemented in the security branch
+
+- Validation responses omit Pydantic's raw `input` field; oversized submitted secrets are not echoed.
+- Encryption and database error logs record exception classes, not exception messages that may contain paths or secret-bearing values.
+- CORS is disabled unless `ALBRA_CORS_ORIGINS` is explicitly configured with comma-separated exact origins (scheme + host + optional port). Credentials are disabled; only the API methods and headers needed by the dashboard are allowed.
+- Request bodies with a declared `Content-Length` above 1 MiB are rejected. API key fields are separately limited to 4096 characters.
+
+## Mandatory deployment controls (not verifiable from repository source alone)
+
+- Set `ALBRA_CORS_ORIGINS` to the exact deployed dashboard origin(s), never `*`; verify the browser preflight from the real origin.
+- Terminate TLS at the managed platform or reverse proxy, redirect HTTP to HTTPS, and configure forwarded headers only from trusted proxy hops. Do not trust arbitrary client-supplied `X-Forwarded-For` or `X-Forwarded-Proto`.
+- Apply shared/distributed rate limits at the edge for authentication failures and provider-settings writes. The app's request-size cap is not a rate limiter and must not be treated as one.
+- Keep `ALBRA_PROVIDER_SETTINGS_TOKEN` and `SETTINGS_ENCRYPTION_KEY` in the platform secret manager, independently generated and rotated. Restrict who can read them; back up the encryption key separately from the encrypted database and rehearse recovery.
+- Confirm the platform's SQLite disk persistence, file permissions, TLS certificate, proxy configuration, and isolation between tenants/users. The current settings store is a single shared configuration store, not per-user/tenant storage.
+
+Do not mark production readiness complete until these deployment checks and the dashboard build/security scan have passed in CI and the deployed environment.
