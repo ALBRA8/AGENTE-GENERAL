@@ -151,6 +151,8 @@ def test_fresh_engine_after_restart_does_not_reconstruct_or_claim_agent_run(tmp_
             pending.approval_id, "verified-reviewer", authorized=True
         )
         assert approved.status is ApprovalStatus.APPROVED
+        observed = await origin.wait_for_decision(pending.approval_id)
+        assert observed.status is ApprovalStatus.APPROVED
 
         # A fresh engine sees durable approval evidence, but has no original
         # request continuation, agent/session binding, or provider state.
