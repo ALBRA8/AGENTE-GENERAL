@@ -329,6 +329,12 @@ class TestProviderSettingsEndpoints:
         assert r.status_code == 503
         assert "not configured" in r.json()["detail"]
 
+    def test_fails_closed_when_token_is_too_short(self, client, monkeypatch):
+        monkeypatch.setenv("ALBRA_PROVIDER_SETTINGS_TOKEN", "short")
+        r = client.get("/api/v1/provider/config")
+        assert r.status_code == 503
+        assert "securely" in r.json()["detail"]
+
     def test_get_config_default(self, client):
         r = client.get("/api/v1/provider/config")
         assert r.status_code == 200
