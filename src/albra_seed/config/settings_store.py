@@ -127,14 +127,16 @@ def _ensure_db() -> sqlite3.Connection:
     except OSError:
         pass  # best-effort
 
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
-
-    # Reject symlinks (same rule as the approval store).
+    # Reject symlinks BEFORE SQLite opens the path. Checking after
+    # connect() is too late: SQLite may already have followed the link
+    # and opened or created the target database.
     if db_path.is_symlink():
         raise ProviderConfigError(
             f"Provider config DB path must not be a symlink: {db_path}"
         )
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
 
     # Create schema if not exists.
     conn.execute("PRAGMA journal_mode=WAL")
