@@ -41,6 +41,7 @@ import os
 import sqlite3
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 from typing import Any
 
 import structlog
@@ -57,6 +58,34 @@ class SettingsEncryptionError(Exception):
 
 class ProviderConfigError(Exception):
     """Raised when provider config validation fails."""
+
+
+def _validate_provider_base_url(base_url: str) -> None:
+    """Restrict NVIDIA requests to the official HTTPS API endpoint.
+
+    This provider currently supports NVIDIA's hosted API only. An exact
+    host allowlist prevents a saved dashboard URL from turning the backend
+    into an SSRF proxy for loopback, cloud metadata, or private services.
+    """
+    try:
+        parsed = urlsplit(base_url)
+        port = parsed.port
+    except ValueError as exc:
+        raise ProviderConfigError("Invalid NVIDIA base_url") from exc
+
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "integrate.api.nvidia.com"
+        or parsed.username is not None
+        or parsed.password is not None
+        or port not in (None, 443)
+        or parsed.path.rstrip("/") != "/v1"
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ProviderConfigError(
+            "NVIDIA base_url must be https://integrate.api.nvidia.com/v1"
+        )
 
 
 def _get_master_key() -> bytes | None:
@@ -272,6 +301,8 @@ def save_config(
         raise ProviderConfigError("max_tokens must be between 1 and 32768")
     if timeout < 1 or timeout > 600:
         raise ProviderConfigError("timeout must be between 1 and 600 seconds")
+    if provider == "nvidia":
+        _validate_provider_base_url(base_url)
 
     conn = _ensure_db()
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
