@@ -57,9 +57,7 @@ class ToolPermission(BaseModel):
             return False
         if autonomy_level not in self.allowed_autonomy_levels:
             return False
-        if self.requires_approval and not has_approval:
-            return False
-        return True
+        return not (self.requires_approval and not has_approval)
 
 
 class ToolDefinition(BaseModel):

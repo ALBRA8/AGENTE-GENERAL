@@ -23,8 +23,9 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
+from collections.abc import Callable, Coroutine
 from enum import Enum
-from typing import Any, Callable, Coroutine
+from typing import Any
 
 import structlog
 from pydantic import BaseModel, Field
@@ -115,23 +116,23 @@ class TaskGraph:
                     )
 
         # Cycle detection via DFS
-        WHITE, GRAY, BLACK = 0, 1, 2
-        color: dict[str, int] = {tid: WHITE for tid in self._tasks}
+        white, gray, black = 0, 1, 2
+        color: dict[str, int] = dict.fromkeys(self._tasks, white)
 
         def dfs(tid: str, path: list[str]) -> None:
-            color[tid] = GRAY
+            color[tid] = gray
             path.append(tid)
             for dep in self._tasks[tid].dependencies:
-                if color[dep] == GRAY:
+                if color[dep] == gray:
                     cycle = path[path.index(dep):] + [dep]
                     raise ValueError(f"Cycle detected: {' → '.join(cycle)}")
-                if color[dep] == WHITE:
+                if color[dep] == white:
                     dfs(dep, path)
             path.pop()
-            color[tid] = BLACK
+            color[tid] = black
 
         for tid in self._tasks:
-            if color[tid] == WHITE:
+            if color[tid] == white:
                 dfs(tid, [])
 
     def topological_order(self) -> list[str]:
@@ -342,7 +343,7 @@ class Orchestrator:
                 *[run_task(t) for t in wave_tasks],
                 return_exceptions=False,
             )
-            for tid, res in zip(wave, wave_results):
+            for tid, res in zip(wave, wave_results, strict=False):
                 results[tid] = res
                 completed_ids.add(tid)
 

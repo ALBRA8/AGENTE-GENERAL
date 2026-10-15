@@ -15,8 +15,9 @@ from __future__ import annotations
 
 import time
 import uuid
+from collections.abc import Callable
 from enum import Enum
-from typing import Any, Callable
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -93,9 +94,7 @@ class Plan(BaseModel):
             return False
         if self.tool_calls_made >= self.budget.max_tool_calls:
             return False
-        if self.started_at and (time.time() - self.started_at) > self.budget.max_duration_s:
-            return False
-        return True
+        return not (self.started_at and time.time() - self.started_at > self.budget.max_duration_s)
 
     def all_completed(self) -> bool:
         return all(st.state == SubtaskState.COMPLETED for st in self.subtasks)
@@ -170,11 +169,10 @@ class PlanExecutor:
                 st.completed_at = time.time()
 
                 # Validate output
-                if st.validator and st.validator in self._validators:
-                    if not self._validators[st.validator](result):
-                        st.state = SubtaskState.FAILED
-                        st.error = "output validation failed"
-                        continue
+                if st.validator and st.validator in self._validators and not self._validators[st.validator](result):
+                    st.state = SubtaskState.FAILED
+                    st.error = "output validation failed"
+                    continue
 
                 st.state = SubtaskState.COMPLETED
 
