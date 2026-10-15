@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from albra_seed.approvals.checkpoint import CheckpointValidationError, SuspensionCheckpointV1
 from albra_seed.approvals.suspension import (
     SuspendedExecution,
     SuspendedExecutionError,
@@ -25,7 +26,7 @@ from albra_seed.approvals.suspension import (
 )
 
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 @dataclass(frozen=True)
 class DispatchOutcome:
     """Observation for operators; never used to automatically retry dispatch."""
@@ -58,7 +59,7 @@ class SQLiteSuspendedExecutionCoordinator:
                 connection.execute("BEGIN IMMEDIATE")
                 try:
                     version = connection.execute("PRAGMA user_version").fetchone()[0]
-                    if version not in (0, _SCHEMA_VERSION):
+                    if version not in (0, 1, _SCHEMA_VERSION):
                         raise SuspendedExecutionError(
                             "unsupported HITL database schema version"
                         )
@@ -101,7 +102,19 @@ class SQLiteSuspendedExecutionCoordinator:
                         )
                         """
                     )
-                    connection.execute("PRAGMA user_version = 1")
+                    connection.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS hitl_execution_checkpoints (
+                            approval_id TEXT PRIMARY KEY
+                                REFERENCES hitl_suspended_executions(approval_id),
+                            schema_version INTEGER NOT NULL,
+                            payload_json TEXT NOT NULL,
+                            payload_sha256 TEXT NOT NULL,
+                            created_at TEXT NOT NULL
+                        )
+                        """
+                    )
+                    connection.execute("PRAGMA user_version = 2")
                     connection.commit()
                 except Exception:
                     connection.rollback()
@@ -402,6 +415,118 @@ class SQLiteSuspendedExecutionCoordinator:
             return DispatchOutcome(approval_id, outcome, timestamp, detail)
         except sqlite3.Error as exc:
             raise SuspendedExecutionError("HITL dispatch outcome write failed") from exc
+
+    def save_checkpoint(self, checkpoint: SuspensionCheckpointV1) -> None:
+        """Persist a validated server-owned checkpoint at the HITL wait boundary.
+
+        The checkpoint is not a serialized coroutine and is not sufficient by
+        itself to restart Agent.run(). The caller must build it from trusted
+        runtime state, after validating the exact tool call and principal.
+        """
+        if not isinstance(checkpoint, SuspensionCheckpointV1):
+            raise SuspendedExecutionError("unsupported checkpoint object")
+        payload = checkpoint.to_json()
+        digest = checkpoint.payload_sha256
+        try:
+            with self._connection() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                try:
+                    row = connection.execute(
+                        "SELECT * FROM hitl_suspended_executions WHERE approval_id = ?",
+                        (checkpoint.approval_id,),
+                    ).fetchone()
+                    if row is None:
+                        raise SuspendedExecutionError("checkpoint approval does not exist")
+                    bindings = {
+                        "execution_id": row["execution_id"],
+                        "correlation_id": row["correlation_id"],
+                        "tool_call_id": row["tool_call_id"],
+                        "tool_name": row["tool_name"],
+                        "arguments_sha256": row["arguments_sha256"],
+                        "principal_id": row["principal_id"],
+                    }
+                    for field, expected in bindings.items():
+                        if getattr(checkpoint, field) != expected:
+                            raise SuspendedExecutionError(
+                                "checkpoint binding mismatch: " + field
+                            )
+                    if datetime.fromisoformat(row["deadline"]) != datetime.fromisoformat(checkpoint.deadline):
+                        raise SuspendedExecutionError("checkpoint deadline binding mismatch")
+                    if row["state"] not in ("awaiting_approval", "approved"):
+                        raise SuspendedExecutionError("checkpoint state is not resumable")
+                    existing = connection.execute(
+                        "SELECT payload_sha256 FROM hitl_execution_checkpoints WHERE approval_id = ?",
+                        (checkpoint.approval_id,),
+                    ).fetchone()
+                    if existing is not None:
+                        if existing["payload_sha256"] != digest:
+                            raise SuspendedExecutionError("checkpoint already exists with different payload")
+                        connection.commit()
+                        return
+                    connection.execute(
+                        "INSERT INTO hitl_execution_checkpoints "
+                        "(approval_id, schema_version, payload_json, payload_sha256, created_at) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (checkpoint.approval_id, checkpoint.schema_version, payload, digest,
+                         datetime.now(timezone.utc).isoformat()),
+                    )
+                    connection.commit()
+                except Exception:
+                    connection.rollback()
+                    raise
+        except sqlite3.Error as exc:
+            raise SuspendedExecutionError("HITL checkpoint storage write failed") from exc
+
+    def get_checkpoint(
+        self, approval_id: str, *, runtime_compatibility: str,
+        now: datetime | None = None,
+    ) -> SuspensionCheckpointV1 | None:
+        """Load and validate checkpoint integrity, bindings, runtime, and deadline.
+
+        This returns data only. It deliberately does not dispatch tools or
+        reconstruct an Agent.run coroutine; a trusted restore coordinator must
+        repeat authorization/policy checks before any side effect.
+        """
+        try:
+            with self._connection() as connection:
+                row = connection.execute(
+                    "SELECT c.payload_json, c.payload_sha256, c.schema_version, s.* "
+                    "FROM hitl_execution_checkpoints c "
+                    "JOIN hitl_suspended_executions s USING (approval_id) "
+                    "WHERE c.approval_id = ?",
+                    (approval_id,),
+                ).fetchone()
+            if row is None:
+                return None
+            if row["schema_version"] != 1:
+                raise SuspendedExecutionError("unsupported checkpoint schema version")
+            raw = row["payload_json"]
+            checkpoint = SuspensionCheckpointV1.from_json(raw)
+            if checkpoint.payload_sha256 != row["payload_sha256"]:
+                raise SuspendedExecutionError("checkpoint integrity check failed")
+            if checkpoint.approval_id != approval_id:
+                raise SuspendedExecutionError("checkpoint approval binding mismatch")
+            for field in (
+                "execution_id", "correlation_id", "tool_call_id", "tool_name",
+                "arguments_sha256", "principal_id",
+            ):
+                if getattr(checkpoint, field) != row[field]:
+                    raise SuspendedExecutionError("checkpoint binding mismatch: " + field)
+            if checkpoint.runtime_compatibility != runtime_compatibility:
+                raise SuspendedExecutionError("checkpoint runtime compatibility mismatch")
+            state = row["state"]
+            if state not in ("awaiting_approval", "approved"):
+                raise SuspendedExecutionError("checkpoint execution is not resumable")
+            instant = self._now(now)
+            if instant >= checkpoint.deadline:
+                raise SuspendedExecutionError("checkpoint deadline has expired")
+            if canonical_arguments_sha256(dict(checkpoint.tool_arguments)) != checkpoint.arguments_sha256:
+                raise SuspendedExecutionError("checkpoint argument digest mismatch")
+            return checkpoint
+        except CheckpointValidationError as exc:
+            raise SuspendedExecutionError("HITL checkpoint validation failed") from exc
+        except sqlite3.Error as exc:
+            raise SuspendedExecutionError("HITL checkpoint storage read failed") from exc
 
     def recover_interrupted_dispatches(
         self, *, observed_at: datetime | None = None
