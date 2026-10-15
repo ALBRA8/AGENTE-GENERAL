@@ -518,7 +518,7 @@ class SQLiteSuspendedExecutionCoordinator:
             if state not in ("awaiting_approval", "approved"):
                 raise SuspendedExecutionError("checkpoint execution is not resumable")
             instant = self._now(now)
-            if instant >= checkpoint.deadline:
+            if instant >= datetime.fromisoformat(checkpoint.deadline).astimezone(timezone.utc):
                 raise SuspendedExecutionError("checkpoint deadline has expired")
             if canonical_arguments_sha256(dict(checkpoint.tool_arguments)) != checkpoint.arguments_sha256:
                 raise SuspendedExecutionError("checkpoint argument digest mismatch")
