@@ -125,6 +125,16 @@ def create_app(
                 return JSONResponse(status_code=413, content={"detail": "Request body too large"})
             body.extend(chunk)
         request._body = bytes(body)
+        body_sent = False
+
+        async def receive_buffered() -> dict[str, Any]:
+            nonlocal body_sent
+            if body_sent:
+                return {"type": "http.request", "body": b"", "more_body": False}
+            body_sent = True
+            return {"type": "http.request", "body": bytes(body), "more_body": False}
+
+        request._receive = receive_buffered
         return await call_next(request)
 
     # Conservative process-local backstop for provider-settings abuse. Production
