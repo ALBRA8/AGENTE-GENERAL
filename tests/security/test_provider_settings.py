@@ -323,6 +323,24 @@ class TestProviderSettingsEndpoints:
         assert invalid.status_code == 401
         assert invalid.headers.get("www-authenticate") == "Bearer"
 
+    def test_every_provider_endpoint_requires_authentication(self, client):
+        requests = [
+            ("GET", "/api/v1/provider/config", None),
+            ("PUT", "/api/v1/provider/config", {
+                "provider": "mock", "base_url": "", "model": ""
+            }),
+            ("PUT", "/api/v1/provider/api-key", {"api_key": "test-key"}),
+            ("DELETE", "/api/v1/provider/api-key", None),
+            ("POST", "/api/v1/provider/test", None),
+            ("POST", "/api/v1/provider/reset", None),
+            ("GET", "/api/v1/provider/defaults", None),
+        ]
+        for method, path, body in requests:
+            response = client.request(
+                method, path, json=body, headers={"Authorization": ""}
+            )
+            assert response.status_code == 401, f"{method} {path} bypassed auth"
+
     def test_fails_closed_when_token_is_not_configured(self, client, monkeypatch):
         monkeypatch.delenv("ALBRA_PROVIDER_SETTINGS_TOKEN")
         r = client.get("/api/v1/provider/config")
