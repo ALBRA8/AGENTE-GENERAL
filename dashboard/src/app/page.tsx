@@ -127,7 +127,7 @@ export default function Home() {
       if (apiKey.trim()) {
         const keyRes = await fetch(`${API_BASE}/api/v1/provider/api-key`, {
           method: "PUT",
-          headers: { "Content-Type": "application/json" },
+          headers: { ...authHeaders(), "Content-Type": "application/json" },
           body: JSON.stringify({ api_key: apiKey.trim() }),
         });
         if (!keyRes.ok) {
