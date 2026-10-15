@@ -129,17 +129,21 @@ input/output contract, `RunContext`, and the in-process `Tracer`.
 
 ## Running tests
 
+The earlier baseline reported 750 passing regression tests before the hardening
+follow-up commits. The latest added tests have not yet been executed in this
+environment; re-run the commands below before treating them as verified.
+
 ```bash
-# Orchestration tests (21)
+# Orchestration tests (24 expected after hardening additions)
 python -m pytest tests/orchestration/ -v
 
-# Toolkit tests (24)
+# Toolkit tests (28 expected after hardening additions)
 python -m pytest tests/toolkit/ -v
 
-# Planning tests (18)
+# Planning tests (20 expected after hardening additions)
 python -m pytest tests/planning/ -v
 
-# Full regression suite (750 pass)
+# Full regression suite (re-run after latest hardening commits)
 python -m pytest tests/ -q --ignore=tests/llm_real
 ```
 
