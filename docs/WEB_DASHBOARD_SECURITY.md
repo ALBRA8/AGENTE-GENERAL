@@ -55,8 +55,8 @@ separate frontend or a running machine.
 
 The provider settings endpoints (`/api/v1/provider/*`) require a server-side
 bearer token. Configure `ALBRA_PROVIDER_SETTINGS_TOKEN` in the API process
-environment with a long, randomly generated secret before enabling the
-dashboard. Do not place this value in `NEXT_PUBLIC_*`, a frontend bundle,
+environment with a randomly generated secret of at least 32 characters before enabling the
+dashboard. The API fails closed with HTTP 503 if the configured value is shorter. Do not place this value in `NEXT_PUBLIC_*`, a frontend bundle,
 source control, a URL, or browser storage.
 
 Generate a token locally, for example:
