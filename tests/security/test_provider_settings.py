@@ -7,7 +7,7 @@ Verifies:
 - API key NOT returned by get_config (only api_key_set: bool).
 - Encryption failure (missing SETTINGS_ENCRYPTION_KEY) → fail-closed.
 - Reset to defaults.
-- Endpoint authorization (currently no auth — documented).
+- Provider-settings endpoints require the configured bearer token.
 - Endpoint request validation.
 - No secrets in responses.
 """
@@ -268,6 +268,7 @@ class TestProviderSettingsEndpoints:
         key = Fernet.generate_key().decode()
         db_path = tmp_path / "endpoint_test.db"
         monkeypatch.setenv("SETTINGS_ENCRYPTION_KEY", key)
+        monkeypatch.setenv("ALBRA_PROVIDER_SETTINGS_TOKEN", "test-provider-settings-token")
         monkeypatch.setenv("ALBRA_PROVIDER_CONFIG_DB", str(db_path))
 
         # Force re-import of all affected modules so env vars are picked up
@@ -282,7 +283,24 @@ class TestProviderSettingsEndpoints:
 
         runtime = Runtime(config=SeedConfig())
         app = create_app(runtime)
-        return TestClient(app)
+        return TestClient(
+            app,
+            headers={"Authorization": "Bearer test-provider-settings-token"},
+        )
+
+    def test_rejects_missing_or_invalid_bearer_token(self, client):
+        r = client.get(
+            "/api/v1/provider/config",
+            headers={"Authorization": "Bearer incorrect-token"},
+        )
+        assert r.status_code == 401
+        assert r.headers.get("www-authenticate") == "Bearer"
+
+    def test_fails_closed_when_token_is_not_configured(self, client, monkeypatch):
+        monkeypatch.delenv("ALBRA_PROVIDER_SETTINGS_TOKEN")
+        r = client.get("/api/v1/provider/config")
+        assert r.status_code == 503
+        assert "not configured" in r.json()["detail"]
 
     def test_get_config_default(self, client):
         r = client.get("/api/v1/provider/config")
