@@ -126,3 +126,47 @@ def test_unauthorized_durable_decision_fails_closed_and_preserves_pending(tmp_pa
 
     origin_store = origin._suspension_store
     asyncio.run(scenario())
+
+
+def test_fresh_engine_after_restart_does_not_reconstruct_or_claim_agent_run(tmp_path):
+    """Durable approval evidence alone must not recreate the original execution."""
+    database = tmp_path / "hitl-restart-no-resume.sqlite3"
+    origin_store = SQLiteSuspendedExecutionCoordinator(database)
+    origin = ApprovalEngine(suspension_store=origin_store)
+    reviewer = ApprovalEngine(
+        suspension_store=SQLiteSuspendedExecutionCoordinator(database)
+    )
+    context = RunContext(agent_id="restart-agent", task="do not reconstruct")
+    call = ToolCall(
+        id="call-restart",
+        tool_name="protected_tool",
+        arguments={"resource_id": "restart-test-resource"},
+    )
+
+    async def scenario():
+        pending = await origin.request(
+            call, context=context, deadline=utc_now() + timedelta(minutes=2)
+        )
+        approved = await reviewer.approve(
+            pending.approval_id, "verified-reviewer", authorized=True
+        )
+        assert approved.status is ApprovalStatus.APPROVED
+
+        # A fresh engine sees durable approval evidence, but has no original
+        # request continuation, agent/session binding, or provider state.
+        restarted = ApprovalEngine(
+            suspension_store=SQLiteSuspendedExecutionCoordinator(database)
+        )
+        projected = restarted.get(pending.approval_id)
+        assert projected is not None
+        assert projected.status is ApprovalStatus.APPROVED
+        assert not restarted.claim_approved_tool_call(
+            pending.approval_id, call, context
+        )
+
+        # The originating engine still owns the exact in-memory execution and
+        # can make its one-shot claim; restart must not steal/rebuild it.
+        assert origin.claim_approved_tool_call(pending.approval_id, call, context)
+
+    asyncio.run(scenario())
+
