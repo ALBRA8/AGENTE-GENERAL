@@ -122,7 +122,7 @@ def _get_fernet():
         ) from exc
     except Exception as exc:
         raise SettingsEncryptionError(
-            f"Invalid SETTINGS_ENCRYPTION_KEY: {exc}. The key must be a "
+            "Invalid SETTINGS_ENCRYPTION_KEY. The key must be a "
             "URL-safe base64-encoded 32-byte string (Fernet format)."
         ) from exc
 
@@ -245,7 +245,7 @@ def get_config() -> dict[str, Any]:
         ).fetchone()
         conn.close()
     except Exception as exc:
-        log.error("settings.db_error", error=str(exc))
+        log.error("settings.db_error", error_type=type(exc).__name__)
         return {**DEFAULT_CONFIG, "api_key_set": False, "last_test_at": None,
                 "last_test_ok": None}
 
@@ -398,7 +398,7 @@ def get_api_key() -> str | None:
     except SettingsEncryptionError:
         return None
     except Exception as exc:
-        log.error("settings.decrypt_failed", error=str(exc))
+        log.error("settings.decrypt_failed", error_type=type(exc).__name__)
         return None
 
 
