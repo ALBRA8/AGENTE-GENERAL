@@ -299,17 +299,12 @@ def build_provider_settings_router(ctx: RequestContext) -> Any:
 
                 if response.errors:
                     record_test_result(False)
-                    safe_msg = response.errors[0]
-                    import re
-                    safe_msg = re.sub(
-                        r"nvapi-[A-Za-z0-9_\-.]{8,}", "nvapi-[REDACTED]", safe_msg
-                    )
-                    safe_msg = re.sub(
-                        r"Bearer\s+[A-Za-z0-9_\-.]{8,}", "Bearer [REDACTED]", safe_msg
-                    )
+                    # Provider SDK errors may contain request details, URLs,
+                    # or credentials. Return a fixed message instead of trying
+                    # to redact an open-ended set of secret formats.
                     return TestConnectionResponse(
                         ok=False,
-                        message=f"Provider returned an error: {safe_msg}",
+                        message="Provider returned an error; check protected server-side diagnostics.",
                         latency_ms=round(latency_ms, 2),
                     )
 
