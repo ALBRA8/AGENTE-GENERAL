@@ -263,6 +263,20 @@ class TestTimeout:
         assert "timeout" in result.get("slow").error
 
 
+class TestConfigurationValidation:
+    def test_retry_policy_rejects_zero_attempts(self):
+        with pytest.raises(ValueError):
+            RetryPolicy(max_attempts=0)
+
+    def test_task_rejects_nonpositive_timeout(self):
+        with pytest.raises(ValueError):
+            Task(name="invalid", timeout=0)
+
+    def test_orchestrator_rejects_zero_concurrency(self):
+        with pytest.raises(ValueError, match="max_concurrency"):
+            Orchestrator(max_concurrency=0)
+
+
 class TestRetry:
     @pytest.mark.asyncio
     async def test_retry_succeeds_on_second_attempt(self):
