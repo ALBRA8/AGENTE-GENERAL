@@ -110,10 +110,12 @@ def build_provider_settings_router(ctx: RequestContext) -> Any:
     ) -> None:
         """Fail closed unless a configured token matches in constant time."""
         expected = os.environ.get("ALBRA_PROVIDER_SETTINGS_TOKEN", "")
-        if not expected:
+        # A short configured value is not a meaningful bearer secret. Fail
+        # closed instead of silently accepting a guessable admin credential.
+        if len(expected) < 32:
             raise HTTPException(
                 status_code=503,
-                detail="Provider settings authentication is not configured",
+                detail="Provider settings authentication is not configured securely",
             )
         scheme, _, supplied = (authorization or "").partition(" ")
         if (
