@@ -1,15 +1,13 @@
 """create_app(runtime) — build a FastAPI app wired to a Runtime.
 
-FastAPI is LAZY-imported: calling `create_app` requires fastapi to be
-installed. Importing this module does NOT require it. If fastapi is not
-installed, `create_app` raises a clean ImportError with installation
-instructions.
-
-Public routes mount under `/api/v1/`; internal routes under `/internal/`.
+Public routes mount under /api/v1/; internal routes under /internal/.
+Cross-origin browser access is disabled unless ALBRA_CORS_ORIGINS explicitly
+lists trusted origins (comma-separated exact origins).
 """
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from albra_seed.api.context import RequestContext
@@ -37,34 +35,61 @@ def create_app(
     version: str = "1.0.0",
     a2a_server: Any = None,
 ) -> Any:
-    """Create a FastAPI app bound to `runtime`.
-
-    Parameters
-    ----------
-    runtime : Runtime
-        The runtime whose health/readiness/agent info is exposed.
-    config : ConfigManager | None
-        Optional pre-built config manager. If None, one is constructed
-        from `runtime.config`.
-    agents : dict[str, Any] | None
-        Optional initial agent registry keyed by agent_id.
-    title, version : str
-        API metadata shown by /docs.
-    a2a_server : Any | None
-        Optional A2AServer. When provided, the A2A JSON-RPC route
-        (``POST /a2a/v1/``) and the discovery route
-        (``GET /.well-known/agent-card.json``) are mounted. When None
-        (CORE_ONLY), only the well-known route is mounted and it
-        returns HTTP 404. This keeps the A2A HTTP layer optional —
-        importing the package does not require it.
-    """
+    """Create a FastAPI app bound to `runtime`."""
     fastapi = _require_fastapi()
-    FastAPI = fastapi.FastAPI
-    ctx = RequestContext(
-        runtime, config=config, agents=agents, a2a_server=a2a_server
-    )
-    app = FastAPI(title=title, version=version)
+    from fastapi import Request
+    from fastapi.exceptions import RequestValidationError
+    from fastapi.responses import JSONResponse
+
+    ctx = RequestContext(runtime, config=config, agents=agents, a2a_server=a2a_server)
+    app = fastapi.FastAPI(title=title, version=version)
     app.state.ctx = ctx
+
+    # Never let FastAPI/Pydantic echo submitted values (including oversized
+    # API keys) into validation responses.
+    @app.exception_handler(RequestValidationError)
+    async def sanitized_validation_error(
+        request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        safe_errors = []
+        for error in exc.errors():
+            safe_errors.append({
+                "loc": list(error.get("loc", ())),
+                "msg": str(error.get("msg", "Invalid request")),
+                "type": str(error.get("type", "value_error")),
+            })
+        return JSONResponse(status_code=422, content={"detail": safe_errors})
+
+    # Exact origin allowlist only. No wildcard, no reflected Origin, and no
+    # cookies/credentials: the dashboard authenticates with an explicit token.
+    origins = [
+        item.strip().rstrip("/")
+        for item in os.environ.get("ALBRA_CORS_ORIGINS", "").split(",")
+        if item.strip()
+    ]
+    if origins:
+        from fastapi.middleware.cors import CORSMiddleware
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=origins,
+            allow_credentials=False,
+            allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+            allow_headers=["Authorization", "Content-Type"],
+            max_age=600,
+        )
+
+    # Bound request body size before JSON parsing to limit memory/CPU abuse.
+    # Provider settings are small JSON documents; 1 MiB is ample.
+    @app.middleware("http")
+    async def limit_request_body(request: Request, call_next: Any) -> Any:
+        length = request.headers.get("content-length")
+        if length:
+            try:
+                if int(length) > 1_048_576:
+                    return JSONResponse(status_code=413, content={"detail": "Request body too large"})
+            except ValueError:
+                return JSONResponse(status_code=400, content={"detail": "Invalid Content-Length"})
+        return await call_next(request)
 
     # PUBLIC routes — /api/v1/*
     from albra_seed.api.routes import (
@@ -80,13 +105,10 @@ def create_app(
     app.include_router(build_public_execution_router(ctx), prefix="/api/v1")
     app.include_router(build_provider_settings_router(ctx), prefix="/api/v1")
 
-    # INTERNAL routes — /internal/*
+    # INTERNAL routes — diagnostics implement their own bearer + RBAC checks.
     from albra_seed.api.routes import build_internal_diagnostics_router
     app.include_router(build_internal_diagnostics_router(ctx), prefix="/internal")
 
-    # A2A routes — always mount the well-known router (returns 404 when
-    # no server is configured); mount the JSON-RPC router only when an
-    # A2AServer is provided (CORE_ONLY safe).
     from albra_seed.api.routes.a2a import (
         build_public_a2a_router,
         build_well_known_router,
@@ -96,7 +118,7 @@ def create_app(
         app.include_router(build_public_a2a_router(ctx))
 
     @app.get("/", tags=["root"])
-    async def root() -> dict[str, str]:  # pragma: no cover - trivial
+    async def root() -> dict[str, str]:  # pragma: no cover
         return {
             "name": "albra-seed-api",
             "version": version,
