@@ -1,6 +1,9 @@
 """Durable SQLite storage for bound HITL suspended executions.
 
-The store persists no credentials or raw tool arguments. A claim is committed
+The approval ledger stores an argument digest, not raw tool arguments or credentials.
+The opt-in checkpoint table stores a validated server-owned argument payload so a
+future restore coordinator can recover the exact call; callers must exclude secrets,
+and deployment storage must be encrypted and access-controlled. A claim is committed
 before dispatch and is never automatically reclaimed: this gives at-most-once
 dispatch attempts, not exactly-once external effects. If a worker dies around
 an external side effect, the outcome may be unknown and requires reconciliation.
