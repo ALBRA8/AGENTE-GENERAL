@@ -52,6 +52,16 @@ def test_oversized_declared_body_rejected_before_route(monkeypatch, tmp_path):
     assert response.status_code == 413
 
 
+def test_oversized_body_without_content_length_is_rejected(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    response = client.put(
+        "/api/v1/provider/config",
+        content=b"x" * 1_048_577,
+        headers={"Content-Type": "application/octet-stream", "Content-Length": ""},
+    )
+    assert response.status_code == 413
+
+
 def test_cors_is_disabled_by_default(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     response = client.options(
