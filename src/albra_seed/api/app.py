@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 from typing import Any
+from urllib.parse import urlsplit
 
 from albra_seed.api.context import RequestContext
 from albra_seed.config import ConfigManager
@@ -67,6 +68,32 @@ def create_app(
         for item in os.environ.get("ALBRA_CORS_ORIGINS", "").split(",")
         if item.strip()
     ]
+    for origin in origins:
+        parsed_origin = urlsplit(origin)
+        is_local_http = (
+            parsed_origin.scheme == "http"
+            and parsed_origin.hostname in {"localhost", "127.0.0.1", "::1"}
+        )
+        try:
+            port = parsed_origin.port
+        except ValueError as exc:
+            raise ValueError("ALBRA_CORS_ORIGINS contains an invalid origin") from exc
+        if (
+            origin == "*"
+            or parsed_origin.scheme not in {"https", "http"}
+            or not parsed_origin.hostname
+            or (parsed_origin.scheme != "https" and not is_local_http)
+            or parsed_origin.username is not None
+            or parsed_origin.password is not None
+            or (port is not None and not (1 <= port <= 65535))
+            or parsed_origin.path not in {"", "/"}
+            or parsed_origin.query
+            or parsed_origin.fragment
+        ):
+            raise ValueError(
+                "ALBRA_CORS_ORIGINS must contain exact HTTPS origins "
+                "(HTTP is allowed only for localhost); wildcards are forbidden"
+            )
     if origins:
         from fastapi.middleware.cors import CORSMiddleware
         app.add_middleware(
