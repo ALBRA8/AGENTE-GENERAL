@@ -101,6 +101,32 @@ project's dependencies.
 pip install -e '.[dev,a2a,api]'
 ```
 
+## Runnable examples
+
+These examples use only local deterministic behavior; they do not call external
+providers or require credentials:
+
+```bash
+python docs/agent-platform-expansion/examples/workflow_recovery.py
+python docs/agent-platform-expansion/examples/tool_context_trace.py
+```
+
+The first example retries a transient task failure and passes its verified
+result to a dependent task. The second uses a registered tool, a validated
+input/output contract, `RunContext`, and the in-process `Tracer`.
+
+## Safety contracts
+
+- The toolkit enforces a deliberately small JSON Schema subset (types,
+  required properties, enums, nested object properties, array items, and
+  `additionalProperties: false`). It is not a full JSON Schema implementation.
+- A tool declared as `side_effect` requires `has_approval=True` at invocation
+  time in addition to its configured permission policy. This boolean is a
+  caller-supplied signal, not an approval workflow or identity provider; do
+  not expose it directly to untrusted clients.
+- Planning rejects unknown dependency IDs, duplicate IDs, and dependency cycles
+  before executing any subtask.
+
 ## Running tests
 
 ```bash
