@@ -304,8 +304,9 @@ class TestBuiltinTools:
     async def test_calculator_divide_by_zero(self):
         from albra_seed.toolkit.registry import _calculator_tool
         result = await _calculator_tool({"a": 1, "b": 0, "op": "divide"})
-        assert result.success
-        assert result.output["result"] == float("inf")
+        assert not result.success
+        assert result.error == "division by zero"
+        assert result.output == {"error": True}
 
     @pytest.mark.asyncio
     async def test_calculator_unknown_op(self):
