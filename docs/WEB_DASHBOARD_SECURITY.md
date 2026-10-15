@@ -51,3 +51,33 @@ those keys if they may have been exposed.
 These checks must be recorded as **NOT VERIFIED** until run against the actual
 dashboard code and local services. The Python seed CI does not certify a
 separate frontend or a running machine.
+
+
+## Provider settings API authentication
+
+The provider settings endpoints (`/api/v1/provider/*`) require a server-side
+bearer token. Configure `ALBRA_PROVIDER_SETTINGS_TOKEN` in the API process
+environment with a long, randomly generated secret before enabling the
+dashboard. Do not place this value in `NEXT_PUBLIC_*`, a frontend bundle,
+source control, a URL, or browser storage.
+
+Generate a token locally, for example:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
+
+Set the resulting value in the backend's secret/environment configuration.
+The dashboard's token field sends it as an `Authorization: Bearer` header and
+keeps it in component memory only; re-enter it after reloading the page. The
+backend compares the supplied value in constant time. If the environment
+variable is missing, the endpoints fail closed with HTTP 503; missing or
+incorrect credentials receive HTTP 401. This token protects the provider
+settings endpoints only; it is not a replacement for authentication and
+authorization on other API routes.
+
+Use HTTPS for any non-loopback deployment, restrict network access and CORS
+to the intended dashboard origin, and rotate the token if exposed. Keep
+`SETTINGS_ENCRYPTION_KEY` configured separately for encryption of stored
+provider API keys. Never reuse the provider API key as the dashboard access
+token.
