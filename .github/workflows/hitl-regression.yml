@@ -18,6 +18,10 @@ on:
       - "src/albra_seed/approvals/**"
       - "src/albra_seed/runtime/agent.py"
       - "tests/security/test_approval_deadline_enforcement.py"
+      - "tests/security/test_hitl_durable_engine_integration.py"
+      - "tests/security/test_hitl_checkpoint_contract.py"
+      - "tests/security/test_hitl_checkpoint_store.py"
+      - "tests/security/test_hitl_sqlite_store.py"
       - ".github/workflows/hitl-regression.yml"
 
 permissions:
