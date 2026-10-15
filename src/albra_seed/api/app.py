@@ -118,6 +118,49 @@ def create_app(
                 return JSONResponse(status_code=400, content={"detail": "Invalid Content-Length"})
         return await call_next(request)
 
+    # Conservative process-local backstop for provider-settings abuse. Production
+    # must additionally enforce shared/distributed limits at the trusted edge.
+    from collections import defaultdict, deque
+    from time import monotonic
+
+    rate_windows: dict[tuple[str, str], deque[float]] = defaultdict(deque)
+    rate_window_seconds = 60.0
+
+    def _positive_int_env(name: str, default: int) -> int:
+        raw = os.environ.get(name, str(default))
+        try:
+            value = int(raw)
+        except ValueError as exc:
+            raise ValueError(f"{name} must be a positive integer") from exc
+        if value < 1:
+            raise ValueError(f"{name} must be a positive integer")
+        return value
+
+    provider_read_limit = _positive_int_env("ALBRA_PROVIDER_RATE_LIMIT_PER_MINUTE", 60)
+    provider_write_limit = _positive_int_env("ALBRA_PROVIDER_WRITE_RATE_LIMIT_PER_MINUTE", 10)
+
+    @app.middleware("http")
+    async def limit_provider_settings_rate(request: Request, call_next: Any) -> Any:
+        if not request.url.path.startswith("/api/v1/provider/"):
+            return await call_next(request)
+        client_host = request.client.host if request.client else "unknown"
+        is_write = request.method in {"PUT", "POST", "PATCH", "DELETE"}
+        limit = provider_write_limit if is_write else provider_read_limit
+        bucket = (client_host, "write" if is_write else "read")
+        now = monotonic()
+        window = rate_windows[bucket]
+        while window and now - window[0] >= rate_window_seconds:
+            window.popleft()
+        if len(window) >= limit:
+            retry_after = max(1, int(rate_window_seconds - (now - window[0])))
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Too many provider-settings requests"},
+                headers={"Retry-After": str(retry_after), "Cache-Control": "no-store"},
+            )
+        window.append(now)
+        return await call_next(request)
+
     # PUBLIC routes — /api/v1/*
     from albra_seed.api.routes import (
         build_public_agent_router,
