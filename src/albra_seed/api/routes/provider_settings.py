@@ -62,8 +62,8 @@ class ProviderConfigRequest(BaseModel):
     API key — that is handled by a separate endpoint.
     """
     provider: str = Field(..., description="mock or nvidia")
-    base_url: str = Field(default="")
-    model: str = Field(default="")
+    base_url: str = Field(default="", max_length=2048)
+    model: str = Field(default="", max_length=256)
     temperature: float = Field(default=0.5, ge=0.0, le=2.0)
     top_p: float = Field(default=1.0, ge=0.0, le=1.0)
     max_tokens: int = Field(default=1024, ge=1, le=32768)
@@ -75,7 +75,7 @@ class ApiKeyRequest(BaseModel):
     """Request body for PUT /provider/api-key. The key is encrypted
     at rest and NEVER returned.
     """
-    api_key: str = Field(..., min_length=1, description="The provider API key")
+    api_key: str = Field(..., min_length=1, max_length=4096, description="The provider API key")
 
 
 class TestConnectionResponse(BaseModel):
