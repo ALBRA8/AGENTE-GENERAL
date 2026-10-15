@@ -343,9 +343,9 @@ def _summarize_output(output: Any) -> str:
 def _safe_error_text(message: str) -> str:
     """Redact known credential formats from a tool-returned error string."""
     import re
-    msg = re.sub(r"nvapi-[A-Za-z0-9_\\-.]{8,}", "nvapi-[REDACTED]", message)
-    msg = re.sub(r"sk-[A-Za-z0-9_\\-.]{8,}", "sk-[REDACTED]", msg)
-    return re.sub(r"Bearer\\s+[A-Za-z0-9_\\-.]{8,}", "Bearer [REDACTED]", msg)
+    msg = re.sub(r"nvapi-[A-Za-z0-9_\-.]{8,}", "nvapi-[REDACTED]", message)
+    msg = re.sub(r"sk-[A-Za-z0-9_\-.]{8,}", "sk-[REDACTED]", msg)
+    return re.sub(r"Bearer\s+[A-Za-z0-9_\-.]{8,}", "Bearer [REDACTED]", msg)
 
 
 def _safe_error(exc: Exception) -> str:
