@@ -88,6 +88,48 @@ class ToolInvocation(BaseModel):
     output_summary: str | None = None  # redacted summary, never full output
 
 
+def _validate_schema(value: Any, schema: dict[str, Any]) -> str | None:
+    """Validate the safe, commonly used JSON Schema subset for tool contracts."""
+    if not schema:
+        return None
+    expected = schema.get("type")
+    type_checks = {
+        "object": lambda v: isinstance(v, dict),
+        "array": lambda v: isinstance(v, list),
+        "string": lambda v: isinstance(v, str),
+        "number": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool),
+        "integer": lambda v: isinstance(v, int) and not isinstance(v, bool),
+        "boolean": lambda v: isinstance(v, bool),
+        "null": lambda v: v is None,
+    }
+    check = type_checks.get(expected)
+    if check is not None and not check(value):
+        return f"expected {expected}"
+    if "enum" in schema and value not in schema["enum"]:
+        return "value is not an allowed enum member"
+    if isinstance(value, dict):
+        missing = [key for key in schema.get("required", []) if key not in value]
+        if missing:
+            return "missing required properties: " + ", ".join(sorted(missing))
+        properties = schema.get("properties", {})
+        if schema.get("additionalProperties") is False:
+            extras = sorted(set(value) - set(properties))
+            if extras:
+                return "unexpected properties: " + ", ".join(extras)
+        for key, item in value.items():
+            child_schema = properties.get(key)
+            if child_schema is not None:
+                error = _validate_schema(item, child_schema)
+                if error:
+                    return f"property {key}: {error}"
+    if isinstance(value, list) and "items" in schema:
+        for index, item in enumerate(value):
+            error = _validate_schema(item, schema["items"])
+            if error:
+                return f"item {index}: {error}"
+    return None
+
+
 class ToolRegistryV2:
     """Enhanced tool registry with definitions + permissions.
 
@@ -174,6 +216,20 @@ class ToolRegistryV2:
                 output={"no_callable": True},
             )
 
+        # Side-effect tools always require explicit approval, even if a caller
+        # accidentally leaves the nested permission policy at its read-only default.
+        if (
+            (definition.category == ToolCategory.SIDE_EFFECT
+             or definition.permission.category == ToolCategory.SIDE_EFFECT)
+            and not has_approval
+        ):
+            return ToolResult(
+                call_id=new_id("tc"),
+                success=False,
+                error="permission denied: explicit approval required",
+                output={"permission_denied": True},
+            )
+
         # Permission check
         if not definition.permission.can_execute(
             principal_id=principal_id,
@@ -201,6 +257,16 @@ class ToolRegistryV2:
         )
 
         try:
+            validation_error = _validate_schema(arguments, definition.input_schema)
+            if validation_error:
+                invocation.error = "invalid arguments: " + validation_error
+                return ToolResult(
+                    call_id=new_id("tc"),
+                    success=False,
+                    error=invocation.error,
+                    output={"invalid_arguments": True},
+                )
+
             coro = callable_(arguments, context=context) if context else callable_(arguments)
             result = await asyncio.wait_for(
                 coro, timeout=definition.timeout_seconds
@@ -214,8 +280,18 @@ class ToolRegistryV2:
                     output=result,
                 )
 
+            if result.success and definition.output_schema:
+                output_error = _validate_schema(result.output, definition.output_schema)
+                if output_error:
+                    result = ToolResult(
+                        call_id=new_id("tc"),
+                        success=False,
+                        error="tool output failed schema validation",
+                        output={"invalid_output": True},
+                    )
+
             invocation.success = result.success
-            invocation.error = result.error
+            invocation.error = _safe_error_text(result.error) if result.error else None
             invocation.output_summary = _summarize_output(result.output)
             return result
 
@@ -262,6 +338,14 @@ def _summarize_output(output: Any) -> str:
     if isinstance(output, str):
         return f"str({len(output)} chars)"
     return type(output).__name__
+
+
+def _safe_error_text(message: str) -> str:
+    """Redact known credential formats from a tool-returned error string."""
+    import re
+    msg = re.sub(r"nvapi-[A-Za-z0-9_\\-.]{8,}", "nvapi-[REDACTED]", message)
+    msg = re.sub(r"sk-[A-Za-z0-9_\\-.]{8,}", "sk-[REDACTED]", msg)
+    return re.sub(r"Bearer\\s+[A-Za-z0-9_\\-.]{8,}", "Bearer [REDACTED]", msg)
 
 
 def _safe_error(exc: Exception) -> str:
