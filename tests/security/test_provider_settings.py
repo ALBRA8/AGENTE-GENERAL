@@ -150,7 +150,7 @@ class TestSettingsStore:
             save_config,
         )
 
-        save_config(provider="nvidia", base_url="x", model="y")
+        save_config(provider="nvidia", base_url="https://integrate.api.nvidia.com/v1", model="y")
         save_api_key("nvapi-test-key")
         reset_to_defaults()
 
@@ -223,6 +223,26 @@ class TestSettingsStore:
                 model="y",
                 temperature=5.0,
             )
+
+    @pytest.mark.parametrize(
+        "base_url",
+        [
+            "http://integrate.api.nvidia.com/v1",
+            "https://127.0.0.1/v1",
+            "https://localhost/v1",
+            "https://169.254.169.254/latest/meta-data",
+            "https://example.com/v1",
+            "https://integrate.api.nvidia.com.evil.example/v1",
+            "https://user:pass@integrate.api.nvidia.com/v1",
+            "https://integrate.api.nvidia.com:8443/v1",
+            "https://integrate.api.nvidia.com/v1?next=http://127.0.0.1",
+        ],
+    )
+    def test_rejects_untrusted_provider_base_urls(self, temp_env, base_url):
+        from albra_seed.config.settings_store import ProviderConfigError, save_config
+
+        with pytest.raises(ProviderConfigError, match="base_url"):
+            save_config(provider="nvidia", base_url=base_url, model="test-model")
 
     def test_db_file_permissions(self, temp_env):
         """DB file should be mode 0600 on POSIX."""
@@ -341,6 +361,15 @@ class TestProviderSettingsEndpoints:
         })
         assert r.status_code == 400
 
+    def test_put_config_rejects_ssrf_base_url(self, client):
+        r = client.put("/api/v1/provider/config", json={
+            "provider": "nvidia",
+            "base_url": "http://127.0.0.1:8000/admin",
+            "model": "test-model",
+        })
+        assert r.status_code == 400
+        assert "base_url" in r.json()["detail"]
+
     def test_put_config_invalid_temperature(self, client):
         r = client.put("/api/v1/provider/config", json={
             "provider": "mock",
@@ -416,7 +445,7 @@ class TestProviderSettingsEndpoints:
         # Save some config
         client.put("/api/v1/provider/config", json={
             "provider": "nvidia",
-            "base_url": "https://example.com",
+            "base_url": "https://integrate.api.nvidia.com/v1",
             "model": "test-model",
         })
         client.put("/api/v1/provider/api-key", json={"api_key": "nvapi-test"})
