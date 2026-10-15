@@ -4,21 +4,32 @@ import { useEffect, useState } from "react";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE || "https://agente-general.onrender.com";
+const DEFAULT_ALLOWED_API_ORIGINS = ["https://agente-general.onrender.com"];
+const ALLOWED_API_ORIGINS = (
+  process.env.NEXT_PUBLIC_ALLOWED_API_ORIGINS ||
+  DEFAULT_ALLOWED_API_ORIGINS.join(",")
+)
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean)
+  .map((origin) => new URL(origin).origin);
 
 function assertSecureApiBase(): void {
   const parsed = new URL(API_BASE);
   const localHosts = new Set(["localhost", "127.0.0.1", "[::1]"]);
   const isLocalHttp =
     parsed.protocol === "http:" && localHosts.has(parsed.hostname);
+  const isLocalDevelopment = localHosts.has(parsed.hostname);
   if (
     (parsed.protocol !== "https:" && !isLocalHttp) ||
     parsed.username ||
     parsed.password ||
     parsed.search ||
-    parsed.hash
+    parsed.hash ||
+    (!isLocalDevelopment && !ALLOWED_API_ORIGINS.includes(parsed.origin))
   ) {
     throw new Error(
-      "La API debe usar HTTPS (HTTP solo se permite en localhost), sin credenciales ni query."
+      "La API debe usar un origen HTTPS autorizado (HTTP solo en localhost), sin credenciales ni query."
     );
   }
 }
