@@ -88,6 +88,39 @@ class Plan(BaseModel):
                 return st
         return None
 
+    def validate_dependencies(self) -> None:
+        """Reject duplicate IDs, missing dependencies, and dependency cycles."""
+        ids = [st.subtask_id for st in self.subtasks]
+        if len(ids) != len(set(ids)):
+            raise ValueError("duplicate subtask IDs")
+        known = set(ids)
+        for st in self.subtasks:
+            missing = sorted(set(st.dependencies) - known)
+            if missing:
+                raise ValueError(
+                    f"subtask {st.subtask_id!r} has unknown dependencies: {', '.join(missing)}"
+                )
+            if st.subtask_id in st.dependencies:
+                raise ValueError(f"subtask {st.subtask_id!r} depends on itself")
+
+        visiting: set[str] = set()
+        visited: set[str] = set()
+        by_id = {st.subtask_id: st for st in self.subtasks}
+
+        def visit(subtask_id: str) -> None:
+            if subtask_id in visiting:
+                raise ValueError(f"dependency cycle includes {subtask_id!r}")
+            if subtask_id in visited:
+                return
+            visiting.add(subtask_id)
+            for dependency in by_id[subtask_id].dependencies:
+                visit(dependency)
+            visiting.remove(subtask_id)
+            visited.add(subtask_id)
+
+        for subtask_id in ids:
+            visit(subtask_id)
+
     def check_budget(self) -> bool:
         """Return True if budget allows more steps."""
         if self.steps_taken >= self.budget.max_steps:
@@ -133,6 +166,17 @@ class PlanExecutor:
         import asyncio
 
         plan.started_at = time.time()
+        try:
+            plan.validate_dependencies()
+        except ValueError as exc:
+            plan.failure_reason = f"invalid dependency graph: {exc}"
+            for st in plan.pending_subtasks():
+                st.state = SubtaskState.FAILED
+                st.error = "plan dependency graph is invalid"
+                st.completed_at = time.time()
+            plan.completed_at = time.time()
+            plan.is_complete = False
+            return plan
 
         while not plan.all_completed():
             if not plan.check_budget():
