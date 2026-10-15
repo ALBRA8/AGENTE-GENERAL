@@ -1,7 +1,6 @@
 # HITL restart recovery contract
 
-**Status:** design contract; not an implementation claim. The durable SQLite approval
-record is not, by itself, a resumable `Agent.run()` checkpoint.
+**Status:** partial implementation. `SuspensionCheckpointV1` now defines a strict versioned payload, and the SQLite coordinator can persist/load it with a checksum and durable binding checks. This is not yet an end-to-end `Agent.run()` restore implementation.
 
 ## Safety boundary
 
@@ -9,9 +8,10 @@ A Python coroutine, model/provider session, in-memory tool registry, or live
 authorization context must never be reconstructed from an approval row or from
 client-supplied resume data. Restart recovery is permitted only from a
 versioned, application-owned checkpoint written at an explicit safe suspension
-boundary. Until that checkpoint format and restore path exist, a pending or
-approved record whose owning execution process has died is recoverable as
-**approval evidence**, not as an automatically resumable agent execution.
+boundary. The versioned payload and SQLite persistence primitives now exist,
+but the runtime does not yet create them at the suspension boundary or restore
+and continue `Agent.run()`. A pending or approved record whose owning execution
+process has died remains **approval evidence**, not an automatically resumable execution.
 
 ## Checkpoint contract
 
@@ -28,7 +28,12 @@ can resume. At minimum it must bind:
 The exact original tool arguments must be held in trusted server-side state or
 reloaded from a trusted, integrity-checked checkpoint. The approver cannot
 supply replacement arguments. A digest alone proves equality but cannot rebuild
-arguments, so it is insufficient as the only checkpoint payload.
+arguments, so it is insufficient as the only checkpoint payload. The current
+checkpoint checksum detects accidental corruption; it is not a cryptographic
+MAC and does not protect against an attacker able to rewrite the database and
+checksum together. Treat checkpoint arguments as potentially sensitive data:
+use encrypted persistent storage and do not include credentials or reusable
+tokens. Tool-specific safe-serialization review is required before production.
 
 Before dispatch after restore, the service must authenticate the current caller
 or worker identity, revalidate the principal binding, current policy/firewall
@@ -71,7 +76,7 @@ arbitrary external tools cannot be guaranteed by a local database transaction.
 
 ## Current acceptance statement
 
-Until the checkpoint and restore implementation plus fault-injection tests pass,
+The checkpoint schema, strict payload validation, SQLite persistence, restart read, binding checks, runtime compatibility check, deadline check, and corruption detection have been added. The end-to-end restore implementation, explicit safe-boundary integration, trusted authorization/policy revalidation, and process-level fault-injection tests have not been completed. Until those pieces and tests pass,
 the supported guarantee is durable approval/decision/claim evidence with
 conservative no-retry behavior—not automatic recovery of the full
 `Agent.run()` after process death. Keep issue #5 open and PR #3 in draft.
