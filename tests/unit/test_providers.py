@@ -195,11 +195,11 @@ def test_openai_provider_raises_if_not_configured() -> None:
         ZAIProvider()
 
 
-def test_ollama_provider_raises_if_not_configured() -> None:
-    """OllamaProvider raises NotImplementedError without base_url."""
-    # Need OLLAMA_BASE_URL unset; _scrub_env already removes it.
-    with pytest.raises(NotImplementedError):
-        OllamaProvider()
+def test_ollama_provider_uses_default_local_endpoint_when_not_configured() -> None:
+    """OllamaProvider defaults to its documented local OpenAI-compatible URL."""
+    provider = OllamaProvider()
+    assert provider.base_url == "http://localhost:11434/v1"
+    assert provider.model == "llama3.1"
 
 
 # =====================================================================
