@@ -403,6 +403,29 @@ class TestProviderSettingsEndpoints:
         })
         assert r.status_code == 422  # Pydantic validation
 
+    def test_put_config_rejects_oversized_fields(self, client):
+        oversized_url = client.put("/api/v1/provider/config", json={
+            "provider": "nvidia",
+            "base_url": "https://integrate.api.nvidia.com/v1" + ("a" * 2048),
+            "model": "test-model",
+        })
+        assert oversized_url.status_code == 422
+
+        oversized_model = client.put("/api/v1/provider/config", json={
+            "provider": "mock",
+            "base_url": "",
+            "model": "m" * 257,
+        })
+        assert oversized_model.status_code == 422
+
+    def test_put_api_key_rejects_oversized_secret(self, client):
+        response = client.put(
+            "/api/v1/provider/api-key",
+            json={"api_key": "k" * 4097},
+        )
+        assert response.status_code == 422
+        assert "k" * 64 not in response.text
+
     def test_put_api_key(self, client):
         r = client.put("/api/v1/provider/api-key", json={
             "api_key": "nvapi-test-secret-key"
