@@ -9,7 +9,7 @@ from render_app import app
 
 def test_render_entrypoint_exposes_fastapi_application() -> None:
     """The configured Render module must expose a usable FastAPI app."""
-    assert app.title == "albra-seed-api"
+    assert app.title == "ALBRA SEED API"
     paths = {route.path for route in app.routes}
     assert "/" in paths
     assert "/api/v1/health" in paths
