@@ -181,8 +181,8 @@ def build_provider_settings_router(ctx: RequestContext) -> Any:
             )
         except ProviderConfigError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
-        except SettingsEncryptionError as exc:
-            raise HTTPException(status_code=500, detail=str(exc))
+        except SettingsEncryptionError:
+            raise HTTPException(status_code=500, detail="Secure settings encryption is unavailable or misconfigured")
         except Exception as exc:
             raise HTTPException(
                 status_code=500,
