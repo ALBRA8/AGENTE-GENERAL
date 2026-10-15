@@ -4,7 +4,7 @@ import sqlite3
 
 import pytest
 
-from albra_seed.approvals.checkpoint import CheckpointValidationError, SuspensionCheckpointV1
+from albra_seed.approvals.checkpoint import SuspensionCheckpointV1
 from albra_seed.approvals.sqlite_store import SQLiteSuspendedExecutionCoordinator
 from albra_seed.approvals.suspension import (
     SuspendedExecutionError,
@@ -15,19 +15,20 @@ from albra_seed.approvals.suspension import (
 def _setup(path):
     now = datetime.now(timezone.utc)
     args = {"to": "recipient@example.test", "body": "checkpoint test"}
+    deadline = now + timedelta(minutes=5)
     store = SQLiteSuspendedExecutionCoordinator(path)
     store.register(
         approval_id="approval-checkpoint", execution_id="execution-checkpoint",
         correlation_id="correlation-checkpoint", tool_call_id="call-checkpoint",
         tool_name="send_message", arguments=args, principal_id="issuer:subject",
-        deadline=now + timedelta(minutes=5),
+        deadline=deadline,
     )
     checkpoint = SuspensionCheckpointV1(
         approval_id="approval-checkpoint", execution_id="execution-checkpoint",
         correlation_id="correlation-checkpoint", tool_call_id="call-checkpoint",
         tool_name="send_message", arguments_sha256=canonical_arguments_sha256(args),
         principal_id="issuer:subject", runtime_compatibility="agent-v1/mock-v1",
-        deadline=(now + timedelta(minutes=5)).isoformat(), created_at=now.isoformat(),
+        deadline=deadline.isoformat(), created_at=now.isoformat(),
         tool_arguments=args,
     )
     return store, checkpoint, now
