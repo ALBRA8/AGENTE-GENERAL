@@ -1,5 +1,4 @@
 """Fail-closed tests for the versioned HITL suspension checkpoint contract."""
-from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import json
 
