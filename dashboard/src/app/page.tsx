@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE || "https://agente-general.onrender.com";
@@ -27,7 +27,7 @@ interface DefaultsResponse {
 export default function Home() {
   const [config, setConfig] = useState<ProviderConfig | null>(null);
   const [defaults, setDefaults] = useState<DefaultsResponse | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -35,6 +35,11 @@ export default function Home() {
   const [showApiKey, setShowApiKey] = useState(false);
   const [apiKey, setApiKey] = useState("");
   const [dark, setDark] = useState(false);
+  // Kept in component memory only; never persisted to localStorage.
+  const [accessToken, setAccessToken] = useState("");
+
+  const authHeaders = (): Record<string, string> =>
+    accessToken.trim() ? { Authorization: `Bearer ${accessToken.trim()}` } : {};
 
   // Form state
   const [provider, setProvider] = useState("mock");
@@ -51,8 +56,8 @@ export default function Home() {
     setError(null);
     try {
       const [cfgRes, defRes] = await Promise.all([
-        fetch(`${API_BASE}/api/v1/provider/config`),
-        fetch(`${API_BASE}/api/v1/provider/defaults`),
+        fetch(`${API_BASE}/api/v1/provider/config`, { headers: authHeaders() }),
+        fetch(`${API_BASE}/api/v1/provider/defaults`, { headers: authHeaders() }),
       ]);
       if (!cfgRes.ok) throw new Error(`HTTP ${cfgRes.status}`);
       const cfg = await cfgRes.json();
@@ -75,10 +80,9 @@ export default function Home() {
     }
   };
 
-  useState(() => {
-    load();
+  useEffect(() => {
     setDark(document.documentElement.classList.contains("dark"));
-  });
+  }, []);
 
   const toggleTheme = () => {
     const next = !dark;
@@ -99,7 +103,7 @@ export default function Home() {
     try {
       const res = await fetch(`${API_BASE}/api/v1/provider/config`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
         body: JSON.stringify({
           provider,
           base_url: baseUrl,
@@ -149,6 +153,7 @@ export default function Home() {
     try {
       const res = await fetch(`${API_BASE}/api/v1/provider/test`, {
         method: "POST",
+        headers: authHeaders(),
       });
       const data = await res.json();
       if (data.ok) {
@@ -167,7 +172,14 @@ export default function Home() {
     if (!confirm("¿Restaurar configuración por defecto (Mock)? Se borrará la API key.")) return;
     setSaving(true);
     try {
-      await fetch(`${API_BASE}/api/v1/provider/reset`, { method: "POST" });
+      const res = await fetch(`${API_BASE}/api/v1/provider/reset`, {
+        method: "POST",
+        headers: authHeaders(),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.detail || `HTTP ${res.status}`);
+      }
       await load();
       setSuccess("Configuración restaurada a Mock");
     } catch (e) {
@@ -233,6 +245,22 @@ export default function Home() {
         <p style={{ color: "var(--muted-fg)", fontSize: "0.875rem", marginBottom: "2rem" }}>
           Configura el proveedor de LLM. La API key se cifra en el servidor y nunca se muestra ni se envía a terceros.
         </p>
+
+        {/* Access token: intentionally memory-only, never persisted. */}
+        <div style={{ marginBottom: "1rem", display: "flex", gap: "0.5rem" }}>
+          <input
+            type="password"
+            value={accessToken}
+            onChange={(e) => setAccessToken(e.target.value)}
+            placeholder="Token de acceso del administrador"
+            autoComplete="off"
+            aria-label="Token de acceso del administrador"
+            style={{ ...inputStyle, flex: 1 }}
+          />
+          <button onClick={load} disabled={loading || !accessToken.trim()} style={secondaryBtn}>
+            {loading ? "Conectando..." : "Conectar"}
+          </button>
+        </div>
 
         {/* Status badge */}
         {config && (
