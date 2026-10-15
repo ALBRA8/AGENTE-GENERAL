@@ -531,9 +531,6 @@ class TestProviderSettingsEndpoints:
             assert "nvapi-SUPER" not in body
 
 
-__all__ = ["TestSettingsStore", "TestProviderSettingsEndpoints"]
-
-
     def test_validation_errors_never_echo_submitted_secret(self, client):
         secret = "sentinel-provider-secret-" * 300
         response = client.put(
@@ -554,3 +551,6 @@ __all__ = ["TestSettingsStore", "TestProviderSettingsEndpoints"]
         assert response.status_code == 500
         assert secret not in response.text
         assert "provider-key-secret" not in response.text
+
+
+__all__ = ["TestSettingsStore", "TestProviderSettingsEndpoints"]
