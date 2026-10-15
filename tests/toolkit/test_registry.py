@@ -167,6 +167,78 @@ class TestExecution:
         assert "intentional" in result.error
 
 
+    @pytest.mark.asyncio
+    async def test_input_schema_rejects_missing_required_field(self):
+        reg = ToolRegistryV2()
+        reg.register(
+            _make_def(
+                "validated",
+                input_schema={
+                    "type": "object",
+                    "properties": {"value": {"type": "string"}},
+                    "required": ["value"],
+                },
+            ),
+            _ok_tool,
+        )
+        result = await reg.execute("validated", {})
+        assert not result.success
+        assert "invalid arguments" in result.error
+        assert result.output == {"invalid_arguments": True}
+        assert reg.invocations()[0].success is False
+
+    @pytest.mark.asyncio
+    async def test_input_schema_rejects_wrong_type(self):
+        reg = ToolRegistryV2()
+        reg.register(
+            _make_def(
+                "validated",
+                input_schema={
+                    "type": "object",
+                    "properties": {"value": {"type": "string"}},
+                    "required": ["value"],
+                },
+            ),
+            _ok_tool,
+        )
+        result = await reg.execute("validated", {"value": 42})
+        assert not result.success
+        assert "property value" in result.error
+
+    @pytest.mark.asyncio
+    async def test_side_effect_requires_approval_even_with_default_permission(self):
+        reg = ToolRegistryV2()
+        called = False
+
+        async def side_effect(args, *, context=None):
+            nonlocal called
+            called = True
+            return ToolResult(call_id=new_id("tc"), success=True, output={"done": True})
+
+        reg.register(
+            _make_def("write", category=ToolCategory.SIDE_EFFECT),
+            side_effect,
+        )
+        denied = await reg.execute("write", {})
+        assert not denied.success
+        assert not called
+        allowed = await reg.execute("write", {}, has_approval=True)
+        assert allowed.success
+        assert called
+
+    @pytest.mark.asyncio
+    async def test_output_schema_failure_is_not_reported_as_success(self):
+        reg = ToolRegistryV2()
+        reg.register(
+            _make_def("bad-output", output_schema={"type": "string"}),
+            _ok_tool,
+        )
+        result = await reg.execute("bad-output", {})
+        assert not result.success
+        assert result.error == "tool output failed schema validation"
+        assert result.output == {"invalid_output": True}
+
+
 class TestInvocationLog:
     @pytest.mark.asyncio
     async def test_invocation_recorded(self):
