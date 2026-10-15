@@ -115,6 +115,10 @@ jobs:
         run: |
           python -m pytest tests/security/test_provider_settings.py -q
 
+      - name: API edge-control regression tests
+        run: |
+          python -m pytest tests/security/test_api_edge_controls.py -q
+
       - name: Full test suite
         run: |
           python -m pytest tests/ -q
