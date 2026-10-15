@@ -33,6 +33,7 @@ def temp_env(monkeypatch, tmp_path):
     key = Fernet.generate_key().decode()
     db_path = tmp_path / "test_provider_config.db"
     monkeypatch.setenv("SETTINGS_ENCRYPTION_KEY", key)
+    monkeypatch.setenv("ALBRA_PROVIDER_SETTINGS_TOKEN", "test-provider-settings-token")
     monkeypatch.setenv("ALBRA_PROVIDER_CONFIG_DB", str(db_path))
     yield {"key": key, "db_path": db_path}
 
