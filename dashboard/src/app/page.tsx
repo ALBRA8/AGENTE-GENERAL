@@ -5,6 +5,24 @@ import { useEffect, useState } from "react";
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE || "https://agente-general.onrender.com";
 
+function assertSecureApiBase(): void {
+  const parsed = new URL(API_BASE);
+  const localHosts = new Set(["localhost", "127.0.0.1", "[::1]"]);
+  const isLocalHttp =
+    parsed.protocol === "http:" && localHosts.has(parsed.hostname);
+  if (
+    (parsed.protocol !== "https:" && !isLocalHttp) ||
+    parsed.username ||
+    parsed.password ||
+    parsed.search ||
+    parsed.hash
+  ) {
+    throw new Error(
+      "La API debe usar HTTPS (HTTP solo se permite en localhost), sin credenciales ni query."
+    );
+  }
+}
+
 interface ProviderConfig {
   provider: string;
   base_url: string;
@@ -38,8 +56,14 @@ export default function Home() {
   // Kept in component memory only; never persisted to localStorage.
   const [accessToken, setAccessToken] = useState("");
 
-  const authHeaders = (): Record<string, string> =>
-    accessToken.trim() ? { Authorization: `Bearer ${accessToken.trim()}` } : {};
+  const authHeaders = (): Record<string, string> => {
+    // Never send the administrator bearer token or provider API key over
+    // cleartext HTTP to a non-local host or to a malformed API base URL.
+    assertSecureApiBase();
+    return accessToken.trim()
+      ? { Authorization: `Bearer ${accessToken.trim()}` }
+      : {};
+  };
 
   // Form state
   const [provider, setProvider] = useState("mock");
