@@ -276,6 +276,15 @@ class TestInvocationLog:
         assert "SECRETKEY" not in invocations[0].error
         assert "nvapi-[REDACTED]" in invocations[0].error
 
+    def test_safe_error_text_redacts_credentials(self):
+        from albra_seed.toolkit.registry import _safe_error_text
+        message = "nvapi-SECRETKEY1234567890 sk-SECRETKEY1234567890 Bearer abcdefghijklmnop"
+        result = _safe_error_text(message)
+        assert "SECRETKEY" not in result
+        assert "Bearer abcdefghijklmnop" not in result
+        assert "nvapi-[REDACTED]" in result
+        assert "sk-[REDACTED]" in result
+        assert "Bearer [REDACTED]" in result
     @pytest.mark.asyncio
     async def test_clear_invocations(self):
         reg = ToolRegistryV2()
