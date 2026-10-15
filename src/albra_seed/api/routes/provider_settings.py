@@ -94,10 +94,43 @@ class ErrorResponse(BaseModel):
 
 
 def build_provider_settings_router(ctx: RequestContext) -> Any:
-    """Return a FastAPI APIRouter for the provider settings endpoints."""
-    from fastapi import APIRouter, HTTPException
+    """Return a FastAPI APIRouter for the provider settings endpoints.
 
-    router = APIRouter(tags=["provider-settings"])
+    All provider-settings operations require a server-side bearer token
+    configured with ALBRA_PROVIDER_SETTINGS_TOKEN. The token is never
+    read from query parameters or request bodies.
+    """
+    import hmac
+    import os
+
+    from fastapi import APIRouter, Depends, Header, HTTPException
+
+    async def require_provider_settings_token(
+        authorization: str | None = Header(default=None),
+    ) -> None:
+        """Fail closed unless a configured token matches in constant time."""
+        expected = os.environ.get("ALBRA_PROVIDER_SETTINGS_TOKEN", "")
+        if not expected:
+            raise HTTPException(
+                status_code=503,
+                detail="Provider settings authentication is not configured",
+            )
+        scheme, _, supplied = (authorization or "").partition(" ")
+        if (
+            scheme.lower() != "bearer"
+            or not supplied
+            or not hmac.compare_digest(supplied, expected)
+        ):
+            raise HTTPException(
+                status_code=401,
+                detail="Valid bearer token required",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+    router = APIRouter(
+        tags=["provider-settings"],
+        dependencies=[Depends(require_provider_settings_token)],
+    )
 
     # ------------------------------------------------------------------ #
     # Routes                                                             #
