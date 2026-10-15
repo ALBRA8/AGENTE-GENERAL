@@ -112,6 +112,30 @@ class TestBudget:
 
 class TestPlanExecutor:
     @pytest.mark.asyncio
+    async def test_unknown_dependency_fails_plan_explicitly(self):
+        p = Plan(objective="invalid")
+        p.add_subtask(Subtask(name="blocked", dependencies=["missing-id"]))
+
+        result = await PlanExecutor().execute(p, {"blocked": lambda plan, st: "should not run"})
+        assert not result.is_complete
+        assert "unknown dependencies" in result.failure_reason
+        assert result.subtasks[0].state == SubtaskState.FAILED
+
+    @pytest.mark.asyncio
+    async def test_dependency_cycle_fails_plan_explicitly(self):
+        a = Subtask(name="a", subtask_id="a", dependencies=["b"])
+        b = Subtask(name="b", subtask_id="b", dependencies=["a"])
+        p = Plan(objective="cycle", subtasks=[a, b])
+
+        result = await PlanExecutor().execute(
+            p,
+            {"a": lambda plan, st: "should not run", "b": lambda plan, st: "should not run"},
+        )
+        assert not result.is_complete
+        assert "cycle" in result.failure_reason
+        assert all(st.state == SubtaskState.FAILED for st in result.subtasks)
+
+    @pytest.mark.asyncio
     async def test_simple_success(self):
         p = Plan(objective="greet")
         p.add_subtask(Subtask(name="hello"))
