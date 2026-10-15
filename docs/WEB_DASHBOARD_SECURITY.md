@@ -2,16 +2,14 @@
 
 ## Current repository scope
 
-The `AGENTE-GENERAL` repository contains the Python seed/API but no tracked
-web dashboard, frontend source, or assets for the reported dashboard on
-`localhost:9000`. Therefore a code change in this repository cannot remove
-browser-side `localStorage` usage from that separate application. This is an
-explicit integration blocker, not a passed security control.
+The provider-configuration dashboard is tracked under `dashboard/` in the
+provider-settings feature branch. This review covers that page and its
+provider-settings API integration only; it does not certify a separate app
+running on `localhost:9000`, the deployed service, or the full frontend build.
 
-Until the dashboard source is included and audited, **do not enter real
-provider credentials into its browser UI**. If keys were previously saved in
-browser storage, remove them from that origin's site data and rotate/revoke
-those keys if they may have been exposed.
+Do not enter real provider credentials into any unreviewed dashboard. If keys
+were previously saved in browser storage, remove them from that origin's site
+data and rotate/revoke those keys if they may have been exposed.
 
 ## Required architecture
 
