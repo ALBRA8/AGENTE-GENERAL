@@ -33,7 +33,7 @@ def temp_env(monkeypatch, tmp_path):
     key = Fernet.generate_key().decode()
     db_path = tmp_path / "test_provider_config.db"
     monkeypatch.setenv("SETTINGS_ENCRYPTION_KEY", key)
-    monkeypatch.setenv("ALBRA_PROVIDER_SETTINGS_TOKEN", "test-provider-settings-token")
+    monkeypatch.setenv("ALBRA_PROVIDER_SETTINGS_TOKEN", "test-provider-settings-token-with-minimum-32-chars")
     monkeypatch.setenv("ALBRA_PROVIDER_CONFIG_DB", str(db_path))
     yield {"key": key, "db_path": db_path}
 
@@ -289,7 +289,7 @@ class TestProviderSettingsEndpoints:
         key = Fernet.generate_key().decode()
         db_path = tmp_path / "endpoint_test.db"
         monkeypatch.setenv("SETTINGS_ENCRYPTION_KEY", key)
-        monkeypatch.setenv("ALBRA_PROVIDER_SETTINGS_TOKEN", "test-provider-settings-token")
+        monkeypatch.setenv("ALBRA_PROVIDER_SETTINGS_TOKEN", "test-provider-settings-token-with-minimum-32-chars")
         monkeypatch.setenv("ALBRA_PROVIDER_CONFIG_DB", str(db_path))
 
         # Force re-import of all affected modules so env vars are picked up
@@ -306,7 +306,7 @@ class TestProviderSettingsEndpoints:
         app = create_app(runtime)
         return TestClient(
             app,
-            headers={"Authorization": "Bearer test-provider-settings-token"},
+            headers={"Authorization": "Bearer test-provider-settings-token-with-minimum-32-chars"},
         )
 
     def test_rejects_missing_or_invalid_bearer_token(self, client):
