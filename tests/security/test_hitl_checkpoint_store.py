@@ -1,4 +1,5 @@
 """Persistence and fail-closed validation tests for HITL checkpoints."""
+from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime, timedelta, timezone
 import sqlite3
 
@@ -102,3 +103,24 @@ def test_checkpoint_cannot_be_saved_for_unknown_approval_or_claimed_execution(tm
     assert claim.state.value == "claimed"
     with pytest.raises(SuspendedExecutionError, match="not resumable"):
         store.save_checkpoint(checkpoint)
+
+
+def _load_checkpoint_in_fresh_process(path, approval_id, runtime_compatibility, now_iso):
+    restarted = SQLiteSuspendedExecutionCoordinator(path)
+    checkpoint = restarted.get_checkpoint(
+        approval_id, runtime_compatibility=runtime_compatibility,
+        now=datetime.fromisoformat(now_iso),
+    )
+    return checkpoint.to_json() if checkpoint is not None else None
+
+
+def test_checkpoint_is_readable_from_a_fresh_os_process(tmp_path):
+    path = tmp_path / "checkpoint-process.sqlite3"
+    store, checkpoint, now = _setup(path)
+    store.save_checkpoint(checkpoint)
+    with ProcessPoolExecutor(max_workers=1) as pool:
+        restored_json = pool.submit(
+            _load_checkpoint_in_fresh_process, str(path), checkpoint.approval_id,
+            "agent-v1/mock-v1", now.isoformat(),
+        ).result(timeout=10)
+    assert restored_json == checkpoint.to_json()
