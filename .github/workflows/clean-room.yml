@@ -134,3 +134,29 @@ jobs:
       - name: Full test suite
         run: |
           python -m pytest tests/ -q
+
+
+  dashboard-security-build:
+    name: Dashboard build and public-bundle secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: dashboard/package.json
+      - name: Install dashboard dependencies
+        working-directory: dashboard
+        run: npm install --no-audit --no-fund
+      - name: Build dashboard for production
+        working-directory: dashboard
+        run: npm run build
+      - name: Scan public assets for administrative credential patterns
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -R -n -E 'ALBRA_PROVIDER_SETTINGS_TOKEN|SETTINGS_ENCRYPTION_KEY|NEXT_PUBLIC_ADMIN_TOKEN|nvapi-[A-Za-z0-9_-]{12,}' dashboard/.next/static; then
+            echo "Potential administrative/provider secret reference found in public dashboard assets"
+            exit 1
+          fi
