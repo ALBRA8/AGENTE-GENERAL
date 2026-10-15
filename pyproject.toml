@@ -29,7 +29,7 @@ dependencies = [
 ]
 
 [project.scripts]
-albra = "albra_seed.cli:main"
+albra = "albra_seed.cli:cli_entry"
 
 [project.optional-dependencies]
 openai = ["openai>=1.10.0"]
