@@ -532,3 +532,25 @@ class TestProviderSettingsEndpoints:
 
 
 __all__ = ["TestSettingsStore", "TestProviderSettingsEndpoints"]
+
+
+    def test_validation_errors_never_echo_submitted_secret(self, client):
+        secret = "sentinel-provider-secret-" * 300
+        response = client.put(
+            "/api/v1/provider/api-key",
+            json={"api_key": secret},
+        )
+        assert response.status_code == 422
+        assert secret not in response.text
+        assert secret[:64] not in response.text
+
+    def test_encryption_configuration_error_is_sanitized(self, client, monkeypatch):
+        secret = "do-not-reflect-this-encryption-key"
+        monkeypatch.setenv("SETTINGS_ENCRYPTION_KEY", secret)
+        response = client.put(
+            "/api/v1/provider/api-key",
+            json={"api_key": "provider-key-secret"},
+        )
+        assert response.status_code == 500
+        assert secret not in response.text
+        assert "provider-key-secret" not in response.text
