@@ -391,6 +391,13 @@ async def _calculator_tool(arguments: dict[str, Any], *, context: Any = None) ->
             error=f"unknown operation: {op!r}",
             output={"error": True},
         )
+    if op == "divide" and b == 0:
+        return ToolResult(
+            call_id=new_id("tc"),
+            success=False,
+            error="division by zero",
+            output={"error": True},
+        )
     result = ops[op](a, b)
     return ToolResult(
         call_id=new_id("tc"),
