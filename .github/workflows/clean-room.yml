@@ -34,7 +34,9 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    # PR #48 targets the provider-dashboard feature branch, so include it
+    # explicitly; otherwise this security work receives no clean-room CI.
+    branches: [main, feat/nvidia-provider-dashboard-settings]
   # Allow manual triggering from the Actions tab.
   workflow_dispatch:
 
@@ -136,6 +138,10 @@ jobs:
       - name: Genetic contamination (0 critical findings)
         run: |
           python scripts/contamination_scan.py
+
+      - name: Provider settings security regression tests
+        run: |
+          python -m pytest tests/security/test_provider_settings.py -q
 
       - name: Full test suite
         run: |
