@@ -523,7 +523,7 @@ class SQLiteSuspendedExecutionCoordinator:
             if canonical_arguments_sha256(dict(checkpoint.tool_arguments)) != checkpoint.arguments_sha256:
                 raise SuspendedExecutionError("checkpoint argument digest mismatch")
             return checkpoint
-        except CheckpointValidationError as exc:
+        except (CheckpointValidationError, TypeError, ValueError, KeyError) as exc:
             raise SuspendedExecutionError("HITL checkpoint validation failed") from exc
         except sqlite3.Error as exc:
             raise SuspendedExecutionError("HITL checkpoint storage read failed") from exc
