@@ -234,24 +234,24 @@ class TestSettingsStore:
             mode = oct(db_path.stat().st_mode & 0o777)
             assert mode == "0o600", f"DB file mode is {mode}, expected 0o600"
 
-    def test_symlink_db_path_rejected(self, temp_env, tmp_path):
-        """Symlinked DB paths must be rejected."""
+    def test_symlink_db_path_rejected(self, temp_env, tmp_path, monkeypatch):
+        """Reject symlink paths before SQLite can follow them."""
         from albra_seed.config.settings_store import ProviderConfigError
+        import albra_seed.config.settings_store as store
 
         real_db = tmp_path / "real.db"
         symlink_db = tmp_path / "symlink.db"
         symlink_db.symlink_to(real_db)
 
-        # Monkeypatch the module to use the symlink path
-        import albra_seed.config.settings_store as store
-        original = store._db_path
-        store._db_path = lambda: symlink_db
+        monkeypatch.setattr(store, "_db_path", lambda: symlink_db)
 
-        try:
-            with pytest.raises(ProviderConfigError, match="symlink"):
-                store._ensure_db()
-        finally:
-            store._db_path = original
+        def forbidden_connect(*args, **kwargs):
+            pytest.fail("SQLite must not open a symlinked database path")
+
+        monkeypatch.setattr(store.sqlite3, "connect", forbidden_connect)
+
+        with pytest.raises(ProviderConfigError, match="symlink"):
+            store._ensure_db()
 
 
 # =====================================================================
