@@ -75,9 +75,9 @@ class SuspensionCheckpointV1:
     phase: str = "awaiting_approval"
 
     def __post_init__(self) -> None:
-        if self.schema_version != CHECKPOINT_SCHEMA_VERSION:
+        if type(self.schema_version) is not int or self.schema_version != CHECKPOINT_SCHEMA_VERSION:
             raise CheckpointValidationError("unsupported checkpoint schema version")
-        if self.phase not in _SAFE_PHASES:
+        if not isinstance(self.phase, str) or self.phase not in _SAFE_PHASES:
             raise CheckpointValidationError("unsupported checkpoint phase")
         for name in (
             "approval_id", "execution_id", "correlation_id", "tool_call_id",
@@ -86,7 +86,7 @@ class SuspensionCheckpointV1:
             value = getattr(self, name)
             if not isinstance(value, str) or not value.strip():
                 raise CheckpointValidationError(f"missing checkpoint binding: {name}")
-        if not re.fullmatch(r"[0-9a-f]{64}", self.arguments_sha256):
+        if not isinstance(self.arguments_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", self.arguments_sha256):
             raise CheckpointValidationError("invalid arguments digest")
         deadline = _aware_iso(self.deadline, "deadline")
         created_at = _aware_iso(self.created_at, "created_at")
