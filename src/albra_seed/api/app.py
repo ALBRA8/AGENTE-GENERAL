@@ -105,17 +105,26 @@ def create_app(
             max_age=600,
         )
 
-    # Bound request body size before JSON parsing to limit memory/CPU abuse.
+    # Enforce a bounded body even when Content-Length is absent or dishonest.
     # Provider settings are small JSON documents; 1 MiB is ample.
     @app.middleware("http")
     async def limit_request_body(request: Request, call_next: Any) -> Any:
         length = request.headers.get("content-length")
         if length:
             try:
+                if int(length) < 0:
+                    return JSONResponse(status_code=400, content={"detail": "Invalid Content-Length"})
                 if int(length) > 1_048_576:
                     return JSONResponse(status_code=413, content={"detail": "Request body too large"})
             except ValueError:
                 return JSONResponse(status_code=400, content={"detail": "Invalid Content-Length"})
+
+        body = bytearray()
+        async for chunk in request.stream():
+            if len(body) + len(chunk) > 1_048_576:
+                return JSONResponse(status_code=413, content={"detail": "Request body too large"})
+            body.extend(chunk)
+        request._body = bytes(body)
         return await call_next(request)
 
     # Conservative process-local backstop for provider-settings abuse. Production
@@ -125,6 +134,7 @@ def create_app(
 
     rate_windows: dict[tuple[str, str], deque[float]] = defaultdict(deque)
     rate_window_seconds = 60.0
+    max_rate_buckets = 10_000
 
     def _positive_int_env(name: str, default: int) -> int:
         raw = os.environ.get(name, str(default))
@@ -148,6 +158,20 @@ def create_app(
         limit = provider_write_limit if is_write else provider_read_limit
         bucket = (client_host, "write" if is_write else "read")
         now = monotonic()
+        # Expire inactive buckets so spoofed/rotating client addresses cannot
+        # grow the in-memory map forever. Cap active keys as a final backstop.
+        expired = [
+            key for key, timestamps in rate_windows.items()
+            if not timestamps or now - timestamps[-1] >= rate_window_seconds
+        ]
+        for key in expired:
+            rate_windows.pop(key, None)
+        if bucket not in rate_windows and len(rate_windows) >= max_rate_buckets:
+            oldest_key = min(
+                rate_windows,
+                key=lambda key: rate_windows[key][-1] if rate_windows[key] else float("-inf"),
+            )
+            rate_windows.pop(oldest_key, None)
         window = rate_windows[bucket]
         while window and now - window[0] >= rate_window_seconds:
             window.popleft()
