@@ -72,11 +72,13 @@ def create_app(
         build_public_execution_router,
         build_public_health_router,
         build_public_readiness_router,
+        build_provider_settings_router,
     )
     app.include_router(build_public_health_router(ctx), prefix="/api/v1")
     app.include_router(build_public_readiness_router(ctx), prefix="/api/v1")
     app.include_router(build_public_agent_router(ctx), prefix="/api/v1")
     app.include_router(build_public_execution_router(ctx), prefix="/api/v1")
+    app.include_router(build_provider_settings_router(ctx), prefix="/api/v1")
 
     # INTERNAL routes — /internal/*
     from albra_seed.api.routes import build_internal_diagnostics_router
