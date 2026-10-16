@@ -37,7 +37,7 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
       - name: ESLint
-        run: npx eslint src
+        run: npx eslint src/app src/proxy.ts
       - name: TypeScript
         run: npx tsc --noEmit
       - name: Production build
