@@ -32,9 +32,9 @@ concurrency:
 
 on:
   push:
-    branches: [main, front-2-acceptance-battery, front-2-dashboard-integration]
+    branches: [main, front-2-acceptance-battery, front-2-dashboard-integration, phase-3-local-deployment-foundation]
   pull_request:
-    branches: [main, fix/windows-compat-grep-sqlite, front-2-acceptance-battery]
+    branches: [main, fix/windows-compat-grep-sqlite, front-2-acceptance-battery, front-2-dashboard-integration]
   # Allow manual triggering from the Actions tab.
   workflow_dispatch:
 
