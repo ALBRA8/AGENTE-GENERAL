@@ -99,10 +99,12 @@ export async function POST(request: Request) {
     const { execFileSync } = await import("child_process");
     const audioMatch = typeof body.audio === "string" && body.audio.match(/^data:(audio\/(?:webm|ogg|mpeg|wav|mp4|x-wav));base64,([A-Za-z0-9+/]+={0,2})$/);
     if (audioMatch) {
+      const audioMime = audioMatch[1];
       const audioBase64 = audioMatch[2];
+      const audioExtension: Record<string, string> = { "audio/webm": "webm", "audio/ogg": "ogg", "audio/mpeg": "mp3", "audio/wav": "wav", "audio/mp4": "m4a", "audio/x-wav": "wav" };
       const buf = Buffer.from(audioBase64, "base64");
       if (!buf.length || buf.length > 8 * 1024 * 1024) return NextResponse.json({ error: "Audio too large or empty" }, { status: 413 });
-      const tmpFile = `/tmp/chat-audio-${process.pid}-${Date.now()}.webm`;
+      const tmpFile = `/tmp/chat-audio-${process.pid}-${Date.now()}.${audioExtension[audioMime] || "audio"}`;
       try {
         await fs.writeFile(tmpFile, buf, { flag: "wx", mode: 0o600 });
         const result = execFileSync("z-ai", ["asr", "-f", tmpFile, "-o", "/dev/stdout"], {
