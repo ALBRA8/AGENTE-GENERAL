@@ -4,7 +4,13 @@
  * The API key lives in .env.local (server-side only).
  * The browser NEVER sees the key.
  *
- * Request body: { messages: [{role, content}], temperature?, max_tokens? }
+ * Request body: {
+ *   messages: [{role, content}],
+ *   temperature?,
+ *   max_tokens?,
+ *   agent_name? — custom name for the agent (default: "AGENTE GENERAL")
+ *   agent_persona? — custom persona description (optional)
+ * }
  * Response: { content: "..." }
  */
 
@@ -35,12 +41,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "messages array required" }, { status: 400 });
   }
 
+  // Custom agent name + persona from request (set by dashboard)
+  const agentName = body.agent_name || "AGENTE GENERAL";
+  const agentPersona = body.agent_persona || "un asistente de IA del proyecto ALBRA. Respondes en español de forma clara, concisa y útil. Eres capaz de conversar, responder preguntas y ayudar con tareas.";
+
   // Inject system prompt if not present
   const hasSystem = messages.some((m: any) => m.role === "system");
-  const systemPrompt = {
-    role: "system",
-    content: "Eres AGENTE GENERAL, un asistente de IA del proyecto ALBRA. Respondes en español de forma clara, concisa y útil. Eres capaz de conversar, responder preguntas y ayudar con tareas. No te identifiques como Claude, ChatGPT, ni ningún otro modelo. Tu nombre es AGENTE GENERAL.",
-  };
+  const systemContent = `Eres ${agentName}, ${agentPersona} No te identifiques como Claude, ChatGPT, GLM, ni ningún otro modelo. Tu nombre es ${agentName}.`;
+  const systemPrompt = { role: "system", content: systemContent };
   const finalMessages = hasSystem ? messages : [systemPrompt, ...messages];
 
   const temperature = body.temperature ?? 0.5;
@@ -66,7 +74,6 @@ export async function POST(request: Request) {
 
     if (!res.ok) {
       const text = await res.text().catch(() => "unknown error");
-      // Don't leak the API key in the error
       const safe = text.replace(/nvapi-[A-Za-z0-9_\-.]{8,}/g, "nvapi-[REDACTED]");
       return NextResponse.json(
         { error: `NVIDIA API error: HTTP ${res.status}`, detail: safe.slice(0, 200) },
@@ -77,7 +84,7 @@ export async function POST(request: Request) {
     const data = await res.json();
     const content = data?.choices?.[0]?.message?.content || "(sin respuesta)";
 
-    return NextResponse.json({ content, model: data?.model || NVIDIA_MODEL });
+    return NextResponse.json({ content, model: data?.model || NVIDIA_MODEL, agent_name: agentName });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "unknown error";
     return NextResponse.json(

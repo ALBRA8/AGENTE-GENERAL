@@ -126,6 +126,8 @@ function ChatView() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [connected, setConnected] = useState<boolean | null>(null);
+  const [agentName, setAgentName] = useState("AGENTE GENERAL");
+  const [showSettings, setShowSettings] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -166,6 +168,7 @@ function ChatView() {
           messages: history,
           temperature: 0.5,
           max_tokens: 1024,
+          agent_name: agentName,
         }),
       });
 
@@ -188,12 +191,32 @@ function ChatView() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 8rem)" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
+      {/* Chat header with agent name config */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem", gap: "0.5rem" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
           <span style={{ width: "0.5rem", height: "0.5rem", borderRadius: "9999px", background: connected ? "var(--success)" : "var(--danger)" }} />
-          <span style={{ fontSize: "0.8rem", color: "var(--muted-fg)" }}>{connected ? "IA conectada (NVIDIA)" : "IA no disponible"}</span>
+          <span style={{ fontSize: "0.8rem", color: "var(--muted-fg)" }}>{connected ? "IA conectada" : "IA no disponible"}</span>
         </div>
-        <button onClick={() => { setMessages([]); setError(null); }} style={smallBtn}>🗑️ Limpiar</button>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+          <input
+            type="text"
+            value={agentName}
+            onChange={(e) => setAgentName(e.target.value)}
+            placeholder="Nombre del agente"
+            style={{
+              background: "var(--card)",
+              color: "var(--fg)",
+              border: "1px solid var(--border)",
+              borderRadius: "0.375rem",
+              padding: "0.3rem 0.6rem",
+              fontSize: "0.8rem",
+              width: "10rem",
+              textAlign: "right",
+            }}
+            title="Nombre del agente — el agente usará este nombre al presentarse"
+          />
+          <button onClick={() => { setMessages([]); setError(null); }} style={smallBtn}>🗑️</button>
+        </div>
       </div>
 
       <div ref={scrollRef} style={messagesContainerStyle}>
