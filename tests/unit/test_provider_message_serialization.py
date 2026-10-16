@@ -24,6 +24,37 @@ def test_openai_compatible_serialization_preserves_real_tool_call_id() -> None:
     assert serialized == [{"role": "tool", "content": "tool output", "tool_call_id": "call_123"}]
 
 
+def test_openai_compatible_serialization_supports_user_image_data_urls() -> None:
+    image = "data:image/png;base64,iVBORw0KGgo="
+    serialized = serialize_openai_compatible_messages([
+        Message(role=Role.USER, content="What is in this picture?", metadata={"image_data_urls": [image]})
+    ])
+    assert serialized[0]["role"] == "user"
+    assert serialized[0]["content"] == [
+        {"type": "text", "text": "What is in this picture?"},
+        {"type": "image_url", "image_url": {"url": image}},
+    ]
+
+
+def test_openai_compatible_serialization_rejects_remote_image_urls() -> None:
+    import pytest
+
+    with pytest.raises(ValueError, match="base64 data URLs"):
+        serialize_openai_compatible_messages([
+            Message(role=Role.USER, content="describe", metadata={"image_data_urls": ["https://example.com/image.png"]})
+        ])
+
+
+def test_openai_compatible_serialization_limits_image_count() -> None:
+    import pytest
+
+    images = ["data:image/png;base64,aA=="] * 9
+    with pytest.raises(ValueError, match="at most 8"):
+        serialize_openai_compatible_messages([
+            Message(role=Role.USER, content="describe", metadata={"image_data_urls": images})
+        ])
+
+
 def test_anthropic_serialization_keeps_memory_out_of_system_prompt() -> None:
     system, conversation = serialize_anthropic_messages([
         Message(role=Role.SYSTEM, content="Follow system policy."),
@@ -35,6 +66,19 @@ def test_anthropic_serialization_keeps_memory_out_of_system_prompt() -> None:
     assert "UNTRUSTED TOOL DATA" in conversation[0]["content"]
     assert conversation[1] == {"role": "user", "content": "summarize my memory"}
 
+
+def test_anthropic_serialization_supports_user_image_data_urls() -> None:
+    image = "data:image/jpeg;base64,/9j/2Q=="
+    system, conversation = serialize_anthropic_messages([
+        Message(role=Role.USER, content="Describe this.", metadata={"image_data_urls": [image]})
+    ])
+    assert system == ""
+    assert conversation[0]["content"] == [
+        {"type": "text", "text": "Describe this."},
+        {"type": "image", "source": {
+            "type": "base64", "media_type": "image/jpeg", "data": "/9j/2Q=="
+        }},
+    ]
 
 
 async def test_mock_provider_does_not_treat_tool_memory_as_user_instruction() -> None:
