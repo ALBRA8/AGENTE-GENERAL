@@ -29,7 +29,7 @@ test("requires an admin token before connecting and keeps it out of browser stor
     });
   });
 
-  await page.goto("/");
+  await page.goto("/providers");
   await expect(page.getByRole("heading", { name: /Configuración.*Proveedor de IA/ })).toBeVisible();
   await expect(page.getByRole("button", { name: "Conectar" })).toBeDisabled();
 
@@ -51,7 +51,7 @@ test("shows API authorization failures instead of treating them as successful co
     await route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ detail: "Unauthorized" }) });
   });
 
-  await page.goto("/");
+  await page.goto("/providers");
   await page.getByLabel("Token de acceso del administrador").fill("invalid-token");
   await page.getByRole("button", { name: "Conectar" }).click();
   await expect(page.getByText("HTTP 401")).toBeVisible();
