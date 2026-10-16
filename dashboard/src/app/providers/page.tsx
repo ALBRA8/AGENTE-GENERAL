@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE || "https://agente-general.onrender.com";
