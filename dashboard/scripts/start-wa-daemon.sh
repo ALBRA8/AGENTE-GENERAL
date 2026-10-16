@@ -26,7 +26,7 @@ LOG_FILE="$LOG_DIR/wa-daemon.log"
 PID_FILE="$DASH_DIR/.wa-daemon.pid"
 PORT="${WHATSAPP_DAEMON_PORT:-3002}"
 PROBE_HOST="${WHATSAPP_DAEMON_HOST:-127.0.0.1}"
-[[ "$PROBE_HOST" == "0.0.0.0" ]] && PROBE_HOST="127.0.0.1"
+if [[ "$PROBE_HOST" == "0.0.0.0" ]]; then PROBE_HOST="127.0.0.1"; fi
 
 # Read only known KEY=value entries; never execute .env.local as shell code.
 load_env_safely() {
