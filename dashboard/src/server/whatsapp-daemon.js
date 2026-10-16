@@ -21,13 +21,14 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
+const { timingSafeEqual } = require("crypto");
 
 // Load .env.local manually
 const envPath = path.join(__dirname, "..", "..", ".env.local");
 try {
   const envContent = fs.readFileSync(envPath, "utf-8");
   for (const line of envContent.split("\n")) {
-    const match = line.match(/^([A-Z_]+)=(.+)$/);
+    const match = line.match(/^([A-Z0-9_]+)=(.*)$/);
     if (match && !process.env[match[1]]) {
       process.env[match[1]] = match[2].trim();
     }
@@ -43,6 +44,8 @@ const P = require("pino");
 
 // === Configuration ===
 const PORT = process.env.WHATSAPP_DAEMON_PORT || 3002;
+// Keep the privileged daemon private by default. Override only for a deliberate private-network deployment.
+const HOST = process.env.WHATSAPP_DAEMON_HOST || "127.0.0.1";
 const SECRET = process.env.INTERNAL_API_SECRET;
 const MAX_MEDIA_BYTES = Math.max(1, parseInt(process.env.MAX_MEDIA_BYTES || (8 * 1024 * 1024).toString(), 10) || (8 * 1024 * 1024));
 const MAX_CONCURRENT_MEDIA = Math.max(1, parseInt(process.env.MAX_CONCURRENT_MEDIA || "2", 10) || 2);
@@ -634,7 +637,10 @@ async function startWhatsApp() {
 // === HTTP server ===
 function checkAuth(req) {
   const auth = req.headers.authorization || "";
-  return auth === `Bearer ${SECRET}`;
+  const expected = `Bearer ${SECRET}`;
+  const suppliedBytes = Buffer.from(auth);
+  const expectedBytes = Buffer.from(expected);
+  return suppliedBytes.length === expectedBytes.length && timingSafeEqual(suppliedBytes, expectedBytes);
 }
 
 function sendJSON(res, code, data) {
@@ -673,10 +679,8 @@ const server = http.createServer(async (req, res) => {
   const path = url.pathname;
   const method = req.method;
 
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  if (method === "OPTIONS") { res.writeHead(204); return res.end(); }
+  // This daemon is a server-to-server API, not a browser API. Do not emit wildcard CORS headers.
+  if (method === "OPTIONS") return sendJSON(res, 405, { error: "Method not allowed" });
 
   try {
     if (path === "/status" && method === "GET") {
@@ -728,9 +732,17 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       if (!sock || connectionState !== "connected") return sendJSON(res, 400, { error: "Not connected" });
       const { to, message } = body;
-      if (!to || !message) return sendJSON(res, 400, { error: "Missing 'to' or 'message'" });
-      const jid = to.includes("@") ? to : `${to}@s.whatsapp.net`;
-      const result = await sock.sendMessage(jid, { text: message });
+      if (typeof to !== "string" || typeof message !== "string" || !to || !message.trim()) {
+        return sendJSON(res, 400, { error: "A valid recipient and non-empty message are required" });
+      }
+      if (message.length > 4000) return sendJSON(res, 413, { error: "Message too long" });
+      // Only allow individual phone-number JIDs; do not let this endpoint target arbitrary group JIDs.
+      if (!/^\\+?\\d{7,15}(?:@s\\.whatsapp\\.net)?$/.test(to)) {
+        return sendJSON(res, 400, { error: "Recipient must be an individual phone number" });
+      }
+      const normalizedTo = to.replace(/^\\+/, "").replace(/@s\\.whatsapp\\.net$/, "");
+      const jid = `${normalizedTo}@s.whatsapp.net`;
+      const result = await sock.sendMessage(jid, { text: message.trim() });
       return sendJSON(res, 200, { ok: true, id: result.key.id });
     }
 
@@ -743,8 +755,8 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
-  log(`WhatsApp daemon listening on port ${PORT}`);
+server.listen(PORT, HOST, () => {
+  log(`WhatsApp daemon listening on ${HOST}:${PORT}`);
   log("Internal authentication configured");
   log(`Limits: media=${MAX_MEDIA_BYTES} bytes, concurrent=${MAX_CONCURRENT_MEDIA}, reconnect_max=${MAX_RECONNECT_ATTEMPTS}`);
 
