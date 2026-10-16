@@ -111,11 +111,12 @@ async function callIA(userText, imageBase64) {
       max_tokens: 1024,
       stream: false,
     }),
+    signal: AbortSignal.timeout(60000),
   });
 
   if (!res.ok) {
     const errText = await res.text().catch(() => "unknown");
-    log(`IA error: HTTP ${res.status} — ${errText.slice(0, 100)}`);
+    log(`IA provider returned HTTP ${res.status}`);
     throw new Error(`IA HTTP ${res.status}`);
   }
 
@@ -144,9 +145,32 @@ async function transcribeAudio(audioBuffer) {
   }
 }
 
+function unwrapMessage(input) {
+  let current = input;
+  for (let depth = 0; depth < 5 && current; depth++) {
+    const wrapped = current.ephemeralMessage?.message
+      || current.viewOnceMessage?.message
+      || current.viewOnceMessageV2?.message
+      || current.viewOnceMessageV2Extension?.message
+      || current.documentWithCaptionMessage?.message;
+    if (!wrapped) break;
+    current = wrapped;
+  }
+  return current;
+}
+
+function isSupportedImageBuffer(buffer, mime) {
+  if (!Buffer.isBuffer(buffer)) return false;
+  if (mime === "image/jpeg") return buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+  if (mime === "image/png") return buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  if (mime === "image/webp") return buffer.length >= 12 && buffer.toString("ascii", 0, 4) === "RIFF" && buffer.toString("ascii", 8, 12) === "WEBP";
+  return false;
+}
+
 // === Message handler ===
 async function handleMessage(msg) {
-  if (!msg.message) return;
+  const message = unwrapMessage(msg.message);
+  if (!message) return;
   const from = msg.key.remoteJid;
   const isGroup = from.endsWith("@g.us");
   if (isGroup) return;
@@ -157,17 +181,21 @@ async function handleMessage(msg) {
   let mediaBuffer = null;
 
   // Extract text
-  if (msg.message.conversation) {
-    text = msg.message.conversation;
-  } else if (msg.message.extendedTextMessage?.text) {
-    text = msg.message.extendedTextMessage.text;
+  if (message.conversation) {
+    text = message.conversation;
+  } else if (message.extendedTextMessage?.text) {
+    text = message.extendedTextMessage.text;
+  } else if (message.imageMessage?.caption) {
+    text = message.imageMessage.caption;
+  } else if (message.audioMessage?.caption) {
+    text = message.audioMessage.caption;
   }
 
   // Extract audio/voice note
-  if (msg.message.audioMessage || msg.message.voiceMessage) {
+  if (message.audioMessage || message.voiceMessage) {
     mediaType = "audio";
     try {
-      const declaredSize = Number(msg.message.audioMessage?.fileLength || msg.message.voiceMessage?.fileLength || 0);
+      const declaredSize = Number(message.audioMessage?.fileLength || message.voiceMessage?.fileLength || 0);
       if (declaredSize > MAX_MEDIA_BYTES) throw new Error("media_too_large");
       mediaBuffer = await downloadMediaMessage(msg, "buffer", {}, logger);
       if (!Buffer.isBuffer(mediaBuffer) || mediaBuffer.length > MAX_MEDIA_BYTES) { mediaBuffer = null; throw new Error("media_too_large"); }
@@ -178,15 +206,16 @@ async function handleMessage(msg) {
   }
 
   // Extract image
-  if (msg.message.imageMessage) {
+  if (message.imageMessage) {
     mediaType = "image";
     try {
-      const imageMessage = msg.message.imageMessage;
+      const imageMessage = message.imageMessage;
       const declaredSize = Number(imageMessage?.fileLength || 0);
       const mime = String(imageMessage?.mimetype || "image/jpeg").toLowerCase();
       if (declaredSize > MAX_MEDIA_BYTES || !["image/jpeg", "image/png", "image/webp"].includes(mime)) throw new Error("unsupported_image");
       mediaBuffer = await downloadMediaMessage(msg, "buffer", {}, logger);
       if (!Buffer.isBuffer(mediaBuffer) || mediaBuffer.length > MAX_MEDIA_BYTES) { mediaBuffer = null; throw new Error("media_too_large"); }
+      if (!isSupportedImageBuffer(mediaBuffer, mime)) { mediaBuffer = null; throw new Error("invalid_image_signature"); }
       log("Image media received");
     } catch (e) {
       log("Image download failed");
@@ -194,7 +223,7 @@ async function handleMessage(msg) {
   }
 
   // Extract video/sticker (can't process yet)
-  if (msg.message.videoMessage || msg.message.stickerMessage) {
+  if (message.videoMessage || message.stickerMessage) {
     mediaType = "unsupported";
   }
 
@@ -217,7 +246,7 @@ async function handleMessage(msg) {
       }
     } else if (mediaType === "image" && mediaBuffer) {
       // Convert image to base64 and send to IA with vision
-      const mime = String(msg.message.imageMessage?.mimetype || "image/jpeg").toLowerCase();
+      const mime = String(message.imageMessage?.mimetype || "image/jpeg").toLowerCase();
       const base64 = `data:${mime};base64,${mediaBuffer.toString("base64")}`;
       reply = await callIA(text || "¿Qué hay en esta imagen?", base64);
     } else if (mediaType === "unsupported") {
