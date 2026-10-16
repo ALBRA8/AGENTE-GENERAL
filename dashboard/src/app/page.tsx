@@ -127,6 +127,7 @@ function ChatView() {
   const [error, setError] = useState<string | null>(null);
   const [connected, setConnected] = useState<boolean | null>(null);
   const [agentName, setAgentName] = useState("AGENTE GENERAL");
+  const [agentRole, setAgentRole] = useState("asistente de IA");
   const [showSettings, setShowSettings] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -169,6 +170,7 @@ function ChatView() {
           temperature: 0.5,
           max_tokens: 1024,
           agent_name: agentName,
+          agent_persona: `${agentRole}. Respondes en español de forma clara, concisa y útil. Eres capaz de conversar, responder preguntas y ayudar con tareas.`,
         }),
       });
 
@@ -197,23 +199,22 @@ function ChatView() {
           <span style={{ width: "0.5rem", height: "0.5rem", borderRadius: "9999px", background: connected ? "var(--success)" : "var(--danger)" }} />
           <span style={{ fontSize: "0.8rem", color: "var(--muted-fg)" }}>{connected ? "IA conectada" : "IA no disponible"}</span>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
           <input
             type="text"
             value={agentName}
             onChange={(e) => setAgentName(e.target.value)}
-            placeholder="Nombre del agente"
-            style={{
-              background: "var(--card)",
-              color: "var(--fg)",
-              border: "1px solid var(--border)",
-              borderRadius: "0.375rem",
-              padding: "0.3rem 0.6rem",
-              fontSize: "0.8rem",
-              width: "10rem",
-              textAlign: "right",
-            }}
-            title="Nombre del agente — el agente usará este nombre al presentarse"
+            placeholder="Nombre"
+            style={{ ...chatInputStyle, width: "7rem" }}
+            title="Nombre del agente"
+          />
+          <input
+            type="text"
+            value={agentRole}
+            onChange={(e) => setAgentRole(e.target.value)}
+            placeholder="Rol / proyecto"
+            style={{ ...chatInputStyle, width: "10rem" }}
+            title="Rol del agente: asistente de la empresa Pajarita, asistente de derecho, asistente personal de Johan, etc."
           />
           <button onClick={() => { setMessages([]); setError(null); }} style={smallBtn}>🗑️</button>
         </div>
@@ -742,6 +743,7 @@ const hintStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--muted
 const primaryBtn: React.CSSProperties = { background: "var(--accent)", color: "var(--accent-fg)", border: "1px solid var(--accent)", borderRadius: "0.5rem", padding: "0.5rem 1rem", fontSize: "0.875rem", fontWeight: 500, cursor: "pointer" };
 const secondaryBtn: React.CSSProperties = { background: "transparent", color: "var(--fg)", border: "1px solid var(--border)", borderRadius: "0.5rem", padding: "0.5rem 1rem", fontSize: "0.875rem", cursor: "pointer" };
 const smallBtn: React.CSSProperties = { background: "transparent", border: "1px solid var(--border)", borderRadius: "0.375rem", padding: "0.25rem 0.6rem", fontSize: "0.75rem", cursor: "pointer", color: "var(--muted-fg)" };
+const chatInputStyle: React.CSSProperties = { background: "var(--card)", color: "var(--fg)", border: "1px solid var(--border)", borderRadius: "0.375rem", padding: "0.3rem 0.6rem", fontSize: "0.8rem" };
 const msgStyle: React.CSSProperties = { padding: "0.6rem 0.8rem", borderRadius: "0.5rem", fontSize: "0.8rem", marginBottom: "1rem" };
 const errorBannerStyle: React.CSSProperties = { background: "rgba(239,68,68,0.1)", color: "var(--danger)", padding: "0.5rem 0.75rem", borderRadius: "0.375rem", fontSize: "0.75rem", marginBottom: "0.5rem" };
 const messagesContainerStyle: React.CSSProperties = { flex: 1, overflowY: "auto", border: "1px solid var(--border)", borderRadius: "0.75rem", background: "var(--card)", padding: "1rem", display: "flex", flexDirection: "column", gap: "0.5rem" };
