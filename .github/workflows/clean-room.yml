@@ -197,6 +197,16 @@ jobs:
         working-directory: dashboard
         run: npm run build
 
+      - name: Install Chromium for browser acceptance
+        working-directory: dashboard
+        run: npx playwright install --with-deps chromium
+
+      - name: Run dashboard browser acceptance
+        working-directory: dashboard
+        env:
+          CI: "true"
+        run: npm run test:e2e
+
       - name: Scan public bundle for credential-like patterns
         shell: bash
         run: |
