@@ -66,6 +66,7 @@ let reconnectAttempts = 0;
 let reconnectTimer = null;
 let isShuttingDown = false;
 let startPromise = null;
+let connectionGeneration = 0;
 
 // Dedup: Set of recently-processed message IDs with TTL
 const processedMessages = new Map(); // msgId -> timestamp
@@ -425,6 +426,7 @@ async function startWhatsApp() {
   if (startPromise) return startPromise;
   if (sock && ["connecting", "linking", "connected"].includes(connectionState)) return;
 
+  const generation = ++connectionGeneration;
   startPromise = (async () => {
     connectionState = "connecting";
     if (sock) {
@@ -438,6 +440,7 @@ async function startWhatsApp() {
     const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
     const { version } = await fetchLatestBaileysVersion();
     if (isShuttingDown) throw new Error("daemon_shutting_down");
+    if (generation !== connectionGeneration) throw new Error("connection_start_cancelled");
 
     const currentSock = makeWASocket({
       version,
@@ -583,13 +586,21 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (path === "/disconnect" && method === "POST") {
+      // Invalidate any asynchronous startup so it cannot create a socket after this response.
+      connectionGeneration++;
+      const pendingStart = startPromise;
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+      if (pendingStart) {
+        try { await pendingStart; } catch {}
+      }
       if (sock) {
-        try { sock.ev.removeAllListeners(); } catch {}
-        try { await sock.logout(); } catch {}
-        sock = null;
+        const currentSock = sock;
+        try { currentSock.ev.removeAllListeners(); } catch {}
+        try { await currentSock.logout(); } catch {}
+        try { currentSock.end(); } catch {}
+        if (sock === currentSock) sock = null;
       }
       connectionState = "disconnected"; connectedPhone = null; lastQR = null;
-      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
       return sendJSON(res, 200, { ok: true, message: "Disconnected" });
     }
 
@@ -630,6 +641,7 @@ server.listen(PORT, () => {
 function shutdown(signal) {
   if (isShuttingDown) return;
   isShuttingDown = true;
+  connectionGeneration++;
   log(`Received ${signal}, shutting down...`);
 
   if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
