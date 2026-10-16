@@ -32,9 +32,9 @@ concurrency:
 
 on:
   push:
-    branches: [main]
+    branches: [main, front-2-acceptance-battery]
   pull_request:
-    branches: [main]
+    branches: [main, fix/windows-compat-grep-sqlite]
   # Allow manual triggering from the Actions tab.
   workflow_dispatch:
 
