@@ -409,13 +409,19 @@ async function handleMessage(msg) {
     mediaType = "unsupported";
   }
 
-  // If nothing to process
-  if (!text && !mediaBuffer && mediaType !== "unsupported") return;
+  // Keep audio download failures on the normal error-response path.
+  if (!text && !mediaBuffer && mediaType !== "unsupported" && mediaType !== "audio") return;
 
   log(`Processing inbound: type=${mediaType || "text"}, from=${sanitizeJid(from)}`);
 
   try {
     let reply = "";
+
+    if (mediaType === "audio" && !mediaBuffer) {
+      const error = new Error("Audio download failed");
+      error.code = "ASR_DOWNLOAD_FAILED";
+      throw error;
+    }
 
     if (mediaType === "audio" && mediaBuffer) {
       const transcribed = await transcribeAudio(mediaBuffer);
