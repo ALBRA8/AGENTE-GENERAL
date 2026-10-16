@@ -63,7 +63,6 @@ export default function Home() {
   const [success, setSuccess] = useState<string | null>(null);
   const [showApiKey, setShowApiKey] = useState(false);
   const [apiKey, setApiKey] = useState("");
-  const [dark, setDark] = useState(false);
   // Kept in component memory only; never persisted to localStorage.
   const [accessToken, setAccessToken] = useState("");
 
@@ -115,13 +114,8 @@ export default function Home() {
     }
   };
 
-  useEffect(() => {
-    setDark(document.documentElement.classList.contains("dark"));
-  }, []);
-
   const toggleTheme = () => {
-    const next = !dark;
-    setDark(next);
+    const next = !document.documentElement.classList.contains("dark");
     if (next) {
       document.documentElement.classList.add("dark");
       localStorage.setItem("theme", "dark");
@@ -269,7 +263,7 @@ export default function Home() {
             fontSize: "0.8rem",
           }}
         >
-          {dark ? "☀ Claro" : "☾ Oscuro"}
+          Cambiar tema
         </button>
       </header>
 
