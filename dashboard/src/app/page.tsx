@@ -6,7 +6,7 @@ const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE || "https://agente-general.onrender.com";
 
 type Tab = "chat" | "settings";
-type SettingsSection = "provider" | "telegram" | "whatsapp";
+type SettingsSection = "identity" | "provider" | "telegram" | "whatsapp";
 
 export default function Home() {
   const [tab, setTab] = useState<Tab>("chat");
@@ -74,6 +74,7 @@ function NavBtn({ active, onClick, children }: { active: boolean; onClick: () =>
 
 function SettingsView({ section, setSection }: { section: SettingsSection; setSection: (s: SettingsSection) => void }) {
   const tabs: { key: SettingsSection; label: string; icon: string }[] = [
+    { key: "identity", label: "Identidad", icon: "🏷️" },
     { key: "provider", label: "Proveedor IA", icon: "🧠" },
     { key: "telegram", label: "Telegram", icon: "✈️" },
     { key: "whatsapp", label: "WhatsApp", icon: "📱" },
@@ -101,6 +102,7 @@ function SettingsView({ section, setSection }: { section: SettingsSection; setSe
         ))}
       </div>
 
+      {section === "identity" && <IdentityView />}
       {section === "provider" && <ProviderView />}
       {section === "telegram" && <TelegramView />}
       {section === "whatsapp" && <WhatsAppView />}
@@ -127,12 +129,16 @@ function ChatView() {
   const [error, setError] = useState<string | null>(null);
   const [connected, setConnected] = useState<boolean | null>(null);
   const [agentName, setAgentName] = useState("AGENTE GENERAL");
-  const [agentRole, setAgentRole] = useState("asistente de IA");
-  const [showSettings, setShowSettings] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    // Check if the local chat API is available (it needs NVIDIA_API_KEY)
+    // Load saved identity
+    fetch("/api/agent-identity")
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => { if (d?.name) setAgentName(d.name); })
+      .catch(() => {});
+
+    // Check if the local chat API is available
     fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -169,8 +175,6 @@ function ChatView() {
           messages: history,
           temperature: 0.5,
           max_tokens: 1024,
-          agent_name: agentName,
-          agent_persona: `${agentRole}. Respondes en español de forma clara, concisa y útil. Eres capaz de conversar, responder preguntas y ayudar con tareas.`,
         }),
       });
 
@@ -200,22 +204,7 @@ function ChatView() {
           <span style={{ fontSize: "0.8rem", color: "var(--muted-fg)" }}>{connected ? "IA conectada" : "IA no disponible"}</span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
-          <input
-            type="text"
-            value={agentName}
-            onChange={(e) => setAgentName(e.target.value)}
-            placeholder="Nombre"
-            style={{ ...chatInputStyle, width: "7rem" }}
-            title="Nombre del agente"
-          />
-          <input
-            type="text"
-            value={agentRole}
-            onChange={(e) => setAgentRole(e.target.value)}
-            placeholder="Rol / proyecto"
-            style={{ ...chatInputStyle, width: "10rem" }}
-            title="Rol del agente: asistente de la empresa Pajarita, asistente de derecho, asistente personal de Johan, etc."
-          />
+          <span style={{ fontSize: "0.8rem", fontWeight: 500 }}>{agentName}</span>
           <button onClick={() => { setMessages([]); setError(null); }} style={smallBtn}>🗑️</button>
         </div>
       </div>
@@ -248,6 +237,81 @@ function ChatView() {
           disabled={sending}
         />
         <button onClick={send} disabled={sending || !input.trim()} style={sendBtn}>{sending ? "⏳" : "➤"}</button>
+      </div>
+    </div>
+  );
+}
+
+// =====================================================================
+// IDENTITY VIEW — agent name + role (shared across all channels)
+// =====================================================================
+
+function IdentityView() {
+  const [name, setName] = useState("AGENTE GENERAL");
+  const [role, setRole] = useState("asistente de IA");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+
+  useEffect(() => {
+    fetch("/api/agent-identity")
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => {
+        if (d) { setName(d.name || "AGENTE GENERAL"); setRole(d.role || "asistente de IA"); }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const save = async () => {
+    setSaving(true); setMsg(null);
+    try {
+      const res = await fetch("/api/agent-identity", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: name.trim(), role: role.trim() }),
+      });
+      if (!res.ok) throw new Error("Error al guardar");
+      setMsg({ type: "ok", text: `✅ Identidad guardada — el agente se llamará "${name}" en Chat, WhatsApp y Telegram` });
+    } catch (e) {
+      setMsg({ type: "err", text: e instanceof Error ? e.message : "Error" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) return <div style={{ padding: "2rem", textAlign: "center", color: "var(--muted-fg)" }}>Cargando...</div>;
+
+  return (
+    <div>
+      <h2 style={h2Style}>🏷️ Identidad del Agente</h2>
+      <p style={{ fontSize: "0.8rem", color: "var(--muted-fg)", marginBottom: "1rem" }}>
+        Configura el nombre y rol del agente. Se aplica automáticamente a todos los canales: Chat, WhatsApp y Telegram.
+      </p>
+
+      {msg && <div style={{ ...msgStyle, color: msg.type === "ok" ? "var(--success)" : "var(--danger)", background: msg.type === "ok" ? "rgba(16,185,129,0.1)" : "rgba(239,68,68,0.1)" }}>{msg.text}</div>}
+
+      <div style={cardStyle}>
+        <div style={fieldStyle}>
+          <label style={labelStyle}>Nombre del agente</label>
+          <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Jenny, Pepito, Martin..." style={inputStyle} />
+        </div>
+        <div style={fieldStyle}>
+          <label style={labelStyle}>Rol / Descripción</label>
+          <input type="text" value={role} onChange={(e) => setRole(e.target.value)} placeholder="asistente de la empresa Pajarita, asistente personal de Johan, asistente de derecho..." style={inputStyle} />
+        </div>
+
+        {/* Preview */}
+        <div style={{ background: "var(--muted)", borderRadius: "0.5rem", padding: "0.75rem", marginBottom: "1rem" }}>
+          <p style={{ fontSize: "0.7rem", color: "var(--muted-fg)", margin: "0 0 0.3rem" }}>Vista previa:</p>
+          <p style={{ fontSize: "0.85rem", margin: 0 }}>
+            "Soy <strong>{name || "AGENTE GENERAL"}</strong>, {role || "asistente de IA"}."
+          </p>
+        </div>
+
+        <button onClick={save} disabled={saving} style={primaryBtn}>
+          {saving ? "⏳ Guardando..." : "💾 Guardar identidad"}
+        </button>
       </div>
     </div>
   );

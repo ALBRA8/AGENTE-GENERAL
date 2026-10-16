@@ -15,9 +15,21 @@
  */
 
 import { NextResponse } from "next/server";
+import { readFile } from "fs/promises";
+import path from "path";
 
 const NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1";
 const NVIDIA_MODEL = "z-ai/glm-5.3-flash";
+const IDENTITY_FILE = path.join(process.cwd(), ".agent-identity.json");
+
+async function getIdentity() {
+  try {
+    const data = await readFile(IDENTITY_FILE, "utf-8");
+    return JSON.parse(data);
+  } catch {
+    return { name: "AGENTE GENERAL", role: "asistente de IA" };
+  }
+}
 
 export async function POST(request: Request) {
   const apiKey = process.env.NVIDIA_API_KEY;
@@ -41,13 +53,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "messages array required" }, { status: 400 });
   }
 
-  // Custom agent name + persona from request (set by dashboard)
-  const agentName = body.agent_name || "AGENTE GENERAL";
-  const agentPersona = body.agent_persona || "un asistente de IA del proyecto ALBRA. Respondes en español de forma clara, concisa y útil. Eres capaz de conversar, responder preguntas y ayudar con tareas.";
+  // Get saved identity (or use request override)
+  const saved = await getIdentity();
+  const agentName = body.agent_name || saved.name || "AGENTE GENERAL";
+  const agentRole = body.agent_persona || `${saved.role || "asistente de IA"}. Respondes en español de forma clara, concisa y útil. Eres capaz de conversar, responder preguntas y ayudar con tareas.`;
 
   // Inject system prompt if not present
   const hasSystem = messages.some((m: any) => m.role === "system");
-  const systemContent = `Eres ${agentName}, ${agentPersona} No te identifiques como Claude, ChatGPT, GLM, ni ningún otro modelo. Tu nombre es ${agentName}.`;
+  const systemContent = `Eres ${agentName}, ${agentRole} No te identifiques como Claude, ChatGPT, GLM, ni ningún otro modelo. Tu nombre es ${agentName}.`;
   const systemPrompt = { role: "system", content: systemContent };
   const finalMessages = hasSystem ? messages : [systemPrompt, ...messages];
 
