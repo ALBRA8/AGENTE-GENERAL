@@ -56,6 +56,89 @@ async function startWhatsApp() {
 
   sock.ev.on("creds.update", saveCreds);
 
+  // === AUTO-REPLY: incoming messages → IA → reply ===
+  sock.ev.on("messages.upsert", async (m) => {
+    const messages = m.messages || [];
+    for (const msg of messages) {
+      // Skip if no text content
+      if (!msg.message) continue;
+      const from = msg.key.remoteJid;
+      const isGroup = from.endsWith("@g.us");
+      // Skip group messages (can enable later if needed)
+      if (isGroup) continue;
+
+      // Extract text from message
+      let text = "";
+      if (msg.message.conversation) {
+        text = msg.message.conversation;
+      } else if (msg.message.extendedTextMessage?.text) {
+        text = msg.message.extendedTextMessage.text;
+      }
+
+      if (!text || !text.trim()) continue;
+      // Skip our own messages
+      if (msg.key.fromMe) continue;
+
+      log(`Incoming from ${from}: ${text.slice(0, 60)}...`);
+
+      try {
+        // Get agent identity
+        const fs = require("fs");
+        let agentName = "AGENTE GENERAL";
+        let agentRole = "asistente de IA";
+        try {
+          const idFile = require("path").join(process.cwd(), ".agent-identity.json");
+          const idData = JSON.parse(fs.readFileSync(idFile, "utf-8"));
+          agentName = idData.name || agentName;
+          agentRole = idData.role || agentRole;
+        } catch {}
+
+        // Call the NVIDIA API (same as /api/chat but directly)
+        const apiKey = process.env.NVIDIA_API_KEY;
+        if (!apiKey) {
+          log("No NVIDIA_API_KEY — cannot reply");
+          await sock.sendMessage(from, { text: "⚠️ El agente no está configurado correctamente." });
+          continue;
+        }
+
+        const systemPrompt = `Eres ${agentName}, ${agentRole}. Respondes en español de forma clara, concisa y útil. No te identifiques como Claude, ChatGPT, GLM. Tu nombre es ${agentName}.`;
+
+        const aiRes = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model: "z-ai/glm-5.3-flash",
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: text },
+            ],
+            temperature: 0.5,
+            top_p: 1,
+            max_tokens: 1024,
+            stream: false,
+          }),
+        });
+
+        if (!aiRes.ok) {
+          log(`AI error: HTTP ${aiRes.status}`);
+          await sock.sendMessage(from, { text: "⚠️ No pude procesar tu mensaje ahora mismo. Intenta más tarde." });
+          continue;
+        }
+
+        const aiData = await aiRes.json();
+        const reply = aiData?.choices?.[0]?.message?.content || "(sin respuesta)";
+        log(`Reply to ${from}: ${reply.slice(0, 60)}...`);
+        await sock.sendMessage(from, { text: reply });
+      } catch (err) {
+        log(`Error processing message: ${err.message}`);
+        await sock.sendMessage(from, { text: "⚠️ Ocurrió un error. Intenta más tarde." });
+      }
+    }
+  });
+
   sock.ev.on("connection.update", (update) => {
     const { connection, lastDisconnect, qr } = update;
 
