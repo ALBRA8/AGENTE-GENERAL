@@ -26,6 +26,22 @@ LOG_FILE="$LOG_DIR/wa-daemon.log"
 PID_FILE="$DASH_DIR/.wa-daemon.pid"
 PORT="${WHATSAPP_DAEMON_PORT:-3002}"
 
+# Read only known KEY=value entries; never execute .env.local as shell code.
+load_env_safely() {
+  local line key value
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    [[ "$line" =~ ^([A-Z_][A-Z0-9_]*)=(.*)$ ]] || continue
+    key="${BASH_REMATCH[1]}"
+    value="${BASH_REMATCH[2]}"
+    case "$key" in
+      INTERNAL_API_SECRET|WHATSAPP_DAEMON_PORT|WHATSAPP_DAEMON_HOST|WHATSAPP_DAEMON_URL|NVIDIA_API_KEY|NVIDIA_ASR_ENDPOINT|NVIDIA_ASR_POLL_SECONDS|NVIDIA_ASR_TIMEOUT_MS|WHATSAPP_ASR_ZAI_FALLBACK|MAX_MEDIA_BYTES|MAX_CONCURRENT_MEDIA|MAX_MEDIA_QUEUE|MAX_RECONNECT_ATTEMPTS)
+        export "$key=$value"
+        ;;
+    esac
+  done < "$ENV_FILE"
+}
+
 mkdir -p "$LOG_DIR"
 
 # ----- helpers -----
@@ -85,11 +101,8 @@ cmd_start() {
   echo "[start-wa-daemon] Arrancando daemon en puerto $PORT ..."
   echo "[start-wa-daemon] Log: $LOG_FILE"
 
-  # Cargar variables del .env.local para que el daemon las herede
-  set -a
-  # shellcheck disable=SC1090
-  source "$ENV_FILE"
-  set +a
+  # Cargar únicamente variables permitidas; no ejecutar contenido del archivo
+  load_env_safely
 
   nohup node "$DASH_DIR/src/server/whatsapp-daemon.js" > "$LOG_FILE" 2>&1 &
   local pid=$!
@@ -120,10 +133,7 @@ cmd_start() {
 
 cmd_foreground() {
   ensure_env
-  set -a
-  # shellcheck disable=SC1090
-  source "$ENV_FILE"
-  set +a
+  load_env_safely
   exec node "$DASH_DIR/src/server/whatsapp-daemon.js"
 }
 
