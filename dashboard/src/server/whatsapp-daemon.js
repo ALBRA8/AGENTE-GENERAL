@@ -643,6 +643,12 @@ function checkAuth(req) {
   return suppliedBytes.length === expectedBytes.length && timingSafeEqual(suppliedBytes, expectedBytes);
 }
 
+function normalizeRecipient(to) {
+  if (typeof to !== "string" || !/^\\+?\\d{7,15}(?:@s\\.whatsapp\\.net)?$/.test(to)) return null;
+  const number = to.replace(/^\\+/, "").replace(/@s\\.whatsapp\\.net$/, "");
+  return `${number}@s.whatsapp.net`;
+}
+
 function sendJSON(res, code, data) {
   res.writeHead(code, { "Content-Type": "application/json" });
   res.end(JSON.stringify(data));
@@ -737,11 +743,8 @@ const server = http.createServer(async (req, res) => {
       }
       if (message.length > 4000) return sendJSON(res, 413, { error: "Message too long" });
       // Only allow individual phone-number JIDs; do not let this endpoint target arbitrary group JIDs.
-      if (!/^\\+?\\d{7,15}(?:@s\\.whatsapp\\.net)?$/.test(to)) {
-        return sendJSON(res, 400, { error: "Recipient must be an individual phone number" });
-      }
-      const normalizedTo = to.replace(/^\\+/, "").replace(/@s\\.whatsapp\\.net$/, "");
-      const jid = `${normalizedTo}@s.whatsapp.net`;
+      const jid = normalizeRecipient(to);
+      if (!jid) return sendJSON(res, 400, { error: "Recipient must be an individual phone number" });
       const result = await sock.sendMessage(jid, { text: message.trim() });
       return sendJSON(res, 200, { ok: true, id: result.key.id });
     }
@@ -815,6 +818,8 @@ module.exports = {
   withMediaSlot,
   scheduleReconnect,
   sanitizeJid,
+  checkAuth,
+  normalizeRecipient,
   MAX_MEDIA_BYTES,
   MAX_CONCURRENT_MEDIA,
   MAX_RECONNECT_ATTEMPTS,
