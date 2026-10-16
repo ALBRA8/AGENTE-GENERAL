@@ -32,7 +32,7 @@ Todos los casos de esta matriz comienzan en **PENDIENTE** hasta que se adjunte e
 
 | ID | Área / criterio Frente 1 | Procedimiento inicial | Resultado esperado | Tipo |
 |---|---|---|---|---|
-| AT-ENV-001 | Instalación / C-03, C-05 | Crear venv desde checkout limpio; instalar `pip install -e ".[dev,a2a,api]"` (extras confirmados en el workflow CI actual) | Instalación reproducible, sin dependencias faltantes; versión y resolución registradas | Manual + CI |
+| AT-ENV-001 | Instalación / C-03, C-05 | Crear venv desde checkout limpio; instalar `pip install -e ".[dev,a2a,api]"` (extras declarados en `pyproject.toml`; no se ha localizado un workflow CI en la rama inspeccionada) | Instalación reproducible, sin dependencias faltantes; versión y resolución registradas | Manual + CI |
 | AT-ENV-002 | Configuración / C-02, C-31 | Revisar `pyproject.toml`, README y variables de entorno; comprobar que no se necesitan secretos para CORE_ONLY | Requisitos documentados; no imprimir ni registrar secretos | Manual |
 | AT-CORE-001 | Arranque / C-04, C-26 | Ejecutar `python scripts/clean_room_verify.py` en el checkout objetivo | Exit code 0 y línea final `CLEAN-ROOM: PASS`; conservar salida completa | Automatizada |
 | AT-CORE-002 | Auditoría de componentes / C-01, C-09 | Ejecutar `python scripts/audit_matrix.py` | Exit code 0 y 40/40 VERIFIED, o registrar diferencias actuales | Automatizada |
@@ -89,6 +89,9 @@ El comando de instalación debe contrastarse con los extras realmente declarados
 
 ## 4. Cobertura existente y brechas conocidas
 
+- **No duplicar la aceptación operativa:** existe una matriz de staging/operaciones en [`docs/ops/ACCEPTANCE_EVIDENCE.md` de `ops/staging-readiness`](https://github.com/ALBRA8/AGENTE-GENERAL/blob/ops/staging-readiness/docs/ops/ACCEPTANCE_EVIDENCE.md). Esa matriz corresponde a `main@24ab004c` y registra pruebas de staging/infraestructura con estados PASS/BLOCKED/NOT RUN. Reutilizar sus evidencias solo cuando el SHA y el entorno coincidan; no transferir sus PASS a este commit ni tratarlos como ejecución de esta batería.
+- **Límite de CI observado:** no se encontró un archivo de workflow en las rutas convencionales inspeccionadas (`.github/workflows/ci.yml`, `tests.yml`, `ci.yaml`, `test.yml`) y la consulta de ejecuciones para el SHA de esta rama no devolvió runs. Antes de afirmar que CI validó esta batería, localizar el workflow real o configurar uno explícitamente.
+
 - Ya hay suites para unit, golden flows, integration, contracts, security, A2A, parity y contamination. La primera acción es reutilizarlas y recoger sus salidas, no duplicarlas.
 - `docs/CERTIFICATION.md` identifica la fuente de evidencia de CI previa como commit `979d55d`/merge `4c83885`, no como el commit del PR #50. Por tanto, las cifras de ese documento no certifican automáticamente el nuevo commit.
 - El PR #50 reporta 652 pruebas y gates verdes en Linux, pero este documento no afirma que se hayan vuelto a ejecutar.
@@ -101,4 +104,4 @@ El comando de instalación debe contrastarse con los extras realmente declarados
 
 El Frente 2 se considera preparado cuando cada requisito aplicable de C-01 a C-35 está vinculado a uno o más casos, con procedimiento y resultado esperado objetivos. El proyecto no se declara cerrado por completar esta matriz: el cierre requiere ejecutar los casos, conservar evidencia y resolver los fallos críticos.
 
-**Estado actual del Frente 2: batería inicial definida; ejecución y evidencias pendientes.**
+**Estado actual del Frente 2: batería de software definida; ejecución local y evidencias del SHA objetivo pendientes. La matriz operativa de staging se mantiene separada.**
