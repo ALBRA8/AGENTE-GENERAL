@@ -345,16 +345,18 @@ function readBody(req) {
   return new Promise((resolve, reject) => {
     let body = "";
     let size = 0;
+    let tooLarge = false;
     req.on("data", (chunk) => {
       size += chunk.length;
       if (size > 64 * 1024) {
-        reject(new Error("BODY_TOO_LARGE"));
-        req.destroy();
+        tooLarge = true;
+        body = "";
         return;
       }
-      body += chunk.toString("utf8");
+      if (!tooLarge) body += chunk.toString("utf8");
     });
     req.on("end", () => {
+      if (tooLarge) return reject(new Error("BODY_TOO_LARGE"));
       try { resolve(JSON.parse(body)); } catch { reject(new Error("INVALID_JSON")); }
     });
     req.on("error", reject);
