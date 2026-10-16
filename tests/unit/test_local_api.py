@@ -56,3 +56,12 @@ def test_provider_settings_auth_and_secret_redaction(monkeypatch: pytest.MonkeyP
         payload = authorized.json()
         assert "api_key" not in payload
         assert "api_key_set" in payload
+
+        invalid_key = "TEST-SECRET-MUST-NOT-LEAK-" + ("x" * 4100)
+        invalid_response = client.put(
+            "/api/v1/provider/api-key",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"api_key": invalid_key},
+        )
+        assert invalid_response.status_code == 422
+        assert "TEST-SECRET-MUST-NOT-LEAK" not in invalid_response.text
