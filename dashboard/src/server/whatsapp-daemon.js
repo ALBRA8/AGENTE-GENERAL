@@ -644,9 +644,9 @@ function checkAuth(req) {
 }
 
 function normalizeRecipient(to) {
-  if (typeof to !== "string" || !/^\\+?\\d{7,15}(?:@s\\.whatsapp\\.net)?$/.test(to)) return null;
-  const number = to.replace(/^\\+/, "").replace(/@s\\.whatsapp\\.net$/, "");
-  return `${number}@s.whatsapp.net`;
+  if (typeof to !== "string" || !/^\+?\d{7,15}(?:@s\.whatsapp\.net)?$/.test(to)) return null;
+  const number = to.replace(/^\+/, "").replace(/@s\.whatsapp\.net$/, "");
+  return number + "@s.whatsapp.net";
 }
 
 function sendJSON(res, code, data) {
