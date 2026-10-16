@@ -28,4 +28,5 @@ jobs:
       - name: Run live NVIDIA API integration test
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          REQUIRE_NVIDIA_LIVE_TEST: "1"
         run: python -m pytest tests/llm_real/test_nvidia_glm_flash.py -q
