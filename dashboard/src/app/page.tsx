@@ -452,7 +452,7 @@ function WhatsAppView() {
 
   const loadStatus = async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/v1/whatsapp/daemon-proxy?path=/status`);
+      const res = await fetch(`/api/whatsapp/daemon-proxy?path=/status`);
       if (!res.ok) { setStatus("unknown"); return; }
       const data = await res.json();
       if (data.status === "connected") {
@@ -484,7 +484,7 @@ function WhatsAppView() {
     setConnecting(true);
     setMsg(null);
     try {
-      const res = await fetch(`${API_BASE}/api/v1/whatsapp/daemon-proxy`, {
+      const res = await fetch(`/api/whatsapp/daemon-proxy`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ path: "/connect" }),
@@ -505,7 +505,7 @@ function WhatsAppView() {
   const disconnect = async () => {
     if (!confirm("¿Desconectar WhatsApp?")) return;
     try {
-      await fetch(`${API_BASE}/api/v1/whatsapp/daemon-proxy`, {
+      await fetch(`/api/whatsapp/daemon-proxy`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ path: "/disconnect" }),
@@ -521,7 +521,7 @@ function WhatsAppView() {
 
   const refreshQr = async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/v1/whatsapp/daemon-proxy?path=/qr`);
+      const res = await fetch(`/api/whatsapp/daemon-proxy?path=/qr`);
       if (res.ok) {
         const data = await res.json();
         if (data.qr) setQrCode(data.qr);
