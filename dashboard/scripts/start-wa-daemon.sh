@@ -93,34 +93,32 @@ probe_health() {
 }
 
 cmd_start() {
+  ensure_env
+  load_env_safely
+  PORT="${WHATSAPP_DAEMON_PORT:-3002}"
+  PROBE_HOST="${WHATSAPP_DAEMON_HOST:-127.0.0.1}"
+  if [[ "$PROBE_HOST" == "0.0.0.0" ]]; then PROBE_HOST="127.0.0.1"; fi
+
   if is_running && probe_health; then
     echo "[start-wa-daemon] El daemon ya está corriendo (pid=$(cat "$PID_FILE"))"
     return 0
   fi
 
-  ensure_env
-
-  echo "[start-wa-daemon] Arrancando daemon en puerto $PORT ..."
+  echo "[start-wa-daemon] Arrancando daemon en ${PROBE_HOST} (bind configurado) puerto $PORT ..."
   echo "[start-wa-daemon] Log: $LOG_FILE"
-
-  # Cargar únicamente variables permitidas; no ejecutar contenido del archivo
-  load_env_safely
-  PORT="${WHATSAPP_DAEMON_PORT:-3002}"
-  PROBE_HOST="${WHATSAPP_DAEMON_HOST:-127.0.0.1}"
-  [[ "$PROBE_HOST" == "0.0.0.0" ]] && PROBE_HOST="127.0.0.1"
 
   nohup node "$DASH_DIR/src/server/whatsapp-daemon.js" > "$LOG_FILE" 2>&1 &
   local pid=$!
   echo "$pid" > "$PID_FILE"
 
-  # Esperar hasta 8s a que escuche en /status
+  # Esperar hasta 8s a que /status responda con autenticación
   local i
   local secret_for_probe
   secret_for_probe="$(grep -E '^INTERNAL_API_SECRET=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2-)"
   for i in 1 2 3 4 5 6 7 8; do
     if probe_health; then
       echo "[start-wa-daemon] OK — daemon corriendo (pid=$pid, port=$PORT)"
-      echo "[start-wa-daemon] Estado: $(curl -fsS -m 2 -H "Authorization: Bearer ${secret_for_probe}" "http://localhost:${PORT}/status" || echo '<no-response>')"
+      echo "[start-wa-daemon] Estado: $(curl -fsS -m 2 -H "Authorization: Bearer ${secret_for_probe}" "http://${PROBE_HOST}:${PORT}/status" || echo '<no-response>')"
       return 0
     fi
     sleep 1
@@ -135,7 +133,6 @@ cmd_start() {
   rm -f "$PID_FILE"
   exit 1
 }
-
 cmd_foreground() {
   ensure_env
   load_env_safely
