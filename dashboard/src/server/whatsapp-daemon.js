@@ -249,48 +249,55 @@ async function callIA(userText, imageBase64) {
   return data?.choices?.[0]?.message?.content || "(sin respuesta)";
 }
 
-// === ASR: transcribe audio using z-ai CLI ===
-// WhatsApp envía notas de voz como OGG/Opus. El servicio ASR de Z.ai solo
-// acepta WAV o WebM (rechaza OGG con "Audio format conversion failed").
-// Convertimos OGG→WAV (mono 16kHz) con ffmpeg antes de transcribir.
-async function transcribeAudio(audioBuffer) {
-  const { execFileSync } = require("child_process");
-  const tmpOgg = `/tmp/wa-audio-${process.pid}-${Date.now()}.ogg`;
-  const tmpWav = `/tmp/wa-audio-${process.pid}-${Date.now()}.wav`;
-  try {
-    fs.writeFileSync(tmpOgg, audioBuffer, { flag: "wx", mode: 0o600 });
-    ownedTempFiles.add(tmpOgg);
+// === ASR: transcribe WhatsApp OGG/Opus with NVIDIA Riva ASR ===
+// Send the native WhatsApp voice-note container directly; this avoids relying
+// on undocumented local "z-ai" commands or a system-installed ffmpeg binary.
+// NVIDIA's Spanish/English Parakeet endpoint accepts OGG/OPUS and language es-US.
+const NVIDIA_ASR_ENDPOINT = process.env.NVIDIA_ASR_ENDPOINT
+  || "https://a9eeee8f-b509-4712-b19d-194361fa5f31.invocation.api.nvcf.nvidia.com/v1/audio/transcriptions";
 
-    // Convertir OGG/Opus → WAV mono 16kHz (formato soportado por z-ai ASR)
-    try {
-      execFileSync("ffmpeg", [
-        "-y", "-i", tmpOgg,
-        "-ar", "16000",   // 16 kHz
-        "-ac", "1",       // mono
-        "-c:a", "pcm_s16le",
-        tmpWav,
-      ], { timeout: 15000, stdio: ["ignore", "ignore", "ignore"] });
-    } catch {
-      log("ASR processing failed: ffmpeg conversion failed");
+async function transcribeAudio(audioBuffer) {
+  const apiKey = process.env.NVIDIA_API_KEY;
+  if (!apiKey) {
+    log("ASR unavailable: NVIDIA_API_KEY not configured");
+    return "";
+  }
+  if (!Buffer.isBuffer(audioBuffer) || audioBuffer.length === 0) {
+    log("ASR skipped: empty audio buffer");
+    return "";
+  }
+
+  try {
+    const form = new FormData();
+    form.append("language", "es-US");
+    form.append("response_format", "json");
+    form.append("file", new Blob([audioBuffer], { type: "audio/ogg" }), "whatsapp-voice-note.ogg");
+
+    const response = await fetch(NVIDIA_ASR_ENDPOINT, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}` },
+      body: form,
+      signal: AbortSignal.timeout(45000),
+    });
+
+    if (!response.ok) {
+      log(`ASR provider returned HTTP ${response.status}`);
       return "";
     }
-    ownedTempFiles.add(tmpWav);
 
-    const result = execFileSync("z-ai", ["asr", "-f", tmpWav, "--output", "json"], {
-      timeout: 30000,
-      maxBuffer: 1024 * 1024,
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    const parsed = JSON.parse(result.toString());
-    return typeof parsed.text === "string" ? parsed.text.slice(0, 12000) : "";
-  } catch {
-    log("ASR processing failed");
+    const result = await response.json();
+    const transcript = typeof result?.text === "string" ? result.text.trim() : "";
+    if (!transcript) log("ASR provider returned no transcript");
+    return transcript.slice(0, 12000);
+  } catch (error) {
+    // Keep logs useful without logging audio, transcript, credentials, or payloads.
+    const reason = error?.name === "TimeoutError" || error?.name === "AbortError"
+      ? "request_timeout"
+      : error?.name === "SyntaxError"
+        ? "invalid_provider_json"
+        : "request_failed";
+    log(`ASR processing failed: ${reason}`);
     return "";
-  } finally {
-    try { fs.unlinkSync(tmpOgg); } catch {}
-    try { fs.unlinkSync(tmpWav); } catch {}
-    ownedTempFiles.delete(tmpOgg);
-    ownedTempFiles.delete(tmpWav);
   }
 }
 
