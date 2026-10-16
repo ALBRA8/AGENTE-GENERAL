@@ -71,18 +71,19 @@ El script `scripts/start-wa-daemon.sh` se encarga de:
 | `MAX_MEDIA_QUEUE` | Mensajes encolados esperando slot | `20` |
 | `MAX_RECONNECT_ATTEMPTS` | Reintentos antes de `max_reconnects` | `10` |
 | `NVIDIA_API_KEY` | Clave de NVIDIA para IA y transcripción | Sin default |
-| `NVIDIA_ASR_ENDPOINT` | URL HTTPS completa del endpoint ASR habilitado en tu despliegue NVIDIA (por ejemplo, la ruta compatible `/v1/audio/transcriptions` solo si tu deployment la ofrece) | Obligatorio para notas de voz |
+| `NVIDIA_ASR_ENDPOINT` | Override opcional de la URL HTTPS de NVIDIA Riva ASR | Por defecto usa el endpoint NVCF configurado en el daemon |
 
 ### Notas de voz / transcripción
 
-Para transcribir audios, el daemon necesita **ambas** variables en `dashboard/.env.local`:
+Para transcribir audios, el daemon necesita `NVIDIA_API_KEY`. El endpoint Riva NVCF que se indicó para este despliegue ya está configurado como valor predeterminado; `NVIDIA_ASR_ENDPOINT` solo se necesita para sobrescribirlo:
 
 ```dotenv
 NVIDIA_API_KEY=tu_clave
-NVIDIA_ASR_ENDPOINT=https://URL-REAL-DE-TU-DEPLOYMENT/v1/audio/transcriptions
+# Opcional: solo si necesitas sobrescribir el endpoint predeterminado
+# NVIDIA_ASR_ENDPOINT=https://tu-endpoint-real/v1/audio/transcriptions
 ```
 
-La URL es específica del servicio ASR que tengas habilitado en NVIDIA; no copies literalmente el ejemplo ni uses la URL de chat completions. Confirma en el panel/documentación de tu deployment que acepte una petición multipart de transcripción y devuelve JSON con el campo `text`. No compartas la clave en el chat ni la pegues en logs.
+El endpoint ASR es independiente de `https://integrate.api.nvidia.com/v1/chat/completions`; no uses el endpoint de chat para notas de voz. El daemon envía multipart con `language=es-US`, `response_format=json` y el audio OGG. No compartas la clave en el chat ni la pegues en logs. Si la clave que compartiste previamente era completa y real, revócala y genera otra en NVIDIA antes de probar.
 
 Después de configurar esas variables, reinicia **solo el daemon en el entorno de prueba** para que las lea. Envía una nota de voz corta en español desde un chat individual y revisa `dashboard/logs/wa-daemon.log`. El daemon registra códigos de fallo (por ejemplo, `ASR_NOT_CONFIGURED`, `ASR_HTTP_ERROR` o `ASR_EMPTY_TRANSCRIPT`), no la clave ni el contenido transcrito. Si falla, comparte únicamente el código y el estado HTTP, nunca secretos.
 
