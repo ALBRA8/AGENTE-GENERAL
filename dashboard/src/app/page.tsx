@@ -129,16 +129,20 @@ function ChatView() {
   const [error, setError] = useState<string | null>(null);
   const [connected, setConnected] = useState<boolean | null>(null);
   const [agentName, setAgentName] = useState("AGENTE GENERAL");
+  const [attachedImage, setAttachedImage] = useState<string | null>(null);
+  const [attachedImageName, setAttachedImageName] = useState<string>("");
+  const [recording, setRecording] = useState(false);
+  const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
+  const [audioChunks, setAudioChunks] = useState<Blob[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    // Load saved identity
     fetch("/api/agent-identity")
       .then((r) => r.ok ? r.json() : null)
       .then((d) => { if (d?.name) setAgentName(d.name); })
       .catch(() => {});
 
-    // Check if the local chat API is available
     fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -152,20 +156,97 @@ function ChatView() {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages]);
 
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setError("Solo se pueden adjuntar imágenes");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setAttachedImage(reader.result as string);
+      setAttachedImageName(file.name);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      const chunks: Blob[] = [];
+      recorder.ondataavailable = (e) => chunks.push(e.data);
+      recorder.onstop = async () => {
+        const blob = new Blob(chunks, { type: "audio/webm" });
+        const reader = new FileReader();
+        reader.onload = async () => {
+          const base64 = reader.result as string;
+          // Send audio to /api/chat with audio field
+          const userMsg: ChatMessage = { id: Math.random().toString(36).slice(2), role: "user", content: "🎤 Nota de voz" };
+          const pendingMsg: ChatMessage = { id: "pending", role: "assistant", content: "", pending: true };
+          setMessages((p) => [...p, userMsg, pendingMsg]);
+          setSending(true);
+          setError(null);
+
+          try {
+            const res = await fetch("/api/chat", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                messages: [{ role: "user", content: "Transcribe y responde este audio" }],
+                audio: base64,
+                max_tokens: 1024,
+              }),
+            });
+            if (!res.ok) {
+              const d = await res.json().catch(() => ({}));
+              throw new Error(d.error || `HTTP ${res.status}`);
+            }
+            const data = await res.json();
+            const reply = data.content || "(sin respuesta)";
+            setMessages((p) => p.map((m) => m.id === "pending" ? { ...m, id: Math.random().toString(36).slice(2), content: reply, pending: false } : m));
+          } catch (e) {
+            const err = e instanceof Error ? e.message : "Error";
+            setMessages((p) => p.map((m) => m.id === "pending" ? { ...m, id: Math.random().toString(36).slice(2), content: `❌ ${err}`, pending: false, error: true } : m));
+            setError(err);
+          } finally {
+            setSending(false);
+          }
+        };
+        reader.readAsDataURL(blob);
+        stream.getTracks().forEach(t => t.stop());
+      };
+      recorder.start();
+      setMediaRecorder(recorder);
+      setRecording(true);
+    } catch (e) {
+      setError("No se pudo acceder al micrófono");
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorder && recording) {
+      mediaRecorder.stop();
+      setRecording(false);
+      setMediaRecorder(null);
+    }
+  };
+
   const send = async () => {
-    if (!input.trim() || sending) return;
-    const userMsg: ChatMessage = { id: Math.random().toString(36).slice(2), role: "user", content: input.trim() };
+    if ((!input.trim() && !attachedImage) || sending) return;
+    const content = input.trim() || (attachedImage ? "📷 Imagen" : "");
+    const userMsg: ChatMessage = { id: Math.random().toString(36).slice(2), role: "user", content: attachedImage ? `${content}\n📷 ${attachedImageName}` : content };
     const pendingMsg: ChatMessage = { id: "pending", role: "assistant", content: "", pending: true };
     setMessages((p) => [...p, userMsg, pendingMsg]);
     setInput("");
     setSending(true);
     setError(null);
 
-    // Build conversation history for context
     const history = [...messages.filter(m => !m.pending && !m.error).map(m => ({
       role: m.role,
       content: m.content,
-    })), { role: "user", content: userMsg.content }];
+    })), { role: "user", content: content }];
 
     try {
       const res = await fetch("/api/chat", {
@@ -175,6 +256,7 @@ function ChatView() {
           messages: history,
           temperature: 0.5,
           max_tokens: 1024,
+          ...(attachedImage ? { image: attachedImage } : {}),
         }),
       });
 
@@ -186,6 +268,8 @@ function ChatView() {
       const data = await res.json();
       const reply = data.content || "(sin respuesta)";
       setMessages((p) => p.map((m) => m.id === "pending" ? { ...m, id: Math.random().toString(36).slice(2), content: reply, pending: false } : m));
+      setAttachedImage(null);
+      setAttachedImageName("");
     } catch (e) {
       const err = e instanceof Error ? e.message : "Error";
       setMessages((p) => p.map((m) => m.id === "pending" ? { ...m, id: Math.random().toString(36).slice(2), content: `❌ ${err}`, pending: false, error: true } : m));
@@ -197,7 +281,7 @@ function ChatView() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 8rem)" }}>
-      {/* Chat header with agent name config */}
+      {/* Chat header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem", gap: "0.5rem" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
           <span style={{ width: "0.5rem", height: "0.5rem", borderRadius: "9999px", background: connected ? "var(--success)" : "var(--danger)" }} />
@@ -209,10 +293,11 @@ function ChatView() {
         </div>
       </div>
 
+      {/* Messages */}
       <div ref={scrollRef} style={messagesContainerStyle}>
         {messages.length === 0 && (
           <div style={{ textAlign: "center", color: "var(--muted-fg)", padding: "2rem", fontSize: "0.875rem" }}>
-            💬 Escribe un mensaje para conversar con el agente.
+            💬 Escribe un mensaje, adjunta una imagen o graba audio para conversar con el agente.
           </div>
         )}
         {messages.map((msg) => (
@@ -224,19 +309,49 @@ function ChatView() {
         ))}
       </div>
 
+      {/* Image preview */}
+      {attachedImage && (
+        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.5rem", padding: "0.5rem", background: "var(--muted)", borderRadius: "0.5rem" }}>
+          <img src={attachedImage} alt="preview" style={{ width: "3rem", height: "3rem", objectFit: "cover", borderRadius: "0.25rem" }} />
+          <span style={{ fontSize: "0.75rem", color: "var(--muted-fg)" }}>{attachedImageName}</span>
+          <button onClick={() => { setAttachedImage(null); setAttachedImageName(""); }} style={smallBtn}>✕</button>
+        </div>
+      )}
+
       {error && <div style={errorBannerStyle}>⚠️ {error}</div>}
 
-      <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.5rem" }}>
+      {/* Input bar with + and mic */}
+      <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept="image/*" style={{ display: "none" }} />
+      <div style={{ display: "flex", gap: "0.4rem", marginTop: "0.5rem", alignItems: "flex-end" }}>
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          disabled={sending}
+          style={iconBtn}
+          title="Adjuntar imagen"
+        >
+          ＋
+        </button>
         <textarea
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
           placeholder="Escribe un mensaje... (Enter para enviar)"
-          rows={2}
-          style={textareaStyle}
+          rows={1}
+          style={{ ...textareaStyle, minHeight: "2.5rem", maxHeight: "6rem", flex: 1 }}
           disabled={sending}
         />
-        <button onClick={send} disabled={sending || !input.trim()} style={sendBtn}>{sending ? "⏳" : "➤"}</button>
+        {recording ? (
+          <button onClick={stopRecording} style={{ ...iconBtn, background: "var(--danger)", color: "#fff" }} title="Detener grabación">
+            ⏹
+          </button>
+        ) : (
+          <button onClick={startRecording} disabled={sending} style={iconBtn} title="Grabar audio">
+            🎤
+          </button>
+        )}
+        <button onClick={send} disabled={sending || (!input.trim() && !attachedImage)} style={sendBtn}>
+          {sending ? "⏳" : "➤"}
+        </button>
       </div>
     </div>
   );
@@ -807,6 +922,7 @@ const hintStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--muted
 const primaryBtn: React.CSSProperties = { background: "var(--accent)", color: "var(--accent-fg)", border: "1px solid var(--accent)", borderRadius: "0.5rem", padding: "0.5rem 1rem", fontSize: "0.875rem", fontWeight: 500, cursor: "pointer" };
 const secondaryBtn: React.CSSProperties = { background: "transparent", color: "var(--fg)", border: "1px solid var(--border)", borderRadius: "0.5rem", padding: "0.5rem 1rem", fontSize: "0.875rem", cursor: "pointer" };
 const smallBtn: React.CSSProperties = { background: "transparent", border: "1px solid var(--border)", borderRadius: "0.375rem", padding: "0.25rem 0.6rem", fontSize: "0.75rem", cursor: "pointer", color: "var(--muted-fg)" };
+const iconBtn: React.CSSProperties = { background: "var(--muted)", border: "1px solid var(--border)", borderRadius: "0.5rem", width: "2.5rem", height: "2.5rem", fontSize: "1.1rem", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 };
 const chatInputStyle: React.CSSProperties = { background: "var(--card)", color: "var(--fg)", border: "1px solid var(--border)", borderRadius: "0.375rem", padding: "0.3rem 0.6rem", fontSize: "0.8rem" };
 const msgStyle: React.CSSProperties = { padding: "0.6rem 0.8rem", borderRadius: "0.5rem", fontSize: "0.8rem", marginBottom: "1rem" };
 const errorBannerStyle: React.CSSProperties = { background: "rgba(239,68,68,0.1)", color: "var(--danger)", padding: "0.5rem 0.75rem", borderRadius: "0.375rem", fontSize: "0.75rem", marginBottom: "0.5rem" };

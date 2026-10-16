@@ -62,10 +62,59 @@ export async function POST(request: Request) {
   const hasSystem = messages.some((m: any) => m.role === "system");
   const systemContent = `Eres ${agentName}, ${agentRole} No te identifiques como Claude, ChatGPT, GLM, ni ningún otro modelo. Tu nombre es ${agentName}.`;
   const systemPrompt = { role: "system", content: systemContent };
-  const finalMessages = hasSystem ? messages : [systemPrompt, ...messages];
 
   const temperature = body.temperature ?? 0.5;
   const maxTokens = body.max_tokens ?? 1024;
+
+  // Handle image attachment (multimodal)
+  const image = body.image;
+  let finalMessages;
+
+  if (image) {
+    // User sent an image — build multimodal message
+    const userText = messages[messages.length - 1]?.content || "¿Qué hay en esta imagen?";
+    finalMessages = [
+      { role: "system", content: systemContent },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: userText },
+          { type: "image_url", image_url: { url: image } },
+        ],
+      },
+    ];
+  } else if (body.audio) {
+    // Audio — transcribe with z-ai ASR, then send text to IA
+    const fs = await import("fs/promises");
+    const { execSync } = await import("child_process");
+    const tmpFile = `/tmp/chat-audio-${Date.now()}.webm`;
+    // Extract base64 from data URL
+    const base64Match = body.audio.match(/base64,(.+)/);
+    if (base64Match) {
+      await fs.writeFile(tmpFile, Buffer.from(base64Match[1], "base64"));
+      try {
+        const result = execSync(`z-ai asr -f "${tmpFile}" --output json 2>/dev/null`, { timeout: 30000, maxBuffer: 1024 * 1024 });
+        const transcribed = JSON.parse(result.toString()).text || "";
+        await fs.unlink(tmpFile).catch(() => {});
+        if (transcribed) {
+          finalMessages = [
+            { role: "system", content: systemContent },
+            { role: "user", content: `El usuario dijo (transcripción de audio): "${transcribed}". Responde al contenido del audio.` },
+          ];
+        } else {
+          return NextResponse.json({ content: "🎤 No pude transcribir el audio. ¿Puedes escribirlo?" });
+        }
+      } catch (e) {
+        await fs.unlink(tmpFile).catch(() => {});
+        return NextResponse.json({ content: "🎤 No pude procesar el audio. ¿Puedes escribirlo?" });
+      }
+    } else {
+      return NextResponse.json({ error: "Invalid audio format" }, { status: 400 });
+    }
+  } else {
+    // Normal text
+    finalMessages = hasSystem ? messages : [systemPrompt, ...messages];
+  }
 
   try {
     const res = await fetch(`${NVIDIA_BASE_URL}/chat/completions`, {
