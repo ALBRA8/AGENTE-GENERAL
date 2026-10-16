@@ -15,6 +15,8 @@ export default function Home() {
 
   useEffect(() => {
     if (typeof document !== "undefined") {
+      // Intentional one-time sync with the pre-hydration theme bootstrap script.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setDark(document.documentElement.classList.contains("dark"));
     }
   }, []);
