@@ -78,7 +78,7 @@ El dashboard existente está en `dashboard/` y usa las rutas de configuración `
 5. Verifica en las herramientas de red del navegador que las peticiones vayan a `127.0.0.1:8000`, que las solicitudes incluyan `Authorization: Bearer`, y que no haya secretos en almacenamiento local ni en URL.
 6. Comprueba que las rutas de proveedor sin token respondan HTTP 503 si el token del servidor no está configurado y HTTP 401 con token ausente/incorrecto cuando sí está configurado. Confirma también que el preflight CORS solo permite el origen local exacto.
 
-La guía detallada y los comandos del dashboard están en [`dashboard/README.md`](../dashboard/README.md). Las pruebas de Playwright actuales simulan respuestas del backend; no sustituyen esta comprobación contra el proceso API real. Hasta ejecutar el procedimiento en la máquina objetivo, la integración en vivo continúa **PENDIENTE**.
+La guía detallada y los comandos del dashboard están en [`dashboard/README.md`](../dashboard/README.md). Las pruebas `dashboard/tests/provider-settings.spec.ts` simulan respuestas para validar estados de interfaz y autenticación. Además, `dashboard/tests/local-api-integration.spec.ts` se ejecuta mediante [el workflow de integración real](../.github/workflows/local-api-dashboard-integration.yml), que levanta la API ASGI en loopback y prueba el navegador contra ella sin mocks. La primera ejecución de ese workflow pasó en [run #38843243996](https://github.com/ALBRA8/AGENTE-GENERAL/actions/runs/38843243996); las pruebas ampliadas de guardado/recarga y la separación de jobs se están volviendo a validar. Esta evidencia cubre CI en Linux, no el equipo Windows objetivo. La aceptación en la máquina real continúa **PENDIENTE**.
 
 ## Seguridad y siguiente paso
 
