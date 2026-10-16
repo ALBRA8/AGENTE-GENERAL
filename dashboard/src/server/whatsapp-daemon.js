@@ -44,7 +44,7 @@ const P = require("pino");
 // === Configuration ===
 const PORT = process.env.WHATSAPP_DAEMON_PORT || 3002;
 const SECRET = process.env.INTERNAL_API_SECRET;
-const MAX_MEDIA_BYTES = parseInt(process.env.MAX_MEDIA_BYTES || (8 * 1024 * 1024).toString(), 10);
+const MAX_MEDIA_BYTES = Math.max(1, parseInt(process.env.MAX_MEDIA_BYTES || (8 * 1024 * 1024).toString(), 10) || (8 * 1024 * 1024));
 const MAX_CONCURRENT_MEDIA = Math.max(1, parseInt(process.env.MAX_CONCURRENT_MEDIA || "2", 10) || 2);
 const MAX_MEDIA_QUEUE = Math.max(0, parseInt(process.env.MAX_MEDIA_QUEUE || "20", 10) || 0);
 const MAX_RECONNECT_ATTEMPTS = parseInt(process.env.MAX_RECONNECT_ATTEMPTS || "10", 10);
