@@ -249,56 +249,79 @@ async function callIA(userText, imageBase64) {
   return data?.choices?.[0]?.message?.content || "(sin respuesta)";
 }
 
-// === ASR: transcribe WhatsApp OGG/Opus with NVIDIA Riva ASR ===
-// Send the native WhatsApp voice-note container directly; this avoids relying
-// on undocumented local "z-ai" commands or a system-installed ffmpeg binary.
-// NVIDIA's Spanish/English Parakeet endpoint accepts OGG/OPUS and language es-US.
-const NVIDIA_ASR_ENDPOINT = process.env.NVIDIA_ASR_ENDPOINT
-  || "https://a9eeee8f-b509-4712-b19d-194361fa5f31.invocation.api.nvcf.nvidia.com/v1/audio/transcriptions";
-
+// === ASR: NVIDIA-hosted Riva/NIM transcription ===
+// The endpoint is deployment-specific. Do not silently fall back to an old
+// NVCF deployment ID: require the operator to configure the verified endpoint.
 async function transcribeAudio(audioBuffer) {
   const apiKey = process.env.NVIDIA_API_KEY;
-  if (!apiKey) {
-    log("ASR unavailable: NVIDIA_API_KEY not configured");
-    return "";
+  const endpoint = process.env.NVIDIA_ASR_ENDPOINT;
+  const fail = (code, message) => {
+    const error = new Error(message);
+    error.code = code;
+    throw error;
+  };
+
+  if (!apiKey) fail("ASR_NOT_CONFIGURED", "ASR credentials are not configured");
+  if (!endpoint) fail("ASR_NOT_CONFIGURED", "ASR endpoint is not configured");
+  let endpointUrl;
+  try {
+    endpointUrl = new URL(endpoint);
+  } catch {
+    fail("ASR_NOT_CONFIGURED", "ASR endpoint is invalid");
+  }
+  if (endpointUrl.protocol !== "https:") {
+    fail("ASR_NOT_CONFIGURED", "ASR endpoint must use HTTPS");
   }
   if (!Buffer.isBuffer(audioBuffer) || audioBuffer.length === 0) {
-    log("ASR skipped: empty audio buffer");
-    return "";
+    fail("ASR_INVALID_AUDIO", "Audio buffer is empty or invalid");
+  }
+  if (audioBuffer.length > MAX_MEDIA_BYTES) {
+    fail("ASR_INVALID_AUDIO", "Audio buffer exceeds configured size limit");
+  }
+  // WhatsApp voice notes are Ogg containers. Reject mismatched/garbled payloads
+  // instead of uploading arbitrary bytes while claiming they are audio/ogg.
+  if (audioBuffer.length < 4 || audioBuffer.toString("ascii", 0, 4) !== "OggS") {
+    fail("ASR_INVALID_AUDIO", "Audio is not a valid Ogg container");
   }
 
-  try {
-    const form = new FormData();
-    form.append("language", "es-US");
-    form.append("response_format", "json");
-    form.append("file", new Blob([audioBuffer], { type: "audio/ogg" }), "whatsapp-voice-note.ogg");
+  const form = new FormData();
+  form.append("language", "es-US");
+  form.append("response_format", "json");
+  form.append("file", new Blob([audioBuffer], { type: "audio/ogg" }), "whatsapp-voice-note.ogg");
 
-    const response = await fetch(NVIDIA_ASR_ENDPOINT, {
+  let response;
+  try {
+    response = await fetch(endpointUrl, {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}` },
       body: form,
       signal: AbortSignal.timeout(45000),
     });
-
-    if (!response.ok) {
-      log(`ASR provider returned HTTP ${response.status}`);
-      return "";
-    }
-
-    const result = await response.json();
-    const transcript = typeof result?.text === "string" ? result.text.trim() : "";
-    if (!transcript) log("ASR provider returned no transcript");
-    return transcript.slice(0, 12000);
   } catch (error) {
-    // Keep logs useful without logging audio, transcript, credentials, or payloads.
-    const reason = error?.name === "TimeoutError" || error?.name === "AbortError"
-      ? "request_timeout"
-      : error?.name === "SyntaxError"
-        ? "invalid_provider_json"
-        : "request_failed";
-    log(`ASR processing failed: ${reason}`);
-    return "";
+    const timeout = error?.name === "TimeoutError" || error?.name === "AbortError";
+    log(`ASR request failed: ${timeout ? "request_timeout" : "network_error"}`);
+    fail(timeout ? "ASR_TIMEOUT" : "ASR_NETWORK_ERROR", "ASR request failed");
   }
+
+  if (!response.ok) {
+    log(`ASR provider returned HTTP ${response.status}`);
+    fail("ASR_HTTP_ERROR", `ASR provider returned HTTP ${response.status}`);
+  }
+
+  let result;
+  try {
+    result = await response.json();
+  } catch {
+    log("ASR provider returned invalid JSON");
+    fail("ASR_INVALID_RESPONSE", "ASR provider returned invalid JSON");
+  }
+
+  const transcript = typeof result?.text === "string" ? result.text.trim() : "";
+  if (!transcript) {
+    log("ASR provider returned no transcript");
+    fail("ASR_EMPTY_TRANSCRIPT", "ASR provider returned no transcript");
+  }
+  return transcript.slice(0, 12000);
 }
 
 // === Message unwrapping (ephemeral, viewOnce, etc.) ===
@@ -398,8 +421,6 @@ async function handleMessage(msg) {
       const transcribed = await transcribeAudio(mediaBuffer);
       if (transcribed) {
         reply = await callIA(transcribed);
-      } else {
-        reply = "🎤 Recibí tu nota de voz pero no pude transcribirla. ¿Puedes escribirlo?";
       }
     } else if (mediaType === "image" && mediaBuffer) {
       const mime = String(message.imageMessage?.mimetype || "image/jpeg").toLowerCase();
@@ -416,9 +437,13 @@ async function handleMessage(msg) {
     log("Reply generated; sending outbound message");
     await sock.sendMessage(from, { text: reply });
   } catch (err) {
-    log(`Message processing failed: ${err.message}`);
+    const code = err?.code || "";
+    log(`Message processing failed: ${code.startsWith("ASR_") ? code : "processing_error"}`);
+    const userMessage = code.startsWith("ASR_")
+      ? "🎤 Recibí tu nota de voz, pero el servicio de transcripción no pudo procesarla. Intenta de nuevo más tarde o envíame el contenido por texto."
+      : "⚠️ Ocurrió un error procesando tu mensaje. Intenta de nuevo.";
     try {
-      await sock.sendMessage(from, { text: "⚠️ Ocurrió un error procesando tu mensaje. Intenta de nuevo." });
+      await sock.sendMessage(from, { text: userMessage });
     } catch {}
   }
 }
