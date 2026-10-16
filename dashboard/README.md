@@ -26,6 +26,82 @@ npm install
 npm run dev   # http://localhost:3000
 ```
 
+## Daemon WhatsApp (Baileys)
+
+El dashboard no se conecta directamente a WhatsApp: lo hace a través de un
+daemon Node.js independiente (Baileys) que escucha en `http://localhost:3002`.
+Si la pestaña WhatsApp del dashboard muestra **"Daemon no disponible"** o
+**"No se pudo conectar. ¿Está el daemon corriendo?"**, es porque el proceso
+del daemon no está activo — no es un bug de código.
+
+### Arranque rápido
+
+```bash
+# Desde dashboard/ — crea .env.local si falta, arranca el daemon en background
+npm run wa-daemon:start
+
+# Verificar que está corriendo (responde /status con auth)
+npm run wa-daemon:status
+
+# Detener
+npm run wa-daemon:stop
+
+# Primer plano (debug, muestra todos los logs en consola)
+bash scripts/start-wa-daemon.sh --foreground
+```
+
+El script `scripts/start-wa-daemon.sh` se encarga de:
+
+1. Generar `.env.local` con `INTERNAL_API_SECRET` aleatorio (64 hex chars)
+   si no existe. **El archivo está en `.gitignore` — nunca se commitea.**
+2. Validar que el secreto tenga al menos 32 caracteres.
+3. Lanzar `node src/server/whatsapp-daemon.js` con `nohup`, PID en
+   `.wa-daemon.pid`, logs en `logs/wa-daemon.log`.
+4. Esperar hasta 8 s a que `/status` responda 200 con auth Bearer.
+5. Si hay sesión previa en `/tmp/wa-session`, auto-conecta sin necesidad de QR.
+
+### Variables que lee el daemon
+
+| Variable | Descripción | Default |
+|---|---|---|
+| `INTERNAL_API_SECRET` | Token Bearer compartido con el dashboard (≥ 32 chars) | Obligatorio |
+| `WHATSAPP_DAEMON_PORT` | Puerto HTTP del daemon | `3002` |
+| `MAX_MEDIA_BYTES` | Límite de tamaño por media descargada | `8388608` (8 MB) |
+| `MAX_CONCURRENT_MEDIA` | Procesos de media simultáneos | `2` |
+| `MAX_MEDIA_QUEUE` | Mensajes encolados esperando slot | `20` |
+| `MAX_RECONNECT_ATTEMPTS` | Reintentos antes de `max_reconnects` | `10` |
+| `NVIDIA_API_KEY` | Clave del proveedor IA para auto-respuesta | Sin default |
+
+### Diagnóstico
+
+```bash
+# Daemon no responde
+ss -tlnp | grep 3002          # debería ver un listener
+curl -fsS -H "Authorization: Bearer $INTERNAL_API_SECRET" \
+  http://localhost:3002/status
+
+# Logs del daemon
+tail -f dashboard/logs/wa-daemon.log
+
+# Sesión Baileys corrupta — borrar y re-escanear QR
+rm -rf /tmp/wa-session
+npm run wa-daemon:stop && npm run wa-daemon:start
+```
+
+### Reiniciar el dashboard Next.js
+
+Después de crear o modificar `.env.local`, **reinicia el proceso de Next.js
+dev** para que relea las variables (Next.js cachea `process.env` al arrancar):
+
+```bash
+# Desde dashboard/, en tu terminal (no en background)
+npm run dev
+```
+
+Si el dashboard sigue devolviendo 503 con `daemon_offline` tras reiniciar,
+verifica que `INTERNAL_API_SECRET` en el dashboard coincida con el secreto
+que el daemon cargó desde el mismo `.env.local`.
+
 ## Variables de entorno
 
 | Variable | Descripción | Default |
