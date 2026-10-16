@@ -32,7 +32,7 @@ Todos los casos de esta matriz comienzan en **PENDIENTE** hasta que se adjunte e
 
 | ID | Área / criterio Frente 1 | Procedimiento inicial | Resultado esperado | Tipo |
 |---|---|---|---|---|
-| AT-ENV-001 | Instalación / C-03, C-05 | Crear venv desde checkout limpio; instalar `pip install -e ".[dev,a2a,api,openai,crypto]"` (confirmar que el extra `crypto` existe antes de usarlo; si no existe, registrar el error y usar extras definidos en `pyproject.toml`) | Instalación reproducible, sin dependencias faltantes; versión y resolución registradas | Manual + CI |
+| AT-ENV-001 | Instalación / C-03, C-05 | Crear venv desde checkout limpio; instalar `pip install -e ".[dev,a2a,api]"` (extras confirmados en el workflow CI actual) | Instalación reproducible, sin dependencias faltantes; versión y resolución registradas | Manual + CI |
 | AT-ENV-002 | Configuración / C-02, C-31 | Revisar `pyproject.toml`, README y variables de entorno; comprobar que no se necesitan secretos para CORE_ONLY | Requisitos documentados; no imprimir ni registrar secretos | Manual |
 | AT-CORE-001 | Arranque / C-04, C-26 | Ejecutar `python scripts/clean_room_verify.py` en el checkout objetivo | Exit code 0 y línea final `CLEAN-ROOM: PASS`; conservar salida completa | Automatizada |
 | AT-CORE-002 | Auditoría de componentes / C-01, C-09 | Ejecutar `python scripts/audit_matrix.py` | Exit code 0 y 40/40 VERIFIED, o registrar diferencias actuales | Automatizada |
