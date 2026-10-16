@@ -80,7 +80,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Image must be a PNG, JPEG, or WebP base64 data URL under 8 MiB" }, { status: 400 });
     }
     const imagePayload = image.slice(image.indexOf(",") + 1);
-    if (Buffer.from(imagePayload, "base64").length > 8 * 1024 * 1024) return NextResponse.json({ error: "Image too large" }, { status: 413 });
+    const imageBytes = Buffer.from(imagePayload, "base64");
+    if (imageBytes.length > 8 * 1024 * 1024) return NextResponse.json({ error: "Image too large" }, { status: 413 });
+    const imageMime = image.slice(5, image.indexOf(";")).toLowerCase();
+    const validSignature =
+      imageMime === "image/jpeg" ? imageBytes.length >= 3 && imageBytes[0] === 0xff && imageBytes[1] === 0xd8 && imageBytes[2] === 0xff :
+      imageMime === "image/png" ? imageBytes.length >= 8 && imageBytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) :
+      imageMime === "image/webp" ? imageBytes.length >= 12 && imageBytes.toString("ascii", 0, 4) === "RIFF" && imageBytes.toString("ascii", 8, 12) === "WEBP" : false;
+    if (!validSignature) return NextResponse.json({ error: "Image content does not match its declared type" }, { status: 400 });
     // User sent an image — build multimodal message
     const userText = messages[messages.length - 1]?.content || "¿Qué hay en esta imagen?";
     finalMessages = [
