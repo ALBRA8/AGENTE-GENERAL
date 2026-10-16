@@ -458,13 +458,25 @@ function WhatsAppView() {
       if (data.status === "connected") {
         setStatus("connected");
         setPhone(data.phone || null);
-        setQrCode(null);
-      } else if (data.status === "qr_ready" || data.qr) {
+        setQrCode(null); // Clear QR when connected
+      } else if (data.status === "linking") {
         setStatus("linking");
-        setQrCode(data.qr || null);
-      } else {
+        // Only fetch QR if we don't have one yet — don't clear existing QR
+        if (!qrCode) {
+          try {
+            const qrRes = await fetch(`/api/whatsapp/daemon-proxy?path=/qr`);
+            if (qrRes.ok) {
+              const qrData = await qrRes.json();
+              if (qrData.qr) setQrCode(qrData.qr);
+            }
+          } catch {}
+        }
+      } else if (data.status === "disconnected") {
         setStatus("disconnected");
         setQrCode(null);
+      } else {
+        // unknown or daemon_offline — keep current state
+        setStatus(data.status || "unknown");
       }
     } catch {
       setStatus("unknown");
@@ -473,16 +485,32 @@ function WhatsAppView() {
 
   useEffect(() => {
     loadStatus().finally(() => setLoading(false));
-    // Poll status every 3s when linking (waiting for QR scan)
+    // Poll status every 5s — only check if connected/disconnected
+    // Don't re-fetch QR on every poll (causes flicker)
     pollRef.current = setInterval(() => {
-      if (status === "linking") loadStatus();
-    }, 3000);
+      if (status === "linking") {
+        // Only check status, don't clear QR
+        fetch(`/api/whatsapp/daemon-proxy?path=/status`)
+          .then((r) => r.ok ? r.json() : null)
+          .then((data) => {
+            if (!data) return;
+            if (data.status === "connected") {
+              setStatus("connected");
+              setPhone(data.phone || null);
+              setQrCode(null);
+            }
+            // If still linking, keep QR as-is (no flicker)
+          })
+          .catch(() => {});
+      }
+    }, 5000);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [status]);
 
   const connect = async () => {
     setConnecting(true);
     setMsg(null);
+    setQrCode(null); // Clear old QR
     try {
       const res = await fetch(`/api/whatsapp/daemon-proxy`, {
         method: "POST",
@@ -492,8 +520,27 @@ function WhatsAppView() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setMsg({ type: "ok", text: "Iniciando conexión... Escanea el QR" });
       setStatus("linking");
-      // Start polling for QR
-      setTimeout(loadStatus, 1000);
+      // Wait for daemon to generate QR, then fetch it
+      setTimeout(async () => {
+        try {
+          const qrRes = await fetch(`/api/whatsapp/daemon-proxy?path=/qr`);
+          if (qrRes.ok) {
+            const qrData = await qrRes.json();
+            if (qrData.qr) {
+              setQrCode(qrData.qr);
+            } else {
+              // QR not ready yet, retry in 2s
+              setTimeout(async () => {
+                const retry = await fetch(`/api/whatsapp/daemon-proxy?path=/qr`);
+                if (retry.ok) {
+                  const retryData = await retry.json();
+                  if (retryData.qr) setQrCode(retryData.qr);
+                }
+              }, 2000);
+            }
+          }
+        } catch {}
+      }, 3000);
     } catch (e) {
       setMsg({ type: "err", text: "No se pudo conectar. ¿Está el daemon corriendo?" });
       setStatus("disconnected");
