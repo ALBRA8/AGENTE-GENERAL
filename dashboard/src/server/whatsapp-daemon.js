@@ -39,7 +39,9 @@ const QRCode = require("qrcode");
 const P = require("pino");
 
 const PORT = process.env.WHATSAPP_DAEMON_PORT || 3002;
-const SECRET = process.env.INTERNAL_API_SECRET || "dev-secret";
+const SECRET = process.env.INTERNAL_API_SECRET;
+const MAX_MEDIA_BYTES = 8 * 1024 * 1024;
+if (!SECRET || SECRET.length < 32) throw new Error("INTERNAL_API_SECRET must be configured with at least 32 characters");
 const SESSION_DIR = "/tmp/wa-session";
 
 let sock = null;
@@ -123,20 +125,22 @@ async function callIA(userText, imageBase64) {
 
 // === ASR: transcribe audio using z-ai CLI ===
 async function transcribeAudio(audioBuffer) {
+  const { execFileSync } = require("child_process");
+  const tmpFile = `/tmp/wa-audio-${process.pid}-${Date.now()}.ogg`;
   try {
-    const { execSync } = require("child_process");
-    const tmpFile = `/tmp/wa-audio-${Date.now()}.ogg`;
-    fs.writeFileSync(tmpFile, audioBuffer);
-    const result = execSync(`z-ai asr -f "${tmpFile}" --output json 2>/dev/null`, {
+    fs.writeFileSync(tmpFile, audioBuffer, { flag: "wx", mode: 0o600 });
+    const result = execFileSync("z-ai", ["asr", "-f", tmpFile, "--output", "json"], {
       timeout: 30000,
       maxBuffer: 1024 * 1024,
+      stdio: ["ignore", "pipe", "ignore"],
     });
-    fs.unlinkSync(tmpFile);
     const parsed = JSON.parse(result.toString());
-    return parsed.text || "";
-  } catch (e) {
-    log(`ASR failed: ${e.message}`);
+    return typeof parsed.text === "string" ? parsed.text.slice(0, 12000) : "";
+  } catch {
+    log("ASR processing failed");
     return "";
+  } finally {
+    try { fs.unlinkSync(tmpFile); } catch {}
   }
 }
 
@@ -163,10 +167,13 @@ async function handleMessage(msg) {
   if (msg.message.audioMessage || msg.message.voiceMessage) {
     mediaType = "audio";
     try {
+      const declaredSize = Number(msg.message.audioMessage?.fileLength || msg.message.voiceMessage?.fileLength || 0);
+      if (declaredSize > MAX_MEDIA_BYTES) throw new Error("media_too_large");
       mediaBuffer = await downloadMediaMessage(msg, "buffer", {}, logger);
-      log(`Audio received from ${from}, size: ${mediaBuffer?.length || 0} bytes`);
+      if (!Buffer.isBuffer(mediaBuffer) || mediaBuffer.length > MAX_MEDIA_BYTES) { mediaBuffer = null; throw new Error("media_too_large"); }
+      log("Audio media received");
     } catch (e) {
-      log(`Audio download failed: ${e.message}`);
+      log("Audio download failed");
     }
   }
 
@@ -174,10 +181,15 @@ async function handleMessage(msg) {
   if (msg.message.imageMessage) {
     mediaType = "image";
     try {
+      const imageMessage = msg.message.imageMessage;
+      const declaredSize = Number(imageMessage?.fileLength || 0);
+      const mime = String(imageMessage?.mimetype || "image/jpeg").toLowerCase();
+      if (declaredSize > MAX_MEDIA_BYTES || !["image/jpeg", "image/png", "image/webp"].includes(mime)) throw new Error("unsupported_image");
       mediaBuffer = await downloadMediaMessage(msg, "buffer", {}, logger);
-      log(`Image received from ${from}, size: ${mediaBuffer?.length || 0} bytes`);
+      if (!Buffer.isBuffer(mediaBuffer) || mediaBuffer.length > MAX_MEDIA_BYTES) { mediaBuffer = null; throw new Error("media_too_large"); }
+      log("Image media received");
     } catch (e) {
-      log(`Image download failed: ${e.message}`);
+      log("Image download failed");
     }
   }
 
@@ -189,7 +201,7 @@ async function handleMessage(msg) {
   // If nothing to process
   if (!text && !mediaBuffer && mediaType !== "unsupported") return;
 
-  log(`Processing message from ${from}: type=${mediaType || "text"}, text=${text.slice(0, 50)}`);
+  log(`Processing inbound message: type=${mediaType || "text"}`);
 
   try {
     let reply = "";
@@ -205,7 +217,8 @@ async function handleMessage(msg) {
       }
     } else if (mediaType === "image" && mediaBuffer) {
       // Convert image to base64 and send to IA with vision
-      const base64 = `data:image/jpeg;base64,${mediaBuffer.toString("base64")}`;
+      const mime = String(msg.message.imageMessage?.mimetype || "image/jpeg").toLowerCase();
+      const base64 = `data:${mime};base64,${mediaBuffer.toString("base64")}`;
       reply = await callIA(text || "¿Qué hay en esta imagen?", base64);
     } else if (mediaType === "unsupported") {
       reply = "📱 Recibí tu mensaje pero aún no puedo procesar videos o stickers. Envíame texto, audio o una imagen.";
@@ -216,10 +229,10 @@ async function handleMessage(msg) {
       return; // Nothing to respond to
     }
 
-    log(`Reply to ${from}: ${reply.slice(0, 80)}...`);
+    log("Reply generated; sending outbound message");
     await sock.sendMessage(from, { text: reply });
   } catch (err) {
-    log(`Error processing: ${err.message}`);
+    log("Message processing failed");
     await sock.sendMessage(from, { text: "⚠️ Ocurrió un error procesando tu mensaje. Intenta de nuevo." });
   }
 }
@@ -300,12 +313,22 @@ function sendJSON(res, code, data) {
 }
 
 function readBody(req) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     let body = "";
-    req.on("data", (c) => (body += c));
-    req.on("end", () => {
-      try { resolve(JSON.parse(body)); } catch { resolve({}); }
+    let size = 0;
+    req.on("data", (chunk) => {
+      size += chunk.length;
+      if (size > 64 * 1024) {
+        reject(new Error("BODY_TOO_LARGE"));
+        req.destroy();
+        return;
+      }
+      body += chunk.toString("utf8");
     });
+    req.on("end", () => {
+      try { resolve(JSON.parse(body)); } catch { reject(new Error("INVALID_JSON")); }
+    });
+    req.on("error", reject);
   });
 }
 
@@ -358,14 +381,16 @@ const server = http.createServer(async (req, res) => {
 
     return sendJSON(res, 404, { error: `Unknown: ${method} ${path}` });
   } catch (err) {
-    log(`Error: ${err.message}`);
-    return sendJSON(res, 500, { error: "Internal error", message: err.message });
+    if (err.message === "BODY_TOO_LARGE") return sendJSON(res, 413, { error: "Request body too large" });
+    if (err.message === "INVALID_JSON") return sendJSON(res, 400, { error: "Invalid JSON" });
+    log("Request handler failed");
+    return sendJSON(res, 500, { error: "Internal error" });
   }
 });
 
 server.listen(PORT, () => {
   log(`WhatsApp daemon listening on port ${PORT}`);
-  log(`Secret: ${SECRET === "dev-secret" ? "(dev mode)" : "configured"}`);
+  log("Internal authentication configured");
   const fs2 = require("fs");
   if (fs2.existsSync(SESSION_DIR)) {
     log("Found existing session, auto-connecting...");
