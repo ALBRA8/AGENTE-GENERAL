@@ -66,6 +66,7 @@ El script `scripts/start-wa-daemon.sh` se encarga de:
 |---|---|---|
 | `INTERNAL_API_SECRET` | Token Bearer compartido con el dashboard (≥ 32 chars) | Obligatorio |
 | `WHATSAPP_DAEMON_PORT` | Puerto HTTP del daemon | `3002` |
+| `WHATSAPP_DAEMON_HOST` | Interfaz de escucha del daemon; mantener en loopback salvo red privada controlada | `127.0.0.1` |
 | `MAX_MEDIA_BYTES` | Límite de tamaño por media descargada | `8388608` (8 MB) |
 | `MAX_CONCURRENT_MEDIA` | Procesos de media simultáneos | `2` |
 | `MAX_MEDIA_QUEUE` | Mensajes encolados esperando slot | `20` |
@@ -158,6 +159,9 @@ que el daemon cargó desde el mismo `.env.local`.
 - Define `INTERNAL_API_SECRET` con un valor aleatorio de al menos 32 caracteres
   y exactamente el mismo secreto en el proceso del daemon. No uses valores por
   defecto.
+- El daemon escucha por defecto en `127.0.0.1`; solo cambia `WHATSAPP_DAEMON_HOST` a una interfaz privada si dashboard y daemon necesitan comunicarse entre hosts. No uses `0.0.0.0` en un servidor accesible desde Internet.
+- El script de arranque lee variables permitidas de `.env.local` sin ejecutarlo como código shell.
+- El endpoint interno `/send` solo acepta destinatarios individuales con número telefónico y limita los mensajes a 4.000 caracteres.
 - Mantén el daemon en una red privada; no expongas directamente el puerto 3002.
 - El daemon QR/Baileys es una integración no oficial de WhatsApp y requiere
   pruebas de reconexión, duplicados y estabilidad en staging antes de producción.
