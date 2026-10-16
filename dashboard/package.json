@@ -11,7 +11,8 @@
     "wa-daemon:start": "bash scripts/start-wa-daemon.sh start",
     "wa-daemon:stop": "bash scripts/start-wa-daemon.sh --stop",
     "wa-daemon:status": "bash scripts/start-wa-daemon.sh --status",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^6.7.0",
@@ -28,6 +29,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "^16.0.0",
-    "typescript": "^5"
+    "typescript": "^5",
+    "@playwright/test": "^1.56.1"
   }
 }
