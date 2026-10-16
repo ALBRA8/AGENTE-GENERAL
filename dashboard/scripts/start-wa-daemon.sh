@@ -103,6 +103,7 @@ cmd_start() {
 
   # Cargar únicamente variables permitidas; no ejecutar contenido del archivo
   load_env_safely
+  PORT="${WHATSAPP_DAEMON_PORT:-3002}"
 
   nohup node "$DASH_DIR/src/server/whatsapp-daemon.js" > "$LOG_FILE" 2>&1 &
   local pid=$!
@@ -134,6 +135,7 @@ cmd_start() {
 cmd_foreground() {
   ensure_env
   load_env_safely
+  PORT="${WHATSAPP_DAEMON_PORT:-3002}"
   exec node "$DASH_DIR/src/server/whatsapp-daemon.js"
 }
 
