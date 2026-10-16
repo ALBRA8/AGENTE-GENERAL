@@ -1,27 +1,25 @@
 /**
- * WhatsApp Daemon — Baileys-based WhatsApp Web server.
+ * WhatsApp Daemon — Baileys + IA auto-reply (text, audio, images)
  *
- * Runs on port 3002. Generates QR codes for linking WhatsApp Web.
- * The Next.js dashboard proxies to this daemon via /api/whatsapp/daemon-proxy.
+ * Runs on port 3002. Responds to incoming WhatsApp messages using NVIDIA IA.
  *
- * Endpoints:
- *   GET  /status     — { status, phone, orgLinked }
- *   GET  /qr         — { qr: "data:image/png;base64,..." }
- *   POST /connect     — starts QR generation
- *   POST /disconnect  — closes WhatsApp session
- *   POST /send        — sends a message
+ * Supported message types:
+ *   - Text → reply directly
+ *   - Audio/voice note → transcribe with z-ai ASR → reply
+ *   - Image → describe with z-ai VLM → reply
+ *   - Sticker/video → "no puedo procesar esto aún"
  *
  * Security:
- *   - Bearer token (INTERNAL_API_SECRET env var)
- *   - No secrets logged
- *   - Session data stored in /tmp/wa-session (ephemeral)
+ *   - Bearer token (INTERNAL_API_SECRET)
+ *   - API keys in .env.local (never logged)
+ *   - Session in /tmp/wa-session (ephemeral)
  */
 
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
 
-// Load .env.local manually (Node.js doesn't read Next.js env files)
+// Load .env.local manually
 const envPath = path.join(__dirname, "..", "..", ".env.local");
 try {
   const envContent = fs.readFileSync(envPath, "utf-8");
@@ -36,7 +34,7 @@ try {
   console.log("[WA-DAEMON] No .env.local found, using process.env");
 }
 
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require("@whiskeysockets/baileys");
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, downloadMediaMessage } = require("@whiskeysockets/baileys");
 const QRCode = require("qrcode");
 const P = require("pino");
 
@@ -49,12 +47,184 @@ let lastQR = null;
 let connectionState = "disconnected";
 let connectedPhone = null;
 
-const logger = P({ level: "silent" }); // Don't log sensitive data
+const logger = P({ level: "silent" });
 
 function log(msg) {
   console.log(`[WA-DAEMON] ${new Date().toISOString()} ${msg}`);
 }
 
+// === Identity ===
+function getIdentity() {
+  try {
+    const idFile = path.join(process.cwd(), ".agent-identity.json");
+    const data = JSON.parse(fs.readFileSync(idFile, "utf-8"));
+    return { name: data.name || "AGENTE GENERAL", role: data.role || "asistente de IA" };
+  } catch {
+    return { name: "AGENTE GENERAL", role: "asistente de IA" };
+  }
+}
+
+// === IA: call NVIDIA chat completion ===
+async function callIA(userText, imageBase64) {
+  const apiKey = process.env.NVIDIA_API_KEY;
+  if (!apiKey) throw new Error("NVIDIA_API_KEY not set");
+
+  const identity = getIdentity();
+  const systemPrompt = `Eres ${identity.name}, ${identity.role}. Respondes en español de forma clara, concisa y útil. No te identifiques como Claude, ChatGPT, GLM. Tu nombre es ${identity.name}.`;
+
+  // If image, use the dashboard's /api/chat with image support
+  // For now, describe the image via NVIDIA then answer
+  let messages;
+
+  if (imageBase64) {
+    // Send image as a multimodal message (NVIDIA supports OpenAI vision format)
+    messages = [
+      { role: "system", content: systemPrompt },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: userText || "¿Qué hay en esta imagen?" },
+          { type: "image_url", image_url: { url: imageBase64 } },
+        ],
+      },
+    ];
+  } else {
+    messages = [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userText },
+    ];
+  }
+
+  const res = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: "z-ai/glm-5.3-flash",
+      messages,
+      temperature: 0.5,
+      top_p: 1,
+      max_tokens: 1024,
+      stream: false,
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "unknown");
+    log(`IA error: HTTP ${res.status} — ${errText.slice(0, 100)}`);
+    throw new Error(`IA HTTP ${res.status}`);
+  }
+
+  const data = await res.json();
+  return data?.choices?.[0]?.message?.content || "(sin respuesta)";
+}
+
+// === ASR: transcribe audio using z-ai CLI ===
+async function transcribeAudio(audioBuffer) {
+  try {
+    const { execSync } = require("child_process");
+    const tmpFile = `/tmp/wa-audio-${Date.now()}.ogg`;
+    fs.writeFileSync(tmpFile, audioBuffer);
+    const result = execSync(`z-ai asr -f "${tmpFile}" --output json 2>/dev/null`, {
+      timeout: 30000,
+      maxBuffer: 1024 * 1024,
+    });
+    fs.unlinkSync(tmpFile);
+    const parsed = JSON.parse(result.toString());
+    return parsed.text || "";
+  } catch (e) {
+    log(`ASR failed: ${e.message}`);
+    return "";
+  }
+}
+
+// === Message handler ===
+async function handleMessage(msg) {
+  if (!msg.message) return;
+  const from = msg.key.remoteJid;
+  const isGroup = from.endsWith("@g.us");
+  if (isGroup) return;
+  if (msg.key.fromMe) return;
+
+  let text = "";
+  let mediaType = "";
+  let mediaBuffer = null;
+
+  // Extract text
+  if (msg.message.conversation) {
+    text = msg.message.conversation;
+  } else if (msg.message.extendedTextMessage?.text) {
+    text = msg.message.extendedTextMessage.text;
+  }
+
+  // Extract audio/voice note
+  if (msg.message.audioMessage || msg.message.voiceMessage) {
+    mediaType = "audio";
+    try {
+      mediaBuffer = await downloadMediaMessage(msg, "buffer", {}, logger);
+      log(`Audio received from ${from}, size: ${mediaBuffer?.length || 0} bytes`);
+    } catch (e) {
+      log(`Audio download failed: ${e.message}`);
+    }
+  }
+
+  // Extract image
+  if (msg.message.imageMessage) {
+    mediaType = "image";
+    try {
+      mediaBuffer = await downloadMediaMessage(msg, "buffer", {}, logger);
+      log(`Image received from ${from}, size: ${mediaBuffer?.length || 0} bytes`);
+    } catch (e) {
+      log(`Image download failed: ${e.message}`);
+    }
+  }
+
+  // Extract video/sticker (can't process yet)
+  if (msg.message.videoMessage || msg.message.stickerMessage) {
+    mediaType = "unsupported";
+  }
+
+  // If nothing to process
+  if (!text && !mediaBuffer && mediaType !== "unsupported") return;
+
+  log(`Processing message from ${from}: type=${mediaType || "text"}, text=${text.slice(0, 50)}`);
+
+  try {
+    let reply = "";
+
+    if (mediaType === "audio" && mediaBuffer) {
+      // Transcribe audio → text → IA
+      const transcribed = await transcribeAudio(mediaBuffer);
+      if (transcribed) {
+        log(`Transcribed: "${transcribed.slice(0, 60)}"`);
+        reply = await callIA(transcribed);
+      } else {
+        reply = "🎤 Recibí tu nota de voz pero no pude transcribirla. ¿Puedes escribirlo?";
+      }
+    } else if (mediaType === "image" && mediaBuffer) {
+      // Convert image to base64 and send to IA with vision
+      const base64 = `data:image/jpeg;base64,${mediaBuffer.toString("base64")}`;
+      reply = await callIA(text || "¿Qué hay en esta imagen?", base64);
+    } else if (mediaType === "unsupported") {
+      reply = "📱 Recibí tu mensaje pero aún no puedo procesar videos o stickers. Envíame texto, audio o una imagen.";
+    } else if (text) {
+      // Regular text → IA
+      reply = await callIA(text);
+    } else {
+      return; // Nothing to respond to
+    }
+
+    log(`Reply to ${from}: ${reply.slice(0, 80)}...`);
+    await sock.sendMessage(from, { text: reply });
+  } catch (err) {
+    log(`Error processing: ${err.message}`);
+    await sock.sendMessage(from, { text: "⚠️ Ocurrió un error procesando tu mensaje. Intenta de nuevo." });
+  }
+}
+
+// === WhatsApp connection ===
 async function startWhatsApp() {
   if (sock) {
     log("Already running, disconnect first");
@@ -74,86 +244,10 @@ async function startWhatsApp() {
 
   sock.ev.on("creds.update", saveCreds);
 
-  // === AUTO-REPLY: incoming messages → IA → reply ===
   sock.ev.on("messages.upsert", async (m) => {
     const messages = m.messages || [];
     for (const msg of messages) {
-      // Skip if no text content
-      if (!msg.message) continue;
-      const from = msg.key.remoteJid;
-      const isGroup = from.endsWith("@g.us");
-      // Skip group messages (can enable later if needed)
-      if (isGroup) continue;
-
-      // Extract text from message
-      let text = "";
-      if (msg.message.conversation) {
-        text = msg.message.conversation;
-      } else if (msg.message.extendedTextMessage?.text) {
-        text = msg.message.extendedTextMessage.text;
-      }
-
-      if (!text || !text.trim()) continue;
-      // Skip our own messages
-      if (msg.key.fromMe) continue;
-
-      log(`Incoming from ${from}: ${text.slice(0, 60)}...`);
-
-      try {
-        // Get agent identity
-        const fs = require("fs");
-        let agentName = "AGENTE GENERAL";
-        let agentRole = "asistente de IA";
-        try {
-          const idFile = require("path").join(process.cwd(), ".agent-identity.json");
-          const idData = JSON.parse(fs.readFileSync(idFile, "utf-8"));
-          agentName = idData.name || agentName;
-          agentRole = idData.role || agentRole;
-        } catch {}
-
-        // Call the NVIDIA API (same as /api/chat but directly)
-        const apiKey = process.env.NVIDIA_API_KEY;
-        if (!apiKey) {
-          log("No NVIDIA_API_KEY — cannot reply");
-          await sock.sendMessage(from, { text: "⚠️ El agente no está configurado correctamente." });
-          continue;
-        }
-
-        const systemPrompt = `Eres ${agentName}, ${agentRole}. Respondes en español de forma clara, concisa y útil. No te identifiques como Claude, ChatGPT, GLM. Tu nombre es ${agentName}.`;
-
-        const aiRes = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({
-            model: "z-ai/glm-5.3-flash",
-            messages: [
-              { role: "system", content: systemPrompt },
-              { role: "user", content: text },
-            ],
-            temperature: 0.5,
-            top_p: 1,
-            max_tokens: 1024,
-            stream: false,
-          }),
-        });
-
-        if (!aiRes.ok) {
-          log(`AI error: HTTP ${aiRes.status}`);
-          await sock.sendMessage(from, { text: "⚠️ No pude procesar tu mensaje ahora mismo. Intenta más tarde." });
-          continue;
-        }
-
-        const aiData = await aiRes.json();
-        const reply = aiData?.choices?.[0]?.message?.content || "(sin respuesta)";
-        log(`Reply to ${from}: ${reply.slice(0, 60)}...`);
-        await sock.sendMessage(from, { text: reply });
-      } catch (err) {
-        log(`Error processing message: ${err.message}`);
-        await sock.sendMessage(from, { text: "⚠️ Ocurrió un error. Intenta más tarde." });
-      }
+      await handleMessage(msg);
     }
   });
 
@@ -194,6 +288,7 @@ async function startWhatsApp() {
   });
 }
 
+// === HTTP server ===
 function checkAuth(req) {
   const auth = req.headers.authorization || "";
   return auth === `Bearer ${SECRET}`;
@@ -223,67 +318,45 @@ const server = http.createServer(async (req, res) => {
   const path = url.pathname;
   const method = req.method;
 
-  // CORS
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  if (method === "OPTIONS") {
-    res.writeHead(204);
-    return res.end();
-  }
+  if (method === "OPTIONS") { res.writeHead(204); return res.end(); }
 
   try {
     if (path === "/status" && method === "GET") {
-      return sendJSON(res, 200, {
-        status: connectionState,
-        phone: connectedPhone,
-        qr: connectionState === "linking" ? lastQR : null,
-      });
+      return sendJSON(res, 200, { status: connectionState, phone: connectedPhone, qr: connectionState === "linking" ? lastQR : null });
     }
 
     if (path === "/qr" && method === "GET") {
-      if (!lastQR) {
-        return sendJSON(res, 200, { qr: null, message: "No QR available. Call /connect first." });
-      }
-      // Generate QR as data URL
+      if (!lastQR) return sendJSON(res, 200, { qr: null, message: "No QR. Call /connect first." });
       const qrImage = await QRCode.toDataURL(lastQR, { width: 256 });
       return sendJSON(res, 200, { qr: qrImage });
     }
 
     if (path === "/connect" && method === "POST") {
-      if (connectionState === "connected") {
-        return sendJSON(res, 200, { ok: true, message: "Already connected", phone: connectedPhone });
-      }
+      if (connectionState === "connected") return sendJSON(res, 200, { ok: true, message: "Already connected", phone: connectedPhone });
       await startWhatsApp();
       return sendJSON(res, 200, { ok: true, message: "Connecting... check /qr" });
     }
 
     if (path === "/disconnect" && method === "POST") {
-      if (sock) {
-        await sock.logout();
-        sock = null;
-      }
-      connectionState = "disconnected";
-      connectedPhone = null;
-      lastQR = null;
+      if (sock) { await sock.logout(); sock = null; }
+      connectionState = "disconnected"; connectedPhone = null; lastQR = null;
       return sendJSON(res, 200, { ok: true, message: "Disconnected" });
     }
 
     if (path === "/send" && method === "POST") {
       const body = await readBody(req);
-      if (!sock || connectionState !== "connected") {
-        return sendJSON(res, 400, { error: "Not connected" });
-      }
+      if (!sock || connectionState !== "connected") return sendJSON(res, 400, { error: "Not connected" });
       const { to, message } = body;
-      if (!to || !message) {
-        return sendJSON(res, 400, { error: "Missing 'to' or 'message'" });
-      }
+      if (!to || !message) return sendJSON(res, 400, { error: "Missing 'to' or 'message'" });
       const jid = to.includes("@") ? to : `${to}@s.whatsapp.net`;
       const result = await sock.sendMessage(jid, { text: message });
       return sendJSON(res, 200, { ok: true, id: result.key.id });
     }
 
-    return sendJSON(res, 404, { error: `Unknown path: ${method} ${path}` });
+    return sendJSON(res, 404, { error: `Unknown: ${method} ${path}` });
   } catch (err) {
     log(`Error: ${err.message}`);
     return sendJSON(res, 500, { error: "Internal error", message: err.message });
@@ -293,9 +366,8 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, () => {
   log(`WhatsApp daemon listening on port ${PORT}`);
   log(`Secret: ${SECRET === "dev-secret" ? "(dev mode)" : "configured"}`);
-  // Auto-start if session exists
-  const fs = require("fs");
-  if (fs.existsSync(SESSION_DIR)) {
+  const fs2 = require("fs");
+  if (fs2.existsSync(SESSION_DIR)) {
     log("Found existing session, auto-connecting...");
     startWhatsApp().catch((e) => log(`Auto-connect failed: ${e.message}`));
   }
