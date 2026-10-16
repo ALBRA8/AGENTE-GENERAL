@@ -303,7 +303,7 @@ def check_test_run(rep: Report) -> None:
     if not details:
         # Preserve pytest diagnostics when collection/import fails before
         # pytest emits its normal summary line.
-        details = (proc.stderr.strip() + "\\n" + proc.stdout[-5000:]).strip()[:5500]
+        details = (proc.stderr.strip() + "\n" + proc.stdout[-5000:]).strip()[:5500]
         if not details:
             details = f"pytest exited with code {proc.returncode} without a summary"
     if failed:
