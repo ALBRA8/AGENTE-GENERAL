@@ -37,7 +37,7 @@ try {
   console.log("[WA-DAEMON] No .env.local found, using process.env");
 }
 
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, downloadMediaMessage } = require("@whiskeysockets/baileys");
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, downloadContentFromMessage } = require("@whiskeysockets/baileys");
 const QRCode = require("qrcode");
 const P = require("pino");
 
@@ -137,30 +137,51 @@ async function withMediaSlot(fn) {
   }
 }
 
+// Collect a Baileys media stream while enforcing the byte limit during download.
+async function collectMediaStreamBounded(stream, maxBytes = MAX_MEDIA_BYTES) {
+  const chunks = [];
+  let totalBytes = 0;
+
+  try {
+    for await (const chunk of stream) {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      totalBytes += bytes.length;
+      if (totalBytes > maxBytes) {
+        if (typeof stream.destroy === "function") stream.destroy();
+        throw new Error("media_too_large_actual");
+      }
+      chunks.push(bytes);
+    }
+  } catch (error) {
+    if (typeof stream.destroy === "function" && !stream.destroyed) stream.destroy();
+    throw error;
+  }
+
+  return Buffer.concat(chunks, totalBytes);
+}
+
 // === Bounded media download ===
 async function downloadMediaBounded(msg) {
-  // Note: Baileys' buffer API does not accept an AbortSignal. The declared-size
-  // pre-check and actual-size post-check limit processing, but cannot cap peak
-  // memory during the download itself. Do not present the timer as cancellation.
-  // The caller's bounded concurrency/queue limits the number of simultaneous downloads.
-  // We check the declared fileLength first, then verify after download.
-    const declaredSize = Number(msg.message?.imageMessage?.fileLength || msg.message?.audioMessage?.fileLength || msg.message?.videoMessage?.fileLength || 0);
+  const message = unwrapMessage(msg.message);
+  const media = message?.imageMessage
+    ? { content: message.imageMessage, type: "image" }
+    : message?.audioMessage
+      ? { content: message.audioMessage, type: "audio" }
+      : message?.videoMessage
+        ? { content: message.videoMessage, type: "video" }
+        : null;
 
-    if (declaredSize > MAX_MEDIA_BYTES) {
-      throw new Error("media_too_large_declared");
-    }
+  if (!media) throw new Error("unsupported_media_type");
 
-    const buffer = await downloadMediaMessage(msg, "buffer", {}, logger);
+  const declaredSize = Number(media.content.fileLength || 0);
+  if (Number.isFinite(declaredSize) && declaredSize > MAX_MEDIA_BYTES) {
+    throw new Error("media_too_large_declared");
+  }
 
-    if (!Buffer.isBuffer(buffer)) {
-      throw new Error("download_not_buffer");
-    }
-
-    if (buffer.length > MAX_MEDIA_BYTES) {
-      throw new Error("media_too_large_actual");
-    }
-
-    return buffer;
+  // Unlike downloadMediaMessage(..., "buffer"), this consumes the media stream
+  // incrementally and stops retaining chunks as soon as the configured cap is hit.
+  const stream = await downloadContentFromMessage(media.content, media.type);
+  return collectMediaStreamBounded(stream, MAX_MEDIA_BYTES);
 }
 
 // === Image validation ===
@@ -623,7 +644,7 @@ module.exports = {
   isDuplicate,
   isSupportedImageBuffer,
   unwrapMessage,
-  downloadMediaBounded,
+  downloadMediaBounded,\n  collectMediaStreamBounded,
   withMediaSlot,
   scheduleReconnect,
   sanitizeJid,
