@@ -87,15 +87,26 @@ export async function POST(request: Request) {
     // Audio — transcribe with z-ai ASR, then send text to IA
     const fs = await import("fs/promises");
     const { execSync } = await import("child_process");
-    const tmpFile = `/tmp/chat-audio-${Date.now()}.webm`;
     // Extract base64 from data URL
     const base64Match = body.audio.match(/base64,(.+)/);
     if (base64Match) {
-      await fs.writeFile(tmpFile, Buffer.from(base64Match[1], "base64"));
+      const audioBase64 = base64Match[1];
+      const tmpFile = `/tmp/chat-audio-${Date.now()}.webm`;
       try {
-        const result = execSync(`z-ai asr -f "${tmpFile}" --output json 2>/dev/null`, { timeout: 30000, maxBuffer: 1024 * 1024 });
-        const transcribed = JSON.parse(result.toString()).text || "";
+        const buf = Buffer.from(audioBase64, "base64");
+        await fs.writeFile(tmpFile, buf);
+        const result = execSync(`z-ai asr -f "${tmpFile}" -o /dev/stdout 2>/dev/null`, {
+          timeout: 30000,
+          maxBuffer: 10 * 1024 * 1024,
+        }).toString().trim();
         await fs.unlink(tmpFile).catch(() => {});
+        let transcribed = "";
+        try {
+          const parsed = JSON.parse(result);
+          transcribed = parsed.text || "";
+        } catch {
+          transcribed = result;
+        }
         if (transcribed) {
           finalMessages = [
             { role: "system", content: systemContent },
