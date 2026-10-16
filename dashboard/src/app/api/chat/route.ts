@@ -64,7 +64,7 @@ export async function POST(request: Request) {
   const agentRole = body.agent_persona || `${saved.role || "asistente de IA"}. Respondes en español de forma clara, concisa y útil. Eres capaz de conversar, responder preguntas y ayudar con tareas.`;
 
   // Inject system prompt if not present
-  const hasSystem = messages.some((m: any) => m.role === "system");
+  const hasSystem = messages.some((m: { role?: string } | null) => m?.role === "system");
   const systemContent = `Eres ${agentName}, ${agentRole} No te identifiques como Claude, ChatGPT, GLM, ni ningún otro modelo. Tu nombre es ${agentName}.`;
   const systemPrompt = { role: "system", content: systemContent };
 
