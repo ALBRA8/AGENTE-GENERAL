@@ -18,6 +18,24 @@
  */
 
 const http = require("http");
+const fs = require("fs");
+const path = require("path");
+
+// Load .env.local manually (Node.js doesn't read Next.js env files)
+const envPath = path.join(__dirname, "..", "..", ".env.local");
+try {
+  const envContent = fs.readFileSync(envPath, "utf-8");
+  for (const line of envContent.split("\n")) {
+    const match = line.match(/^([A-Z_]+)=(.+)$/);
+    if (match && !process.env[match[1]]) {
+      process.env[match[1]] = match[2].trim();
+    }
+  }
+  console.log("[WA-DAEMON] Loaded .env.local");
+} catch {
+  console.log("[WA-DAEMON] No .env.local found, using process.env");
+}
+
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require("@whiskeysockets/baileys");
 const QRCode = require("qrcode");
 const P = require("pino");
