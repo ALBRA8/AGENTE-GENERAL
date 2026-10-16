@@ -205,7 +205,10 @@ jobs:
         working-directory: dashboard
         env:
           CI: "true"
-        run: npm run test:e2e
+        # The real-API browser test runs in local-api-dashboard-integration.yml,
+        # which starts the ASGI service. This job intentionally runs only the
+        # mocked dashboard acceptance tests.
+        run: npm run test:e2e -- --grep-invert "real local API"
 
       - name: Scan public bundle for credential-like patterns
         shell: bash
