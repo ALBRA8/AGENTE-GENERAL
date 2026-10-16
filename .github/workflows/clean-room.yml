@@ -172,3 +172,35 @@ jobs:
 
       - name: HITL ledger and crash-recovery tests
         run: python -m pytest tests/security/test_hitl_runtime_dispatch_ledger.py -q
+
+
+  dashboard-build:
+    name: Dashboard production build and public-bundle secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Fresh clone
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+
+      - name: Install dashboard dependencies
+        working-directory: dashboard
+        run: npm install --no-audit --no-fund
+
+      - name: Build dashboard
+        working-directory: dashboard
+        run: npm run build
+
+      - name: Scan public bundle for credential-like patterns
+        shell: bash
+        run: |
+          if grep -R -n -E 'ALBRA_PROVIDER_SETTINGS_TOKEN|NEXT_PUBLIC_ADMIN_TOKEN|nvapi-[A-Za-z0-9_-]{20,}' dashboard/.next/static; then
+            echo "Potential secret-like value found in public dashboard assets" >&2
+            exit 1
+          fi
