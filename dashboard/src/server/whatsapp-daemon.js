@@ -250,13 +250,33 @@ async function callIA(userText, imageBase64) {
 }
 
 // === ASR: transcribe audio using z-ai CLI ===
+// WhatsApp envía notas de voz como OGG/Opus. El servicio ASR de Z.ai solo
+// acepta WAV o WebM (rechaza OGG con "Audio format conversion failed").
+// Convertimos OGG→WAV (mono 16kHz) con ffmpeg antes de transcribir.
 async function transcribeAudio(audioBuffer) {
   const { execFileSync } = require("child_process");
-  const tmpFile = `/tmp/wa-audio-${process.pid}-${Date.now()}.ogg`;
+  const tmpOgg = `/tmp/wa-audio-${process.pid}-${Date.now()}.ogg`;
+  const tmpWav = `/tmp/wa-audio-${process.pid}-${Date.now()}.wav`;
   try {
-    fs.writeFileSync(tmpFile, audioBuffer, { flag: "wx", mode: 0o600 });
-    ownedTempFiles.add(tmpFile);
-    const result = execFileSync("z-ai", ["asr", "-f", tmpFile, "--output", "json"], {
+    fs.writeFileSync(tmpOgg, audioBuffer, { flag: "wx", mode: 0o600 });
+    ownedTempFiles.add(tmpOgg);
+
+    // Convertir OGG/Opus → WAV mono 16kHz (formato soportado por z-ai ASR)
+    try {
+      execFileSync("ffmpeg", [
+        "-y", "-i", tmpOgg,
+        "-ar", "16000",   // 16 kHz
+        "-ac", "1",       // mono
+        "-c:a", "pcm_s16le",
+        tmpWav,
+      ], { timeout: 15000, stdio: ["ignore", "ignore", "ignore"] });
+    } catch {
+      log("ASR processing failed: ffmpeg conversion failed");
+      return "";
+    }
+    ownedTempFiles.add(tmpWav);
+
+    const result = execFileSync("z-ai", ["asr", "-f", tmpWav, "--output", "json"], {
       timeout: 30000,
       maxBuffer: 1024 * 1024,
       stdio: ["ignore", "pipe", "ignore"],
@@ -267,8 +287,10 @@ async function transcribeAudio(audioBuffer) {
     log("ASR processing failed");
     return "";
   } finally {
-    try { fs.unlinkSync(tmpFile); } catch {}
-    ownedTempFiles.delete(tmpFile);
+    try { fs.unlinkSync(tmpOgg); } catch {}
+    try { fs.unlinkSync(tmpWav); } catch {}
+    ownedTempFiles.delete(tmpOgg);
+    ownedTempFiles.delete(tmpWav);
   }
 }
 
