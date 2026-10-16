@@ -31,6 +31,11 @@ npm run dev   # http://localhost:3000
 | Variable | Descripción | Default |
 |---|---|---|
 | `NEXT_PUBLIC_API_BASE` | URL del backend ALBRA SEED | `https://agente-general.onrender.com` |
+| `DASHBOARD_ACCESS_USER` | Usuario para proteger dashboard y endpoints en producción | Obligatorio en producción |
+| `DASHBOARD_ACCESS_PASSWORD` | Contraseña de acceso al dashboard (larga y única) | Obligatorio en producción |
+| `INTERNAL_API_SECRET` | Secreto interno compartido con el daemon WhatsApp (mínimo 32 caracteres) | Obligatorio para habilitar el proxy WhatsApp |
+| `WHATSAPP_DAEMON_URL` | URL privada del daemon Baileys | `http://localhost:3002` |
+| `NVIDIA_API_KEY` | Clave del proveedor, solo del lado servidor | Sin default |
 
 ## Seguridad
 
@@ -41,3 +46,18 @@ npm run dev   # http://localhost:3000
 - La API key NUNCA se devuelve en un endpoint de lectura — solo
   `api_key_set: bool`.
 - Si el usuario guarda sin cambiar la key, se conserva la credencial anterior.
+
+
+### Despliegue seguro
+
+- En producción, define `DASHBOARD_ACCESS_USER` y `DASHBOARD_ACCESS_PASSWORD`.
+  El proxy de Next.js protege la interfaz y las rutas API con HTTP Basic Auth;
+  si faltan estas variables, la aplicación responde `503` en vez de quedar abierta.
+- Publica el dashboard únicamente detrás de HTTPS. No envíes credenciales Basic
+  Auth por HTTP.
+- Define `INTERNAL_API_SECRET` con un valor aleatorio de al menos 32 caracteres
+  y exactamente el mismo secreto en el proceso del daemon. No uses valores por
+  defecto.
+- Mantén el daemon en una red privada; no expongas directamente el puerto 3002.
+- El daemon QR/Baileys es una integración no oficial de WhatsApp y requiere
+  pruebas de reconexión, duplicados y estabilidad en staging antes de producción.
