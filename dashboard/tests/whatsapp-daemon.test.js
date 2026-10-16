@@ -16,6 +16,7 @@
  */
 
 const assert = require("assert");
+const { Readable } = require("stream");
 
 // Mock the daemon module by loading its exported functions
 // We need to set INTERNAL_API_SECRET before requiring
@@ -29,6 +30,7 @@ const {
   unwrapMessage,
   sanitizeJid,
   withMediaSlot,
+  collectMediaStreamBounded,
   MAX_MEDIA_BYTES,
   MAX_CONCURRENT_MEDIA,
   DEDUP_TTL_MS,
@@ -254,6 +256,22 @@ test("Empty object returns itself", () => {
 console.log("\n=== Concurrency Limiter ===");
 
 (async () => {
+  await asyncTest("Streaming media collector accepts content at the byte limit", async () => {
+    const input = Buffer.alloc(8);
+    const result = await collectMediaStreamBounded(Readable.from([input.subarray(0, 4), input.subarray(4)]), 8);
+    assert.strictEqual(result.length, 8);
+    assert.deepStrictEqual(result, input);
+  });
+
+  await asyncTest("Streaming media collector stops when content exceeds the byte limit", async () => {
+    const stream = Readable.from([Buffer.alloc(6), Buffer.alloc(5)]);
+    await assert.rejects(
+      collectMediaStreamBounded(stream, 10),
+      (err) => err && err.message === "media_too_large_actual"
+    );
+    assert.strictEqual(stream.destroyed, true);
+  });
+
   await asyncTest("Concurrent tasks are limited", async () => {
     let concurrent = 0;
     let maxConcurrent = 0;
