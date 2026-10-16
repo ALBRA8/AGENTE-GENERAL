@@ -185,7 +185,8 @@ function ChatView() {
       recorder.ondataavailable = (e) => chunks.push(e.data);
       recorder.onstop = async () => {
         stream.getTracks().forEach((track) => track.stop());
-        const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+        const audioMime = (recorder.mimeType || "audio/webm").split(";")[0].trim().toLowerCase();
+        const blob = new Blob(chunks, { type: audioMime });
         if (!blob.size || blob.size > 8 * 1024 * 1024) {
           setError(blob.size ? "El audio supera el límite de 8 MiB" : "La grabación quedó vacía");
           return;
