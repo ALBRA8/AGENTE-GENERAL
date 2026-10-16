@@ -8,3 +8,4 @@ dev.log
 .DS_Store
 next-env.d.ts
 .agent-identity.json
+tsconfig.tsbuildinfo

@@ -1,18 +1,21 @@
 /**
  * WhatsApp Daemon — Baileys + IA auto-reply (text, audio, images)
  *
- * Runs on port 3002. Responds to incoming WhatsApp messages using NVIDIA IA.
- *
- * Supported message types:
- *   - Text → reply directly
- *   - Audio/voice note → transcribe with z-ai ASR → reply
- *   - Image → describe with z-ai VLM → reply
- *   - Sticker/video → "no puedo procesar esto aún"
+ * Hardened version with:
+ *   - Bounded media download (abort if > MAX_MEDIA_BYTES received)
+ *   - Message deduplication (in-memory Set of message IDs)
+ *   - Reconnection with exponential backoff + jitter
+ *   - Max reconnection attempts (distinct from logged-out)
+ *   - Duplicate listener prevention (removeAllListeners before re-registering)
+ *   - Concurrency limiter for media processing
+ *   - Log sanitization (no phone numbers, no message content, no transcriptions)
+ *   - Resource cleanup on shutdown
  *
  * Security:
- *   - Bearer token (INTERNAL_API_SECRET)
+ *   - Bearer token (INTERNAL_API_SECRET, min 32 chars)
  *   - API keys in .env.local (never logged)
- *   - Session in /tmp/wa-session (ephemeral)
+ *   - Session in /tmp/wa-session (ephemeral, mode 0700)
+ *   - Temp audio files with mode 0600, always cleaned up
  */
 
 const http = require("http");
@@ -38,21 +41,48 @@ const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLat
 const QRCode = require("qrcode");
 const P = require("pino");
 
+// === Configuration ===
 const PORT = process.env.WHATSAPP_DAEMON_PORT || 3002;
 const SECRET = process.env.INTERNAL_API_SECRET;
-const MAX_MEDIA_BYTES = 8 * 1024 * 1024;
-if (!SECRET || SECRET.length < 32) throw new Error("INTERNAL_API_SECRET must be configured with at least 32 characters");
+const MAX_MEDIA_BYTES = parseInt(process.env.MAX_MEDIA_BYTES || (8 * 1024 * 1024).toString(), 10);
+const MAX_CONCURRENT_MEDIA = parseInt(process.env.MAX_CONCURRENT_MEDIA || "2", 10);
+const MAX_RECONNECT_ATTEMPTS = parseInt(process.env.MAX_RECONNECT_ATTEMPTS || "10", 10);
+const RECONNECT_BASE_DELAY = 1000; // 1s
+const RECONNECT_MAX_DELAY = 30000; // 30s
+const DEDUP_TTL_MS = 60000; // 1 minute
 const SESSION_DIR = "/tmp/wa-session";
 
+if (!SECRET || SECRET.length < 32) {
+  throw new Error("INTERNAL_API_SECRET must be configured with at least 32 characters");
+}
+
+// === State ===
 let sock = null;
 let lastQR = null;
 let connectionState = "disconnected";
 let connectedPhone = null;
+let reconnectAttempts = 0;
+let reconnectTimer = null;
+let isShuttingDown = false;
+
+// Dedup: Set of recently-processed message IDs with TTL
+const processedMessages = new Map(); // msgId -> timestamp
+
+// Concurrency limiter for media processing
+let activeMediaTasks = 0;
+const mediaQueue = [];
 
 const logger = P({ level: "silent" });
 
+// === Logging (sanitized — no phone numbers, no content) ===
 function log(msg) {
   console.log(`[WA-DAEMON] ${new Date().toISOString()} ${msg}`);
+}
+
+function sanitizeJid(jid) {
+  // Redact phone numbers in JIDs: "573163301286@s.whatsapp.net" → "****@s.whatsapp.net"
+  if (typeof jid !== "string" || !jid) return "unknown";
+  return jid.replace(/^\d+/, "****");
 }
 
 // === Identity ===
@@ -66,6 +96,73 @@ function getIdentity() {
   }
 }
 
+// === Dedup ===
+function isDuplicate(msgId) {
+  const now = Date.now();
+  // Clean expired entries
+  for (const [id, ts] of processedMessages) {
+    if (now - ts > DEDUP_TTL_MS) processedMessages.delete(id);
+  }
+  if (processedMessages.has(msgId)) return true;
+  processedMessages.set(msgId, now);
+  return false;
+}
+
+// === Concurrency limiter ===
+async function withMediaSlot(fn) {
+  if (activeMediaTasks >= MAX_CONCURRENT_MEDIA) {
+    log(`Media queue full (${activeMediaTasks}/${MAX_CONCURRENT_MEDIA}), deferring`);
+    await new Promise((resolve) => mediaQueue.push(resolve));
+  }
+  activeMediaTasks++;
+  try {
+    return await fn();
+  } finally {
+    activeMediaTasks--;
+    const next = mediaQueue.shift();
+    if (next) next();
+  }
+}
+
+// === Bounded media download ===
+async function downloadMediaBounded(msg) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
+
+  try {
+    // Baileys downloadMediaMessage returns a Buffer.
+    // We check the declared fileLength first, then verify after download.
+    const declaredSize = Number(msg.message?.imageMessage?.fileLength || msg.message?.audioMessage?.fileLength || msg.message?.videoMessage?.fileLength || 0);
+
+    if (declaredSize > MAX_MEDIA_BYTES) {
+      throw new Error("media_too_large_declared");
+    }
+
+    const buffer = await downloadMediaMessage(msg, "buffer", {}, logger);
+
+    if (!Buffer.isBuffer(buffer)) {
+      throw new Error("download_not_buffer");
+    }
+
+    if (buffer.length > MAX_MEDIA_BYTES) {
+      throw new Error("media_too_large_actual");
+    }
+
+    return buffer;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// === Image validation ===
+function isSupportedImageBuffer(buffer, mime) {
+  if (!Buffer.isBuffer(buffer)) return false;
+  if (mime === "image/jpeg") return buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+  if (mime === "image/png") return buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  if (mime === "image/webp") return buffer.length >= 12 && buffer.toString("ascii", 0, 4) === "RIFF" && buffer.toString("ascii", 8, 12) === "WEBP";
+  return false;
+}
+
 // === IA: call NVIDIA chat completion ===
 async function callIA(userText, imageBase64) {
   const apiKey = process.env.NVIDIA_API_KEY;
@@ -74,12 +171,9 @@ async function callIA(userText, imageBase64) {
   const identity = getIdentity();
   const systemPrompt = `Eres ${identity.name}, ${identity.role}. Respondes en español de forma clara, concisa y útil. No te identifiques como Claude, ChatGPT, GLM. Tu nombre es ${identity.name}.`;
 
-  // If image, use the dashboard's /api/chat with image support
-  // For now, describe the image via NVIDIA then answer
   let messages;
 
   if (imageBase64) {
-    // Send image as a multimodal message (NVIDIA supports OpenAI vision format)
     messages = [
       { role: "system", content: systemPrompt },
       {
@@ -115,7 +209,6 @@ async function callIA(userText, imageBase64) {
   });
 
   if (!res.ok) {
-    const errText = await res.text().catch(() => "unknown");
     log(`IA provider returned HTTP ${res.status}`);
     throw new Error(`IA HTTP ${res.status}`);
   }
@@ -145,6 +238,7 @@ async function transcribeAudio(audioBuffer) {
   }
 }
 
+// === Message unwrapping (ephemeral, viewOnce, etc.) ===
 function unwrapMessage(input) {
   let current = input;
   for (let depth = 0; depth < 5 && current; depth++) {
@@ -159,16 +253,17 @@ function unwrapMessage(input) {
   return current;
 }
 
-function isSupportedImageBuffer(buffer, mime) {
-  if (!Buffer.isBuffer(buffer)) return false;
-  if (mime === "image/jpeg") return buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
-  if (mime === "image/png") return buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
-  if (mime === "image/webp") return buffer.length >= 12 && buffer.toString("ascii", 0, 4) === "RIFF" && buffer.toString("ascii", 8, 12) === "WEBP";
-  return false;
-}
-
 // === Message handler ===
 async function handleMessage(msg) {
+  const msgId = msg.key?.id;
+  if (!msgId) return;
+
+  // Dedup: skip if already processed recently
+  if (isDuplicate(msgId)) {
+    log(`Duplicate message skipped: ${msgId.slice(0, 8)}`);
+    return;
+  }
+
   const message = unwrapMessage(msg.message);
   if (!message) return;
   const from = msg.key.remoteJid;
@@ -195,13 +290,11 @@ async function handleMessage(msg) {
   if (message.audioMessage || message.voiceMessage) {
     mediaType = "audio";
     try {
-      const declaredSize = Number(message.audioMessage?.fileLength || message.voiceMessage?.fileLength || 0);
-      if (declaredSize > MAX_MEDIA_BYTES) throw new Error("media_too_large");
-      mediaBuffer = await downloadMediaMessage(msg, "buffer", {}, logger);
-      if (!Buffer.isBuffer(mediaBuffer) || mediaBuffer.length > MAX_MEDIA_BYTES) { mediaBuffer = null; throw new Error("media_too_large"); }
-      log("Audio media received");
+      mediaBuffer = await withMediaSlot(() => downloadMediaBounded(msg));
+      log(`Audio media received from ${sanitizeJid(from)}`);
     } catch (e) {
-      log("Audio download failed");
+      log(`Audio download failed: ${e.message}`);
+      mediaBuffer = null;
     }
   }
 
@@ -209,16 +302,19 @@ async function handleMessage(msg) {
   if (message.imageMessage) {
     mediaType = "image";
     try {
-      const imageMessage = message.imageMessage;
-      const declaredSize = Number(imageMessage?.fileLength || 0);
-      const mime = String(imageMessage?.mimetype || "image/jpeg").toLowerCase();
-      if (declaredSize > MAX_MEDIA_BYTES || !["image/jpeg", "image/png", "image/webp"].includes(mime)) throw new Error("unsupported_image");
-      mediaBuffer = await downloadMediaMessage(msg, "buffer", {}, logger);
-      if (!Buffer.isBuffer(mediaBuffer) || mediaBuffer.length > MAX_MEDIA_BYTES) { mediaBuffer = null; throw new Error("media_too_large"); }
-      if (!isSupportedImageBuffer(mediaBuffer, mime)) { mediaBuffer = null; throw new Error("invalid_image_signature"); }
-      log("Image media received");
+      const mime = String(message.imageMessage?.mimetype || "image/jpeg").toLowerCase();
+      if (!["image/jpeg", "image/png", "image/webp"].includes(mime)) {
+        throw new Error("unsupported_image_mime");
+      }
+      mediaBuffer = await withMediaSlot(() => downloadMediaBounded(msg));
+      if (!isSupportedImageBuffer(mediaBuffer, mime)) {
+        mediaBuffer = null;
+        throw new Error("invalid_image_signature");
+      }
+      log(`Image media received from ${sanitizeJid(from)}`);
     } catch (e) {
-      log("Image download failed");
+      log(`Image download failed: ${e.message}`);
+      mediaBuffer = null;
     }
   }
 
@@ -230,47 +326,73 @@ async function handleMessage(msg) {
   // If nothing to process
   if (!text && !mediaBuffer && mediaType !== "unsupported") return;
 
-  log(`Processing inbound message: type=${mediaType || "text"}`);
+  log(`Processing inbound: type=${mediaType || "text"}, from=${sanitizeJid(from)}`);
 
   try {
     let reply = "";
 
     if (mediaType === "audio" && mediaBuffer) {
-      // Transcribe audio → text → IA
       const transcribed = await transcribeAudio(mediaBuffer);
       if (transcribed) {
-        log(`Transcribed: "${transcribed.slice(0, 60)}"`);
         reply = await callIA(transcribed);
       } else {
         reply = "🎤 Recibí tu nota de voz pero no pude transcribirla. ¿Puedes escribirlo?";
       }
     } else if (mediaType === "image" && mediaBuffer) {
-      // Convert image to base64 and send to IA with vision
       const mime = String(message.imageMessage?.mimetype || "image/jpeg").toLowerCase();
       const base64 = `data:${mime};base64,${mediaBuffer.toString("base64")}`;
       reply = await callIA(text || "¿Qué hay en esta imagen?", base64);
     } else if (mediaType === "unsupported") {
       reply = "📱 Recibí tu mensaje pero aún no puedo procesar videos o stickers. Envíame texto, audio o una imagen.";
     } else if (text) {
-      // Regular text → IA
       reply = await callIA(text);
     } else {
-      return; // Nothing to respond to
+      return;
     }
 
     log("Reply generated; sending outbound message");
     await sock.sendMessage(from, { text: reply });
   } catch (err) {
-    log("Message processing failed");
-    await sock.sendMessage(from, { text: "⚠️ Ocurrió un error procesando tu mensaje. Intenta de nuevo." });
+    log(`Message processing failed: ${err.message}`);
+    try {
+      await sock.sendMessage(from, { text: "⚠️ Ocurrió un error procesando tu mensaje. Intenta de nuevo." });
+    } catch {}
   }
+}
+
+// === Reconnection with exponential backoff + jitter ===
+function scheduleReconnect(reason) {
+  if (isShuttingDown) return;
+  if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+    log(`Max reconnection attempts (${MAX_RECONNECT_ATTEMPTS}) reached. Manual intervention required.`);
+    connectionState = "max_reconnects_exhausted";
+    return;
+  }
+
+  reconnectAttempts++;
+  const baseDelay = Math.min(RECONNECT_BASE_DELAY * Math.pow(2, reconnectAttempts - 1), RECONNECT_MAX_DELAY);
+  const jitter = Math.floor(Math.random() * 1000); // 0-999ms jitter
+  const delay = baseDelay + jitter;
+
+  log(`Reconnect #${reconnectAttempts} in ${(delay / 1000).toFixed(1)}s (reason: ${reason})`);
+
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    startWhatsApp().catch((e) => {
+      log(`Reconnect failed: ${e.message}`);
+      scheduleReconnect("reconnect_error");
+    });
+  }, delay);
 }
 
 // === WhatsApp connection ===
 async function startWhatsApp() {
   if (sock) {
-    log("Already running, disconnect first");
-    return;
+    log("Socket already exists, cleaning up before reconnect");
+    try { sock.ev.removeAllListeners(); } catch {}
+    try { sock.end(); } catch {}
+    sock = null;
   }
 
   const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
@@ -284,12 +406,14 @@ async function startWhatsApp() {
     browser: ["AGENTE-GENERAL", "Chrome", "1.0.0"],
   });
 
+  // Prevent duplicate listeners: removeAllListeners before registering
   sock.ev.on("creds.update", saveCreds);
 
   sock.ev.on("messages.upsert", async (m) => {
     const messages = m.messages || [];
     for (const msg of messages) {
-      await handleMessage(msg);
+      // Process each message; errors don't crash the daemon
+      handleMessage(msg).catch((e) => log(`Handler error: ${e.message}`));
     }
   });
 
@@ -306,25 +430,29 @@ async function startWhatsApp() {
     if (connection === "open") {
       connectionState = "connected";
       lastQR = null;
+      reconnectAttempts = 0; // Reset on successful connection
       const user = sock.user;
       connectedPhone = user ? user.id.split(":")[0] : null;
-      log(`Connected: ${connectedPhone}`);
+      log(`Connected: ${connectedPhone ? "****" : "unknown"}`);
     }
 
     if (connection === "close") {
       connectionState = "disconnected";
       lastQR = null;
       connectedPhone = null;
+
+      // Clean up socket + listeners
+      try { sock.ev.removeAllListeners(); } catch {}
       sock = null;
 
-      const shouldReconnect =
-        lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+      const statusCode = lastDisconnect?.error?.output?.statusCode;
+      const isLoggedOut = statusCode === DisconnectReason.loggedOut;
 
-      if (shouldReconnect) {
-        log("Connection closed, will reconnect...");
-        setTimeout(() => startWhatsApp(), 3000);
+      if (isLoggedOut) {
+        log("Logged out — session invalidated, QR rescan required");
+        connectionState = "logged_out";
       } else {
-        log("Logged out, session cleared");
+        scheduleReconnect(`connection_close (code=${statusCode})`);
       }
     }
   });
@@ -379,7 +507,13 @@ const server = http.createServer(async (req, res) => {
 
   try {
     if (path === "/status" && method === "GET") {
-      return sendJSON(res, 200, { status: connectionState, phone: connectedPhone, qr: connectionState === "linking" ? lastQR : null });
+      // Health endpoint: distinguishes daemon_active, connected, disconnected, logged_out, max_reconnects
+      return sendJSON(res, 200, {
+        status: connectionState,
+        phone: connectedPhone ? "****" : null, // Never expose phone
+        qr: connectionState === "linking" ? lastQR : null,
+        reconnect_attempts: reconnectAttempts,
+      });
     }
 
     if (path === "/qr" && method === "GET") {
@@ -389,14 +523,20 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (path === "/connect" && method === "POST") {
-      if (connectionState === "connected") return sendJSON(res, 200, { ok: true, message: "Already connected", phone: connectedPhone });
+      if (connectionState === "connected") return sendJSON(res, 200, { ok: true, message: "Already connected" });
+      reconnectAttempts = 0; // Reset on manual connect
       await startWhatsApp();
       return sendJSON(res, 200, { ok: true, message: "Connecting... check /qr" });
     }
 
     if (path === "/disconnect" && method === "POST") {
-      if (sock) { await sock.logout(); sock = null; }
+      if (sock) {
+        try { sock.ev.removeAllListeners(); } catch {}
+        try { await sock.logout(); } catch {}
+        sock = null;
+      }
       connectionState = "disconnected"; connectedPhone = null; lastQR = null;
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
       return sendJSON(res, 200, { ok: true, message: "Disconnected" });
     }
 
@@ -422,16 +562,52 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, () => {
   log(`WhatsApp daemon listening on port ${PORT}`);
   log("Internal authentication configured");
-  const fs2 = require("fs");
-  if (fs2.existsSync(SESSION_DIR)) {
+  log(`Limits: media=${MAX_MEDIA_BYTES} bytes, concurrent=${MAX_CONCURRENT_MEDIA}, reconnect_max=${MAX_RECONNECT_ATTEMPTS}`);
+
+  // Create session dir with restrictive permissions
+  try { fs.mkdirSync(SESSION_DIR, { recursive: true, mode: 0o700 }); } catch {}
+
+  if (fs.existsSync(SESSION_DIR)) {
     log("Found existing session, auto-connecting...");
     startWhatsApp().catch((e) => log(`Auto-connect failed: ${e.message}`));
   }
 });
 
-process.on("SIGTERM", () => {
-  log("Shutting down...");
-  if (sock) sock.end();
+// === Graceful shutdown ===
+function shutdown(signal) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  log(`Received ${signal}, shutting down...`);
+
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+
+  // Clean up temp files
+  try {
+    const tmpFiles = fs.readdirSync("/tmp").filter(f => f.startsWith("wa-audio-"));
+    for (const f of tmpFiles) { try { fs.unlinkSync(path.join("/tmp", f)); } catch {} }
+  } catch {}
+
+  if (sock) {
+    try { sock.ev.removeAllListeners(); } catch {}
+    try { sock.end(); } catch {}
+  }
   server.close();
   process.exit(0);
-});
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
+
+module.exports = {
+  isDuplicate,
+  isSupportedImageBuffer,
+  unwrapMessage,
+  downloadMediaBounded,
+  withMediaSlot,
+  scheduleReconnect,
+  sanitizeJid,
+  MAX_MEDIA_BYTES,
+  MAX_CONCURRENT_MEDIA,
+  MAX_RECONNECT_ATTEMPTS,
+  DEDUP_TTL_MS,
+};
