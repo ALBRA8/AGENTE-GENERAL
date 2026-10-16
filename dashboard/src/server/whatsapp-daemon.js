@@ -736,6 +736,9 @@ const server = http.createServer(async (req, res) => {
 
     if (path === "/send" && method === "POST") {
       const body = await readBody(req);
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        return sendJSON(res, 400, { error: "Invalid request body" });
+      }
       if (!sock || connectionState !== "connected") return sendJSON(res, 400, { error: "Not connected" });
       const { to, message } = body;
       if (typeof to !== "string" || typeof message !== "string" || !to || !message.trim()) {
