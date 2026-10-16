@@ -106,6 +106,7 @@ class SQLiteApprovalStore:
                     ON approval_dispatch(state);
             """)
             conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
+
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(
             self.db_path, timeout=self.busy_timeout_ms / 1000,
@@ -114,6 +115,25 @@ class SQLiteApprovalStore:
         conn.row_factory = sqlite3.Row
         conn.execute(f"PRAGMA busy_timeout={int(self.busy_timeout_ms)}")
         return conn
+
+    def close_all(self) -> None:
+        """Checkpoint WAL and close any lingering connections.
+
+        On Windows, SQLite WAL mode keeps file handles to ``-wal`` and
+        ``-shm`` sidecars open even after ``conn.close()``. Calling
+        ``PRAGMA wal_checkpoint(TRUNCATE)`` before close ensures the
+        WAL is merged into the main DB and the sidecar files are
+        truncated, allowing the temp directory to be cleaned up.
+
+        This method is safe to call at any time — it does not destroy
+        data, it only forces the WAL to be committed.
+        """
+        try:
+            conn = self._connect()
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            conn.close()
+        except Exception:
+            pass  # best-effort; the DB may not exist or be in use
 
     @staticmethod
     def _dump(request: ApprovalRequest) -> str:

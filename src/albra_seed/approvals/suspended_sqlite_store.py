@@ -133,6 +133,20 @@ class SQLiteSuspendedExecutionCoordinator:
         connection.execute("PRAGMA synchronous=FULL")
         return connection
 
+    def close_all(self) -> None:
+        """Checkpoint WAL and close any lingering connections.
+
+        On Windows, SQLite WAL mode keeps file handles open. This
+        method forces a WAL checkpoint + truncate so temp dirs can
+        be cleaned up. Safe to call at any time.
+        """
+        try:
+            conn = self._connect()
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            conn.close()
+        except Exception:
+            pass  # best-effort
+
     @staticmethod
     def _from_row(row: sqlite3.Row | None) -> SuspendedExecution | None:
         if row is None:
