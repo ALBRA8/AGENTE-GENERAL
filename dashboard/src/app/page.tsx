@@ -420,7 +420,7 @@ function IdentityView() {
         <div style={{ background: "var(--muted)", borderRadius: "0.5rem", padding: "0.75rem", marginBottom: "1rem" }}>
           <p style={{ fontSize: "0.7rem", color: "var(--muted-fg)", margin: "0 0 0.3rem" }}>Vista previa:</p>
           <p style={{ fontSize: "0.85rem", margin: 0 }}>
-            "Soy <strong>{name || "AGENTE GENERAL"}</strong>, {role || "asistente de IA"}."
+            &quot;Soy <strong>{name || "AGENTE GENERAL"}</strong>, {role || "asistente de IA"}.&quot;
           </p>
         </div>
 
@@ -436,8 +436,20 @@ function IdentityView() {
 // PROVIDER VIEW (IA)
 // =====================================================================
 
+type ProviderConfig = {
+  provider: string;
+  api_key_set: boolean;
+  last_test_ok?: boolean | null;
+  base_url?: string;
+  model?: string;
+  temperature?: number;
+  top_p?: number;
+  max_tokens?: number;
+  timeout?: number;
+};
+
 function ProviderView() {
-  const [config, setConfig] = useState<any>(null);
+  const [config, setConfig] = useState<ProviderConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
