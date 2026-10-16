@@ -45,7 +45,8 @@ const P = require("pino");
 const PORT = process.env.WHATSAPP_DAEMON_PORT || 3002;
 const SECRET = process.env.INTERNAL_API_SECRET;
 const MAX_MEDIA_BYTES = parseInt(process.env.MAX_MEDIA_BYTES || (8 * 1024 * 1024).toString(), 10);
-const MAX_CONCURRENT_MEDIA = parseInt(process.env.MAX_CONCURRENT_MEDIA || "2", 10);
+const MAX_CONCURRENT_MEDIA = Math.max(1, parseInt(process.env.MAX_CONCURRENT_MEDIA || "2", 10) || 2);
+const MAX_MEDIA_QUEUE = Math.max(0, parseInt(process.env.MAX_MEDIA_QUEUE || "20", 10) || 0);
 const MAX_RECONNECT_ATTEMPTS = parseInt(process.env.MAX_RECONNECT_ATTEMPTS || "10", 10);
 const RECONNECT_BASE_DELAY = 1000; // 1s
 const RECONNECT_MAX_DELAY = 30000; // 30s
@@ -71,6 +72,7 @@ const processedMessages = new Map(); // msgId -> timestamp
 // Concurrency limiter for media processing
 let activeMediaTasks = 0;
 const mediaQueue = [];
+const ownedTempFiles = new Set();
 
 const logger = P({ level: "silent" });
 
@@ -110,28 +112,38 @@ function isDuplicate(msgId) {
 
 // === Concurrency limiter ===
 async function withMediaSlot(fn) {
+  if (isShuttingDown) throw new Error("daemon_shutting_down");
+
   if (activeMediaTasks >= MAX_CONCURRENT_MEDIA) {
-    log(`Media queue full (${activeMediaTasks}/${MAX_CONCURRENT_MEDIA}), deferring`);
-    await new Promise((resolve) => mediaQueue.push(resolve));
+    if (mediaQueue.length >= MAX_MEDIA_QUEUE) {
+      throw new Error("media_queue_full");
+    }
+    await new Promise((resolve, reject) => mediaQueue.push({ resolve, reject }));
+    // The released slot is transferred to this waiter; do not increment again.
+  } else {
+    activeMediaTasks++;
   }
-  activeMediaTasks++;
+
   try {
     return await fn();
   } finally {
-    activeMediaTasks--;
     const next = mediaQueue.shift();
-    if (next) next();
+    if (next && !isShuttingDown) {
+      next.resolve();
+    } else {
+      activeMediaTasks--;
+      if (next) next.reject(new Error("daemon_shutting_down"));
+    }
   }
 }
 
 // === Bounded media download ===
 async function downloadMediaBounded(msg) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30000);
-
-  try {
-    // Baileys downloadMediaMessage returns a Buffer.
-    // We check the declared fileLength first, then verify after download.
+  // Note: Baileys' buffer API does not accept an AbortSignal. The declared-size
+  // pre-check and actual-size post-check limit processing, but cannot cap peak
+  // memory during the download itself. Do not present the timer as cancellation.
+  // The caller's bounded concurrency/queue limits the number of simultaneous downloads.
+  // We check the declared fileLength first, then verify after download.
     const declaredSize = Number(msg.message?.imageMessage?.fileLength || msg.message?.audioMessage?.fileLength || msg.message?.videoMessage?.fileLength || 0);
 
     if (declaredSize > MAX_MEDIA_BYTES) {
@@ -149,9 +161,6 @@ async function downloadMediaBounded(msg) {
     }
 
     return buffer;
-  } finally {
-    clearTimeout(timeout);
-  }
 }
 
 // === Image validation ===
@@ -223,6 +232,7 @@ async function transcribeAudio(audioBuffer) {
   const tmpFile = `/tmp/wa-audio-${process.pid}-${Date.now()}.ogg`;
   try {
     fs.writeFileSync(tmpFile, audioBuffer, { flag: "wx", mode: 0o600 });
+    ownedTempFiles.add(tmpFile);
     const result = execFileSync("z-ai", ["asr", "-f", tmpFile, "--output", "json"], {
       timeout: 30000,
       maxBuffer: 1024 * 1024,
@@ -235,6 +245,7 @@ async function transcribeAudio(audioBuffer) {
     return "";
   } finally {
     try { fs.unlinkSync(tmpFile); } catch {}
+    ownedTempFiles.delete(tmpFile);
   }
 }
 
@@ -581,18 +592,28 @@ function shutdown(signal) {
 
   if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
 
-  // Clean up temp files
-  try {
-    const tmpFiles = fs.readdirSync("/tmp").filter(f => f.startsWith("wa-audio-"));
-    for (const f of tmpFiles) { try { fs.unlinkSync(path.join("/tmp", f)); } catch {} }
-  } catch {}
+  // Reject queued work; only remove temporary files created by this process.
+  for (const waiter of mediaQueue.splice(0)) {
+    waiter.reject(new Error("daemon_shutting_down"));
+  }
+  for (const tmpFile of ownedTempFiles) {
+    try { fs.unlinkSync(tmpFile); } catch {}
+    ownedTempFiles.delete(tmpFile);
+  }
 
   if (sock) {
     try { sock.ev.removeAllListeners(); } catch {}
     try { sock.end(); } catch {}
+    sock = null;
   }
-  server.close();
-  process.exit(0);
+
+  // Let active HTTP requests finish. Force exit only as a last resort.
+  const forceExit = setTimeout(() => process.exit(1), 5000);
+  forceExit.unref();
+  server.close(() => {
+    clearTimeout(forceExit);
+    process.exit(0);
+  });
 }
 
 process.on("SIGTERM", () => shutdown("SIGTERM"));
@@ -610,4 +631,5 @@ module.exports = {
   MAX_CONCURRENT_MEDIA,
   MAX_RECONNECT_ATTEMPTS,
   DEDUP_TTL_MS,
+  MAX_MEDIA_QUEUE,
 };
