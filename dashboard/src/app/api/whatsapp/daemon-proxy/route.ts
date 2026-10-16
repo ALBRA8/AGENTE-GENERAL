@@ -14,13 +14,15 @@
 import { NextResponse } from "next/server";
 
 const DAEMON_URL = process.env.WHATSAPP_DAEMON_URL || "http://localhost:3002";
-const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET || "dev-secret";
+const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET;
+const SECRET_CONFIGURED = Boolean(INTERNAL_API_SECRET && INTERNAL_API_SECRET.length >= 32);
 const TIMEOUT_MS = 5000;
 
 const ALLOWED_GET = ["/status", "/qr"];
 const ALLOWED_POST = ["/connect", "/disconnect", "/send"];
 
 function daemonHeaders() {
+  if (!SECRET_CONFIGURED) throw new Error("INTERNAL_API_SECRET is not configured securely");
   return {
     "Content-Type": "application/json",
     Authorization: `Bearer ${INTERNAL_API_SECRET}`,
@@ -28,6 +30,7 @@ function daemonHeaders() {
 }
 
 export async function GET(request: Request) {
+  if (!SECRET_CONFIGURED) return NextResponse.json({ error: "WhatsApp daemon authentication is not configured" }, { status: 503 });
   const { searchParams } = new URL(request.url);
   const path = searchParams.get("path") || "/status";
 
@@ -61,6 +64,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  if (!SECRET_CONFIGURED) return NextResponse.json({ error: "WhatsApp daemon authentication is not configured" }, { status: 503 });
+  const contentLength = Number(request.headers.get("content-length") || 0);
+  if (contentLength > 16 * 1024) return NextResponse.json({ error: "Request body too large" }, { status: 413 });
   let body;
   try {
     body = await request.json();
@@ -68,6 +74,7 @@ export async function POST(request: Request) {
     body = {};
   }
 
+  if (!body || typeof body !== "object" || Array.isArray(body)) return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   const path = body.path || "/connect";
 
   if (!ALLOWED_POST.includes(path)) {
