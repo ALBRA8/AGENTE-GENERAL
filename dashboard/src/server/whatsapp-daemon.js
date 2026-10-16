@@ -506,6 +506,12 @@ async function startWhatsApp() {
 
   try {
     await startPromise;
+  } catch (error) {
+    // A failed startup must not leave /connect reporting a phantom in-progress session.
+    if (generation === connectionGeneration && !sock && connectionState === "connecting") {
+      connectionState = "disconnected";
+    }
+    throw error;
   } finally {
     startPromise = null;
   }
