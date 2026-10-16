@@ -1,13 +1,16 @@
 """Live smoke test for NVIDIA NIM's OpenAI-compatible endpoint."""
 import os
 
+import pytest
 from openai import OpenAI
 
 
 def test_nvidia_glm_53_flash_chat_completion() -> None:
     api_key = os.environ.get("NVIDIA_API_KEY")
     if not api_key:
-        raise AssertionError("NVIDIA_API_KEY is required for this live integration test")
+        if os.environ.get("REQUIRE_NVIDIA_LIVE_TEST") == "1":
+            raise AssertionError("NVIDIA_API_KEY is required for this live integration test")
+        pytest.skip("Set NVIDIA_API_KEY to run the live NVIDIA integration test")
 
     client = OpenAI(
         base_url="https://integrate.api.nvidia.com/v1",
