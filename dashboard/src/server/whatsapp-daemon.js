@@ -65,6 +65,7 @@ let connectedPhone = null;
 let reconnectAttempts = 0;
 let reconnectTimer = null;
 let isShuttingDown = false;
+let startPromise = null;
 
 // Dedup: Set of recently-processed message IDs with TTL
 const processedMessages = new Map(); // msgId -> timestamp
@@ -420,74 +421,91 @@ function scheduleReconnect(reason) {
 
 // === WhatsApp connection ===
 async function startWhatsApp() {
-  if (sock) {
-    log("Socket already exists, cleaning up before reconnect");
-    try { sock.ev.removeAllListeners(); } catch {}
-    try { sock.end(); } catch {}
-    sock = null;
-  }
+  if (isShuttingDown) throw new Error("daemon_shutting_down");
+  if (startPromise) return startPromise;
+  if (sock && ["connecting", "linking", "connected"].includes(connectionState)) return;
 
-  const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
-  const { version } = await fetchLatestBaileysVersion();
-
-  sock = makeWASocket({
-    version,
-    auth: state,
-    printQRInTerminal: false,
-    logger,
-    browser: ["AGENTE-GENERAL", "Chrome", "1.0.0"],
-  });
-
-  // Prevent duplicate listeners: removeAllListeners before registering
-  sock.ev.on("creds.update", saveCreds);
-
-  sock.ev.on("messages.upsert", async (m) => {
-    const messages = m.messages || [];
-    for (const msg of messages) {
-      // Process each message; errors don't crash the daemon
-      handleMessage(msg).catch((e) => log(`Handler error: ${e.message}`));
-    }
-  });
-
-  sock.ev.on("connection.update", (update) => {
-    const { connection, lastDisconnect, qr } = update;
-
-    if (qr) {
-      lastQR = qr;
-      connectionState = "linking";
-      connectedPhone = null;
-      log("QR generated, waiting for scan");
+  startPromise = (async () => {
+    connectionState = "connecting";
+    if (sock) {
+      const previousSock = sock;
+      log("Socket already exists, cleaning up before reconnect");
+      try { previousSock.ev.removeAllListeners(); } catch {}
+      try { previousSock.end(); } catch {}
+      if (sock === previousSock) sock = null;
     }
 
-    if (connection === "open") {
-      connectionState = "connected";
-      lastQR = null;
-      reconnectAttempts = 0; // Reset on successful connection
-      const user = sock.user;
-      connectedPhone = user ? user.id.split(":")[0] : null;
-      log(`Connected: ${connectedPhone ? "****" : "unknown"}`);
-    }
+    const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
+    const { version } = await fetchLatestBaileysVersion();
+    if (isShuttingDown) throw new Error("daemon_shutting_down");
 
-    if (connection === "close") {
-      connectionState = "disconnected";
-      lastQR = null;
-      connectedPhone = null;
+    const currentSock = makeWASocket({
+      version,
+      auth: state,
+      printQRInTerminal: false,
+      logger,
+      browser: ["AGENTE-GENERAL", "Chrome", "1.0.0"],
+    });
+    sock = currentSock;
 
-      // Clean up socket + listeners
-      try { sock.ev.removeAllListeners(); } catch {}
-      sock = null;
+    currentSock.ev.on("creds.update", saveCreds);
 
-      const statusCode = lastDisconnect?.error?.output?.statusCode;
-      const isLoggedOut = statusCode === DisconnectReason.loggedOut;
-
-      if (isLoggedOut) {
-        log("Logged out — session invalidated, QR rescan required");
-        connectionState = "logged_out";
-      } else {
-        scheduleReconnect(`connection_close (code=${statusCode})`);
+    currentSock.ev.on("messages.upsert", async (m) => {
+      if (sock !== currentSock || isShuttingDown) return;
+      const messages = m.messages || [];
+      for (const msg of messages) {
+        handleMessage(msg).catch((e) => log(`Handler error: ${e.message}`));
       }
-    }
-  });
+    });
+
+    currentSock.ev.on("connection.update", (update) => {
+      // Late events from a replaced socket must never mutate the current session.
+      if (sock !== currentSock || isShuttingDown) return;
+      const { connection, lastDisconnect, qr } = update;
+
+      if (qr) {
+        lastQR = qr;
+        connectionState = "linking";
+        connectedPhone = null;
+        log("QR generated, waiting for scan");
+      }
+
+      if (connection === "open") {
+        connectionState = "connected";
+        lastQR = null;
+        reconnectAttempts = 0;
+        const user = currentSock.user;
+        connectedPhone = user ? user.id.split(":")[0] : null;
+        log(`Connected: ${connectedPhone ? "****" : "unknown"}`);
+      }
+
+      if (connection === "close") {
+        connectionState = "disconnected";
+        lastQR = null;
+        connectedPhone = null;
+
+        try { currentSock.ev.removeAllListeners(); } catch {}
+        try { currentSock.end(); } catch {}
+        if (sock === currentSock) sock = null;
+
+        const statusCode = lastDisconnect?.error?.output?.statusCode;
+        const isLoggedOut = statusCode === DisconnectReason.loggedOut;
+
+        if (isLoggedOut) {
+          log("Logged out — session invalidated, QR rescan required");
+          connectionState = "logged_out";
+        } else {
+          scheduleReconnect(`connection_close (code=${statusCode})`);
+        }
+      }
+    });
+  })();
+
+  try {
+    await startPromise;
+  } finally {
+    startPromise = null;
+  }
 }
 
 // === HTTP server ===
@@ -556,6 +574,9 @@ const server = http.createServer(async (req, res) => {
 
     if (path === "/connect" && method === "POST") {
       if (connectionState === "connected") return sendJSON(res, 200, { ok: true, message: "Already connected" });
+      if (startPromise || ["connecting", "linking"].includes(connectionState)) {
+        return sendJSON(res, 200, { ok: true, message: "Connection already in progress; check /qr" });
+      }
       reconnectAttempts = 0; // Reset on manual connect
       await startWhatsApp();
       return sendJSON(res, 200, { ok: true, message: "Connecting... check /qr" });
