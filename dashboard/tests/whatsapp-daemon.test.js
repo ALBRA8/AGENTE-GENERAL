@@ -335,13 +335,21 @@ console.log("\n=== Concurrency Limiter ===");
   const withAsrEnv = (fn) => {
     const previousKey = process.env.NVIDIA_API_KEY;
     const previousEndpoint = process.env.NVIDIA_ASR_ENDPOINT;
+    const previousPoll = process.env.NVIDIA_ASR_POLL_SECONDS;
+    const previousTimeout = process.env.NVIDIA_ASR_TIMEOUT_MS;
     process.env.NVIDIA_API_KEY = "test-nvidia-key";
     process.env.NVIDIA_ASR_ENDPOINT = "https://asr.example.test/v1/audio/transcriptions";
+    process.env.NVIDIA_ASR_POLL_SECONDS = "120";
+    process.env.NVIDIA_ASR_TIMEOUT_MS = "135000";
     return Promise.resolve().then(fn).finally(() => {
       if (previousKey === undefined) delete process.env.NVIDIA_API_KEY;
       else process.env.NVIDIA_API_KEY = previousKey;
       if (previousEndpoint === undefined) delete process.env.NVIDIA_ASR_ENDPOINT;
       else process.env.NVIDIA_ASR_ENDPOINT = previousEndpoint;
+      if (previousPoll === undefined) delete process.env.NVIDIA_ASR_POLL_SECONDS;
+      else process.env.NVIDIA_ASR_POLL_SECONDS = previousPoll;
+      if (previousTimeout === undefined) delete process.env.NVIDIA_ASR_TIMEOUT_MS;
+      else process.env.NVIDIA_ASR_TIMEOUT_MS = previousTimeout;
     });
   };
 
@@ -363,6 +371,8 @@ console.log("\n=== Concurrency Limiter ===");
         assert.strictEqual(transcript, "Hola, esta es una prueba.");
         assert.strictEqual(capturedUrl, process.env.NVIDIA_ASR_ENDPOINT);
         assert.strictEqual(capturedOptions.headers.Authorization, "Bearer test-nvidia-key");
+        assert.strictEqual(capturedOptions.headers["NVCF-POLL-SECONDS"], "120");
+        assert.strictEqual(capturedOptions.signal.aborted, false);
         assert.strictEqual(capturedOptions.body.get("language"), "es-US");
         assert.strictEqual(capturedOptions.body.get("response_format"), "json");
         assert.strictEqual(capturedOptions.body.get("file").name, "whatsapp-voice-note.ogg");
