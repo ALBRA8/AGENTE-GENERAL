@@ -714,6 +714,7 @@ module.exports = {
   unwrapMessage,
   downloadMediaBounded,
   collectMediaStreamBounded,
+  transcribeAudio,
   withMediaSlot,
   scheduleReconnect,
   sanitizeJid,
