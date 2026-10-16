@@ -159,8 +159,14 @@ function ChatView() {
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (!file.type.startsWith("image/")) {
-      setError("Solo se pueden adjuntar imágenes");
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type.toLowerCase())) {
+      setError("Adjunta una imagen PNG, JPEG o WebP");
+      e.target.value = "";
+      return;
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      setError("La imagen debe pesar máximo 8 MiB");
+      e.target.value = "";
       return;
     }
     const reader = new FileReader();
@@ -178,7 +184,12 @@ function ChatView() {
       const chunks: Blob[] = [];
       recorder.ondataavailable = (e) => chunks.push(e.data);
       recorder.onstop = async () => {
-        const blob = new Blob(chunks, { type: "audio/webm" });
+        stream.getTracks().forEach((track) => track.stop());
+        const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+        if (!blob.size || blob.size > 8 * 1024 * 1024) {
+          setError(blob.size ? "El audio supera el límite de 8 MiB" : "La grabación quedó vacía");
+          return;
+        }
         const reader = new FileReader();
         reader.onload = async () => {
           const base64 = reader.result as string;
@@ -215,7 +226,6 @@ function ChatView() {
           }
         };
         reader.readAsDataURL(blob);
-        stream.getTracks().forEach(t => t.stop());
       };
       recorder.start();
       setMediaRecorder(recorder);
