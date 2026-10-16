@@ -252,7 +252,7 @@ async function callIA(userText, imageBase64) {
 // === ASR: NVIDIA-hosted Riva/NIM transcription ===
 // The endpoint is deployment-specific. Do not silently fall back to an old
 // NVCF deployment ID: require the operator to configure the verified endpoint.
-async function transcribeAudio(audioBuffer) {
+async function transcribeAudioNvidia(audioBuffer) {
   const apiKey = process.env.NVIDIA_API_KEY;
   // Default to the configured NVIDIA Riva NVCF deployment; allow environment override.
   const endpoint = process.env.NVIDIA_ASR_ENDPOINT || "https://a9eeee8f-b509-4712-b19d-194361fa5f31.invocation.api.nvcf.nvidia.com/v1/audio/transcriptions";
@@ -332,6 +332,50 @@ async function transcribeAudio(audioBuffer) {
     fail("ASR_EMPTY_TRANSCRIPT", "ASR provider returned no transcript");
   }
   return transcript.slice(0, 12000);
+}
+
+// === ASR fallback: Z.ai SDK ===
+async function transcribeAudioZai(audioBuffer) {
+  let zai;
+  try {
+    const ZAI = require("z-ai-web-dev-sdk").default;
+    if (!ZAI || typeof ZAI.create !== "function") throw new Error("SDK unavailable");
+    zai = await ZAI.create();
+    if (!zai?.audio?.asr || typeof zai.audio.asr.create !== "function") {
+      throw new Error("SDK ASR interface unavailable");
+    }
+    const result = await zai.audio.asr.create({ file_base64: audioBuffer.toString("base64") });
+    const transcript = typeof result?.text === "string" ? result.text.trim() : "";
+    if (!transcript) {
+      const error = new Error("Z.ai ASR returned no transcript");
+      error.code = "ASR_EMPTY_TRANSCRIPT";
+      throw error;
+    }
+    log("ASR fallback succeeded: zai_sdk");
+    return transcript.slice(0, 12000);
+  } catch (error) {
+    log("ASR fallback failed: zai_sdk");
+    if (error?.code === "ASR_EMPTY_TRANSCRIPT") throw error;
+    const fallbackError = new Error("ASR fallback failed");
+    fallbackError.code = "ASR_FALLBACK_FAILED";
+    throw fallbackError;
+  }
+}
+
+// Prefer NVIDIA while it is healthy; use the Z.ai SDK only after a provider
+// failure. Audio validation errors are final and must not be bypassed.
+async function transcribeAudio(audioBuffer) {
+  try {
+    return await transcribeAudioNvidia(audioBuffer);
+  } catch (error) {
+    if (error?.code === "ASR_INVALID_AUDIO") throw error;
+    const fallbackEnabled = !["0", "false", "off"].includes(
+      String(process.env.WHATSAPP_ASR_ZAI_FALLBACK || "true").toLowerCase()
+    );
+    if (!fallbackEnabled) throw error;
+    log(`NVIDIA ASR failed (${error?.code || "unknown"}); trying Z.ai fallback`);
+    return transcribeAudioZai(audioBuffer);
+  }
 }
 
 // === Message unwrapping (ephemeral, viewOnce, etc.) ===
