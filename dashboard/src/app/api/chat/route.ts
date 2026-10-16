@@ -41,15 +41,20 @@ export async function POST(request: Request) {
     );
   }
 
+  const declaredLength = Number(request.headers.get("content-length") || 0);
+  if (declaredLength > 12 * 1024 * 1024) return NextResponse.json({ error: "Request body too large" }, { status: 413 });
   let body;
   try {
-    body = await request.json();
+    const rawBody = await request.text();
+    if (Buffer.byteLength(rawBody, "utf8") > 12 * 1024 * 1024) return NextResponse.json({ error: "Request body too large" }, { status: 413 });
+    body = JSON.parse(rawBody);
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
+  if (!body || typeof body !== "object" || Array.isArray(body)) return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
 
   const messages = body.messages;
-  if (!messages || !Array.isArray(messages) || messages.length === 0) {
+  if (!messages || !Array.isArray(messages) || messages.length === 0 || messages.length > 100) {
     return NextResponse.json({ error: "messages array required" }, { status: 400 });
   }
 
@@ -71,6 +76,11 @@ export async function POST(request: Request) {
   let finalMessages;
 
   if (image) {
+    if (typeof image !== "string" || image.length > 11 * 1024 * 1024 || !/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(image)) {
+      return NextResponse.json({ error: "Image must be a PNG, JPEG, or WebP base64 data URL under 8 MiB" }, { status: 400 });
+    }
+    const imagePayload = image.slice(image.indexOf(",") + 1);
+    if (Buffer.from(imagePayload, "base64").length > 8 * 1024 * 1024) return NextResponse.json({ error: "Image too large" }, { status: 413 });
     // User sent an image — build multimodal message
     const userText = messages[messages.length - 1]?.content || "¿Qué hay en esta imagen?";
     finalMessages = [
@@ -84,28 +94,28 @@ export async function POST(request: Request) {
       },
     ];
   } else if (body.audio) {
-    // Audio — transcribe with z-ai ASR, then send text to IA
+    // Validate and transcribe with the installed z-ai ASR CLI.
     const fs = await import("fs/promises");
-    const { execSync } = await import("child_process");
-    // Extract base64 from data URL
-    const base64Match = body.audio.match(/base64,(.+)/);
-    if (base64Match) {
-      const audioBase64 = base64Match[1];
-      const tmpFile = `/tmp/chat-audio-${Date.now()}.webm`;
+    const { execFileSync } = await import("child_process");
+    const audioMatch = typeof body.audio === "string" && body.audio.match(/^data:(audio\/(?:webm|ogg|mpeg|wav|mp4|x-wav));base64,([A-Za-z0-9+/]+={0,2})$/);
+    if (audioMatch) {
+      const audioBase64 = audioMatch[2];
+      const buf = Buffer.from(audioBase64, "base64");
+      if (!buf.length || buf.length > 8 * 1024 * 1024) return NextResponse.json({ error: "Audio too large or empty" }, { status: 413 });
+      const tmpFile = `/tmp/chat-audio-${process.pid}-${Date.now()}.webm`;
       try {
-        const buf = Buffer.from(audioBase64, "base64");
-        await fs.writeFile(tmpFile, buf);
-        const result = execSync(`z-ai asr -f "${tmpFile}" -o /dev/stdout 2>/dev/null`, {
+        await fs.writeFile(tmpFile, buf, { flag: "wx", mode: 0o600 });
+        const result = execFileSync("z-ai", ["asr", "-f", tmpFile, "-o", "/dev/stdout"], {
           timeout: 30000,
-          maxBuffer: 10 * 1024 * 1024,
+          maxBuffer: 1024 * 1024,
+          stdio: ["ignore", "pipe", "ignore"],
         }).toString().trim();
-        await fs.unlink(tmpFile).catch(() => {});
         let transcribed = "";
         try {
           const parsed = JSON.parse(result);
-          transcribed = parsed.text || "";
+          transcribed = typeof parsed.text === "string" ? parsed.text.slice(0, 12000) : "";
         } catch {
-          transcribed = result;
+          transcribed = result.slice(0, 12000);
         }
         if (transcribed) {
           finalMessages = [
@@ -115,9 +125,10 @@ export async function POST(request: Request) {
         } else {
           return NextResponse.json({ content: "🎤 No pude transcribir el audio. ¿Puedes escribirlo?" });
         }
-      } catch (e) {
-        await fs.unlink(tmpFile).catch(() => {});
+      } catch {
         return NextResponse.json({ content: "🎤 No pude procesar el audio. ¿Puedes escribirlo?" });
+      } finally {
+        await fs.unlink(tmpFile).catch(() => {});
       }
     } else {
       return NextResponse.json({ error: "Invalid audio format" }, { status: 400 });
@@ -159,9 +170,8 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ content, model: data?.model || NVIDIA_MODEL, agent_name: agentName });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "unknown error";
     return NextResponse.json(
-      { error: `Request failed: ${msg}` },
+      { error: "Request failed while contacting the configured model provider" },
       { status: 500 }
     );
   }
