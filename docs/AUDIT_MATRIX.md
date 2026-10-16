@@ -15,7 +15,7 @@
 | core | VERIFIED | IMPLEMENTED | PASS | pydantic | LOW | tests/unit/test_config.py |  |
 | runtime | VERIFIED | IMPLEMENTED | PASS | pydantic, structlog | HIGH | tests/unit/test_runtime.py |  |
 | reasoning | VERIFIED | IMPLEMENTED | PASS | none | MEDIUM | tests/unit/test_reasoning.py | planner + engine + prompt templates |
-| providers | VERIFIED | IMPLEMENTED | PASS | openai/anthropic/groq (all optional) | MEDIUM | tests/unit/test_providers.py | mock=True; openai=NOT_INSTALLED; anthropic=NOT_INSTALLED; groq=NOT_INSTALLED |
+| providers | VERIFIED | IMPLEMENTED | PASS | openai/anthropic/groq/nvidia (optional) | MEDIUM | tests/unit/test_providers.py; tests/unit/test_nvidia_provider.py | mock=True; NVIDIA adapter added; live provider access remains environment-dependent |
 | memory | VERIFIED | IMPLEMENTED | PASS | none (sqlite via stdlib for SQLiteStore) | MEDIUM | tests/unit/test_memory.py | InMemory + SQLite + Vector (chromadb optional) + isolator + provenance + DECISION type (GAP-3); FACT rule UNIFIED via MemoryProvenance.validate_fact() (BLOQ-MEM) — single source of truth, no duplicate checks; tombstone carries by/reason on delete() (InMemory + SQLite); MemoryManager.forget() emits memory.forget audit event when audit_sink configured (optional, CORE_ONLY-safe) |
 | security | VERIFIED | IMPLEMENTED | PASS | hvac (optional, for vault backend) | HIGH | tests/unit/test_security.py | vault_backend=EXTERNAL_DEPENDENCY (hvac not installed) |
 | firewall | VERIFIED | IMPLEMENTED | PASS | none | CRITICAL | tests/unit/test_firewall.py | default-deny + kill switch + cooldown + rate limit |
