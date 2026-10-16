@@ -73,11 +73,9 @@ El script `scripts/start-wa-daemon.sh` se encarga de:
 | `NVIDIA_API_KEY` | Clave de NVIDIA para IA y transcripción | Sin default |
 | `NVIDIA_ASR_ENDPOINT` | Override opcional de la URL HTTPS de NVIDIA Riva ASR | Por defecto usa el endpoint NVCF configurado en el daemon |
 | `NVIDIA_ASR_POLL_SECONDS` | Ventana de polling de NVCF en segundos (1–300) | `120` |
-| `
+| `NVIDIA_ASR_TIMEOUT_MS` | Timeout total de la petición ASR en milisegundos (1.000–300.000) | `135000` |
 
 WhatsApp audio transcription also has an automatic Z.ai SDK fallback when the NVIDIA ASR request fails. The daemon sends the same bounded audio buffer as base64 to `z-ai-web-dev-sdk`; the existing chat model remains unchanged. Set `WHATSAPP_ASR_ZAI_FALLBACK=false` to disable the fallback (enabled by default). Ensure the runtime has the package installed and the Z.ai SDK environment configured.
-
-NVIDIA_ASR_TIMEOUT_MS` | Timeout total de la petición ASR en milisegundos (1.000–300.000) | `135000` |
 
 ### Notas de voz / transcripción
 
