@@ -35,6 +35,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "messages array required" }, { status: 400 });
   }
 
+  // Inject system prompt if not present
+  const hasSystem = messages.some((m: any) => m.role === "system");
+  const systemPrompt = {
+    role: "system",
+    content: "Eres AGENTE GENERAL, un asistente de IA del proyecto ALBRA. Respondes en español de forma clara, concisa y útil. Eres capaz de conversar, responder preguntas y ayudar con tareas. No te identifiques como Claude, ChatGPT, ni ningún otro modelo. Tu nombre es AGENTE GENERAL.",
+  };
+  const finalMessages = hasSystem ? messages : [systemPrompt, ...messages];
+
   const temperature = body.temperature ?? 0.5;
   const maxTokens = body.max_tokens ?? 1024;
 
@@ -47,7 +55,7 @@ export async function POST(request: Request) {
       },
       body: JSON.stringify({
         model: NVIDIA_MODEL,
-        messages,
+        messages: finalMessages,
         temperature,
         top_p: 1,
         max_tokens: maxTokens,
