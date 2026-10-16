@@ -32,6 +32,7 @@ const {
   MAX_MEDIA_BYTES,
   MAX_CONCURRENT_MEDIA,
   DEDUP_TTL_MS,
+  MAX_MEDIA_QUEUE,
 } = daemon;
 
 // =====================================================================
@@ -285,6 +286,28 @@ console.log("\n=== Concurrency Limiter ===");
     }
     await Promise.all(tasks);
     assert.strictEqual(results.length, 4);
+  });
+
+  await asyncTest("Media queue rejects work above configured bound", async () => {
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const active = [
+      withMediaSlot(() => gate),
+      withMediaSlot(() => gate),
+    ];
+    await new Promise((resolve) => setImmediate(resolve));
+    const queued = [];
+    for (let i = 0; i < MAX_MEDIA_QUEUE; i++) {
+      queued.push(withMediaSlot(async () => {}));
+    }
+    if (MAX_MEDIA_QUEUE > 0) {
+      await assert.rejects(
+        withMediaSlot(async () => {}),
+        (err) => err && err.message === "media_queue_full"
+      );
+    }
+    release();
+    await Promise.all([...active, ...queued]);
   });
 
   // Summary
