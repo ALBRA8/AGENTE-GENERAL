@@ -475,7 +475,6 @@ function ProviderView() {
   const [timeoutVal, setTimeoutVal] = useState(60);
 
   const load = async () => {
-    setLoading(true);
     try {
       const res = await fetch(`${API_BASE}/api/v1/provider/config`);
       if (res.ok) {
@@ -493,7 +492,7 @@ function ProviderView() {
     setLoading(false);
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { void Promise.resolve().then(load); }, []);
 
   const save = async () => {
     setSaving(true); setMsg(null);
@@ -727,7 +726,7 @@ function WhatsAppView() {
   };
 
   useEffect(() => {
-    loadStatus().finally(() => setLoading(false));
+    void Promise.resolve().then(loadStatus).finally(() => setLoading(false));
     // Poll status every 5s — only check if connected/disconnected
     // Don't re-fetch QR on every poll (causes flicker)
     pollRef.current = setInterval(() => {
