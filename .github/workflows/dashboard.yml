@@ -36,6 +36,8 @@ jobs:
           node-version: "22"
       - name: Install dependencies
         run: npm install --no-audit --no-fund
+      - name: Daemon syntax check
+        run: node --check src/server/whatsapp-daemon.js
       - name: ESLint
         run: npx eslint src/app src/proxy.ts
       - name: TypeScript
