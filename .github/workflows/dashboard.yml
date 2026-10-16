@@ -38,8 +38,10 @@ jobs:
         run: npm install --no-audit --no-fund
       - name: Daemon syntax check
         run: node --check src/server/whatsapp-daemon.js
+      - name: WhatsApp daemon tests
+        run: INTERNAL_API_SECRET="test-secret-that-is-at-least-32-characters-long!!" node tests/whatsapp-daemon.test.js
       - name: ESLint
-        run: npx eslint src/app src/proxy.ts
+        run: npx eslint src/app src/proxy.ts src/server/whatsapp-daemon.js tests/whatsapp-daemon.test.js
       - name: TypeScript
         run: npx tsc --noEmit
       - name: Production build
