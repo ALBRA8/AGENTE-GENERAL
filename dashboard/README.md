@@ -165,3 +165,7 @@ que el daemon cargó desde el mismo `.env.local`.
 - Mantén el daemon en una red privada; no expongas directamente el puerto 3002.
 - El daemon QR/Baileys es una integración no oficial de WhatsApp y requiere
   pruebas de reconexión, duplicados y estabilidad en staging antes de producción.
+
+## Configuración del proveedor de IA
+
+La pantalla de configuración de proveedores está disponible en `/providers`. Usa el token de administración `ALBRA_PROVIDER_SETTINGS_TOKEN` en memoria de la página y guarda las claves de proveedor cifradas en el backend; no publiques ese token ni la clave de proveedor en variables `NEXT_PUBLIC_*`. Antes de usar credenciales reales, configura `ALBRA_PROVIDER_SETTINGS_TOKEN`, `SETTINGS_ENCRYPTION_KEY` y `ALBRA_CORS_ORIGINS` en el backend, y valida la integración en staging.
