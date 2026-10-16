@@ -28,15 +28,35 @@ export async function GET() {
 }
 
 export async function PUT(request: Request) {
+  const declaredLength = Number(request.headers.get("content-length") || 0);
+  if (declaredLength > 16 * 1024) {
+    return NextResponse.json({ error: "Request body too large" }, { status: 413 });
+  }
+
   let body;
   try {
-    body = await request.json();
+    const raw = await request.text();
+    if (Buffer.byteLength(raw, "utf8") > 16 * 1024) {
+      return NextResponse.json({ error: "Request body too large" }, { status: 413 });
+    }
+    body = JSON.parse(raw);
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+  }
+  if ((body.name !== undefined && typeof body.name !== "string") ||
+      (body.role !== undefined && typeof body.role !== "string")) {
+    return NextResponse.json({ error: "Name and role must be strings" }, { status: 400 });
+  }
+
   const name = (body.name || "").trim() || DEFAULT_IDENTITY.name;
   const role = (body.role || "").trim() || DEFAULT_IDENTITY.role;
+  if (name.length > 80 || role.length > 500) {
+    return NextResponse.json({ error: "Name or role exceeds the allowed length" }, { status: 400 });
+  }
 
   const identity = { name, role, updated_at: new Date().toISOString() };
 
