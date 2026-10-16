@@ -396,3 +396,57 @@ async def test_runtime_readiness_requires_components(runtime: Runtime) -> None:
     runtime.register("provider_router", MockProvider())
     assert runtime.readiness() is True
     await runtime.shutdown()
+
+
+# =====================================================================
+# SECURITY — CHECK_PERMISSIONS must fail closed before EXECUTE
+# =====================================================================
+
+async def test_agent_loop_blocks_execution_when_permission_phase_is_missing() -> None:
+    """A missing permission gate must not be treated as an optional skipped phase."""
+    loop = AgentLoop(
+        agent=None,  # type: ignore[arg-type]
+        phases=("CHECK_PERMISSIONS", "EXECUTE"),
+    )
+    executed = False
+
+    async def execute_phase(agent, ctx):
+        nonlocal executed
+        executed = True
+        return {"executed": True}
+
+    trace = await loop.run({"EXECUTE": execute_phase}, {"execution_id": "exec-no-gate"})
+
+    assert executed is False
+    assert trace[0].phase == "CHECK_PERMISSIONS"
+    assert trace[0].status == PhaseStatus.BLOCKED
+    assert "permission gate" in (trace[0].error or "")
+
+
+async def test_agent_loop_blocks_execution_when_permission_phase_times_out() -> None:
+    """A permission check timeout must stop the loop before EXECUTE."""
+    loop = AgentLoop(
+        agent=None,  # type: ignore[arg-type]
+        phases=("CHECK_PERMISSIONS", "EXECUTE"),
+        timeout_seconds=0.01,
+    )
+    executed = False
+
+    async def slow_permissions(agent, ctx):
+        await asyncio.sleep(0.05)
+        return {"allowed": True}
+
+    async def execute_phase(agent, ctx):
+        nonlocal executed
+        executed = True
+        return {"executed": True}
+
+    trace = await loop.run(
+        {"CHECK_PERMISSIONS": slow_permissions, "EXECUTE": execute_phase},
+        {"execution_id": "exec-timeout-gate"},
+    )
+
+    assert executed is False
+    assert trace[0].phase == "CHECK_PERMISSIONS"
+    assert trace[0].status == PhaseStatus.TIMEOUT
+    assert len(trace) == 1
