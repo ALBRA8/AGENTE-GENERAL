@@ -72,6 +72,8 @@ El script `scripts/start-wa-daemon.sh` se encarga de:
 | `MAX_RECONNECT_ATTEMPTS` | Reintentos antes de `max_reconnects` | `10` |
 | `NVIDIA_API_KEY` | Clave de NVIDIA para IA y transcripción | Sin default |
 | `NVIDIA_ASR_ENDPOINT` | Override opcional de la URL HTTPS de NVIDIA Riva ASR | Por defecto usa el endpoint NVCF configurado en el daemon |
+| `NVIDIA_ASR_POLL_SECONDS` | Ventana de polling de NVCF en segundos (1–300) | `120` |
+| `NVIDIA_ASR_TIMEOUT_MS` | Timeout total de la petición ASR en milisegundos (1.000–300.000) | `135000` |
 
 ### Notas de voz / transcripción
 
@@ -81,6 +83,9 @@ Para transcribir audios, el daemon necesita `NVIDIA_API_KEY`. El endpoint Riva N
 NVIDIA_API_KEY=tu_clave
 # Opcional: solo si necesitas sobrescribir el endpoint predeterminado
 # NVIDIA_ASR_ENDPOINT=https://tu-endpoint-real/v1/audio/transcriptions
+# Opcionales: ventana de polling NVCF y timeout total
+# NVIDIA_ASR_POLL_SECONDS=120
+# NVIDIA_ASR_TIMEOUT_MS=135000
 ```
 
 El endpoint ASR es independiente de `https://integrate.api.nvidia.com/v1/chat/completions`; no uses el endpoint de chat para notas de voz. El daemon envía multipart con `language=es-US`, `response_format=json` y el audio OGG. No compartas la clave en el chat ni la pegues en logs. Si la clave que compartiste previamente era completa y real, revócala y genera otra en NVIDIA antes de probar.
