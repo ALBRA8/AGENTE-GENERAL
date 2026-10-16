@@ -129,8 +129,13 @@ function ChatView() {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    fetch(`${API_BASE}/api/v1/health`)
-      .then((r) => setConnected(r.ok))
+    // Check if the local chat API is available (it needs NVIDIA_API_KEY)
+    fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: [{ role: "user", content: "ping" }], max_tokens: 1 }),
+    })
+      .then((r) => setConnected(r.ok || r.status === 400))
       .catch(() => setConnected(false));
   }, []);
 
@@ -147,18 +152,30 @@ function ChatView() {
     setSending(true);
     setError(null);
 
+    // Build conversation history for context
+    const history = [...messages.filter(m => !m.pending && !m.error).map(m => ({
+      role: m.role,
+      content: m.content,
+    })), { role: "user", content: userMsg.content }];
+
     try {
-      const res = await fetch(`${API_BASE}/api/v1/execution`, {
+      const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ agent_id: "default", input: userMsg.content, timeout_seconds: 30 }),
+        body: JSON.stringify({
+          messages: history,
+          temperature: 0.5,
+          max_tokens: 1024,
+        }),
       });
+
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
-        throw new Error(d.detail || `HTTP ${res.status}`);
+        throw new Error(d.error || d.detail || `HTTP ${res.status}`);
       }
+
       const data = await res.json();
-      const reply = data.content || data.response || "(sin respuesta)";
+      const reply = data.content || "(sin respuesta)";
       setMessages((p) => p.map((m) => m.id === "pending" ? { ...m, id: Math.random().toString(36).slice(2), content: reply, pending: false } : m));
     } catch (e) {
       const err = e instanceof Error ? e.message : "Error";
@@ -174,7 +191,7 @@ function ChatView() {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
           <span style={{ width: "0.5rem", height: "0.5rem", borderRadius: "9999px", background: connected ? "var(--success)" : "var(--danger)" }} />
-          <span style={{ fontSize: "0.8rem", color: "var(--muted-fg)" }}>{connected ? "Backend conectado" : "Backend no disponible"}</span>
+          <span style={{ fontSize: "0.8rem", color: "var(--muted-fg)" }}>{connected ? "IA conectada (NVIDIA)" : "IA no disponible"}</span>
         </div>
         <button onClick={() => { setMessages([]); setError(null); }} style={smallBtn}>🗑️ Limpiar</button>
       </div>
