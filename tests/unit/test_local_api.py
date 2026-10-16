@@ -27,7 +27,6 @@ def test_local_api_lifespan_and_health_endpoints() -> None:
     assert runtime.lifecycle.phase == LifecyclePhase.STOPPED
 
 
-
 def test_provider_settings_auth_and_secret_redaction(monkeypatch: pytest.MonkeyPatch) -> None:
     """Local API protects provider settings and never returns the stored API key."""
     with TestClient(app) as client:
