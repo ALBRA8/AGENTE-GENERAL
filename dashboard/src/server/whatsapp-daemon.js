@@ -373,7 +373,7 @@ async function handleMessage(msg) {
 
 // === Reconnection with exponential backoff + jitter ===
 function scheduleReconnect(reason) {
-  if (isShuttingDown) return;
+  if (isShuttingDown || reconnectTimer) return;
   if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
     log(`Max reconnection attempts (${MAX_RECONNECT_ATTEMPTS}) reached. Manual intervention required.`);
     connectionState = "max_reconnects_exhausted";
