@@ -33,6 +33,8 @@ const {
   withMediaSlot,
   collectMediaStreamBounded,
   transcribeAudio,
+  checkAuth,
+  normalizeRecipient,
   MAX_MEDIA_BYTES,
   MAX_CONCURRENT_MEDIA,
   DEDUP_TTL_MS,
@@ -96,6 +98,34 @@ async function asyncTest(name, fn) {
     failed++;
   }
 }
+
+console.log("\n=== Security and Execution Permissions ===");
+
+test("Daemon authentication accepts the exact bearer token", () => {
+  assert.strictEqual(checkAuth({ headers: { authorization: `Bearer ${process.env.INTERNAL_API_SECRET}` } }), true);
+});
+
+test("Daemon authentication rejects a wrong bearer token", () => {
+  assert.strictEqual(checkAuth({ headers: { authorization: "Bearer wrong-token" } }), false);
+});
+
+test("Daemon authentication rejects a missing bearer token", () => {
+  assert.strictEqual(checkAuth({ headers: {} }), false);
+});
+
+test("Recipient normalizer accepts an individual phone number", () => {
+  assert.strictEqual(normalizeRecipient("+573001234567"), "573001234567@s.whatsapp.net");
+});
+
+test("Recipient normalizer accepts a direct WhatsApp phone JID", () => {
+  assert.strictEqual(normalizeRecipient("573001234567@s.whatsapp.net"), "573001234567@s.whatsapp.net");
+});
+
+test("Recipient normalizer rejects group JIDs and malformed targets", () => {
+  assert.strictEqual(normalizeRecipient("123456789-123456@g.us"), null);
+  assert.strictEqual(normalizeRecipient("javascript:alert(1)"), null);
+  assert.strictEqual(normalizeRecipient("123"), null);
+});
 
 console.log("\n=== Image Signature Validation ===");
 
