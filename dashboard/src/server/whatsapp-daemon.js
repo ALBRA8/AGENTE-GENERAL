@@ -254,7 +254,8 @@ async function callIA(userText, imageBase64) {
 // NVCF deployment ID: require the operator to configure the verified endpoint.
 async function transcribeAudio(audioBuffer) {
   const apiKey = process.env.NVIDIA_API_KEY;
-  const endpoint = process.env.NVIDIA_ASR_ENDPOINT;
+  // Default to the configured NVIDIA Riva NVCF deployment; allow environment override.
+  const endpoint = process.env.NVIDIA_ASR_ENDPOINT || "https://a9eeee8f-b509-4712-b19d-194361fa5f31.invocation.api.nvcf.nvidia.com/v1/audio/transcriptions";
   const fail = (code, message) => {
     const error = new Error(message);
     error.code = code;
@@ -262,7 +263,6 @@ async function transcribeAudio(audioBuffer) {
   };
 
   if (!apiKey) fail("ASR_NOT_CONFIGURED", "ASR credentials are not configured");
-  if (!endpoint) fail("ASR_NOT_CONFIGURED", "ASR endpoint is not configured");
   let endpointUrl;
   try {
     endpointUrl = new URL(endpoint);
