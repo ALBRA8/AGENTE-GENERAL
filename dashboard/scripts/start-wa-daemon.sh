@@ -166,19 +166,27 @@ cmd_stop() {
 }
 
 cmd_status() {
+  if [[ ! -f "$ENV_FILE" ]]; then
+    echo "STOPPED"
+    exit 1
+  fi
+  load_env_safely
+  PORT="${WHATSAPP_DAEMON_PORT:-3002}"
+  PROBE_HOST="${WHATSAPP_DAEMON_HOST:-127.0.0.1}"
+  if [[ "$PROBE_HOST" == "0.0.0.0" ]]; then PROBE_HOST="127.0.0.1"; fi
+
   if is_running && probe_health; then
     local secret
     secret="$(grep -E '^INTERNAL_API_SECRET=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2-)"
     echo "RUNNING pid=$(cat "$PID_FILE") port=$PORT"
     curl -fsS -H "Authorization: Bearer ${secret}" \
-      "http://localhost:${PORT}/status" || true
+      "http://${PROBE_HOST}:${PORT}/status" || true
     echo
   else
     echo "STOPPED"
     exit 1
   fi
 }
-
 case "${1:-start}" in
   start)       cmd_start ;;
   --foreground) cmd_foreground ;;
