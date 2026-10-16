@@ -67,6 +67,19 @@ Como alternativa manual, el entorno virtual puede usarse sin activar el entorno:
 
 La integración de dashboard de la Fase 2 tuvo una ejecución CI verde en [run #38837703661](https://github.com/ALBRA8/AGENTE-GENERAL/actions/runs/38837703661), SHA `5586a6747d939a91d529bbd23fffc2e7219375b5`. La base de despliegue de la Fase 3 tuvo CI verde en [run #38839316403](https://github.com/ALBRA8/AGENTE-GENERAL/actions/runs/38839316403), SHA `c52e60815576ed433d50b44069aa0b2aad1e446f`. Estas ejecuciones demuestran los jobs ejecutados en CI, no que el procedimiento ya haya sido probado en el PC ni que exista un despliegue de producción.
 
+## Prueba de integración dashboard ↔ API local
+
+El dashboard existente está en `dashboard/` y usa las rutas de configuración `/api/v1/provider/*`. No se debe crear un segundo backend para conectarlo. El backend y Next.js se arrancan en terminales separadas; en Windows, desde la raíz del repositorio:
+
+1. Configura `ALBRA_CORS_ORIGINS=http://localhost:3000` y `ALBRA_PROVIDER_SETTINGS_TOKEN` en la terminal que ejecutará la API. El token debe ser aleatorio y tener al menos 32 caracteres. No lo guardes en el repositorio ni en variables `NEXT_PUBLIC_*`.
+2. Ejecuta `scripts/start_local_api.ps1`, que mantiene el backend en `127.0.0.1`.
+3. En otra terminal: `cd dashboard`, configura `NEXT_PUBLIC_API_BASE=http://127.0.0.1:8000` y ejecuta `npm install` y `npm run dev`.
+4. Abre `http://localhost:3000`, ingresa el token de administración en el panel y comprueba la carga de configuración. No guardes una API key real durante la primera prueba.
+5. Verifica en las herramientas de red del navegador que las peticiones vayan a `127.0.0.1:8000`, que las solicitudes incluyan `Authorization: Bearer`, y que no haya secretos en almacenamiento local ni en URL.
+6. Comprueba que las rutas de proveedor sin token respondan HTTP 503 si el token del servidor no está configurado y HTTP 401 con token ausente/incorrecto cuando sí está configurado. Confirma también que el preflight CORS solo permite el origen local exacto.
+
+La guía detallada y los comandos del dashboard están en [`dashboard/README.md`](../dashboard/README.md). Las pruebas de Playwright actuales simulan respuestas del backend; no sustituyen esta comprobación contra el proceso API real. Hasta ejecutar el procedimiento en la máquina objetivo, la integración en vivo continúa **PENDIENTE**.
+
 ## Seguridad y siguiente paso
 
 El preflight no muestra valores de secretos. No se necesita una clave de proveedor para probar el runtime básico. La configuración del panel de proveedores exige los controles descritos en `docs/WEB_DASHBOARD_SECURITY.md` antes de guardar credenciales. No publiques el servicio ni abras puertos de router/firewall como parte de esta prueba local.
