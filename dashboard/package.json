@@ -6,8 +6,9 @@
     "dev": "next dev -p 3000",
     "build": "next build",
     "start": "next start -p 3000",
-    "lint": "next lint",
-    "wa-daemon": "node src/server/whatsapp-daemon.js"
+    "lint": "eslint src/app src/proxy.ts",
+    "wa-daemon": "node src/server/whatsapp-daemon.js",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^6.7.0",
