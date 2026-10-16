@@ -284,6 +284,13 @@ async function transcribeAudio(audioBuffer) {
     fail("ASR_INVALID_AUDIO", "Audio is not a valid Ogg container");
   }
 
+  // NVCF may queue requests before a worker is available. Its documented
+  // HTTP invocation API supports NVCF-POLL-SECONDS (up to 300 seconds).
+  // Keep the client timeout longer than the poll window, and allow operators
+  // to tune both without changing code.
+  const pollSeconds = Math.min(300, Math.max(1, Number.parseInt(process.env.NVIDIA_ASR_POLL_SECONDS || "120", 10) || 120));
+  const timeoutMs = Math.min(300000, Math.max(1000, Number.parseInt(process.env.NVIDIA_ASR_TIMEOUT_MS || "135000", 10) || 135000));
+
   const form = new FormData();
   form.append("language", "es-US");
   form.append("response_format", "json");
@@ -293,9 +300,12 @@ async function transcribeAudio(audioBuffer) {
   try {
     response = await fetch(endpointUrl, {
       method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}` },
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "NVCF-POLL-SECONDS": String(pollSeconds),
+      },
       body: form,
-      signal: AbortSignal.timeout(45000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (error) {
     const timeout = error?.name === "TimeoutError" || error?.name === "AbortError";
