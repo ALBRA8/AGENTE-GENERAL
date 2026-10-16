@@ -25,6 +25,8 @@ LOG_DIR="$DASH_DIR/logs"
 LOG_FILE="$LOG_DIR/wa-daemon.log"
 PID_FILE="$DASH_DIR/.wa-daemon.pid"
 PORT="${WHATSAPP_DAEMON_PORT:-3002}"
+PROBE_HOST="${WHATSAPP_DAEMON_HOST:-127.0.0.1}"
+[[ "$PROBE_HOST" == "0.0.0.0" ]] && PROBE_HOST="127.0.0.1"
 
 # Read only known KEY=value entries; never execute .env.local as shell code.
 load_env_safely() {
@@ -87,7 +89,7 @@ probe_health() {
   local secret
   secret="$(grep -E '^INTERNAL_API_SECRET=' "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2-)"
   curl -fsS -m 2 -H "Authorization: Bearer ${secret}" \
-    "http://localhost:${PORT}/status" >/dev/null 2>&1
+    "http://${PROBE_HOST}:${PORT}/status" >/dev/null 2>&1
 }
 
 cmd_start() {
@@ -104,6 +106,8 @@ cmd_start() {
   # Cargar únicamente variables permitidas; no ejecutar contenido del archivo
   load_env_safely
   PORT="${WHATSAPP_DAEMON_PORT:-3002}"
+  PROBE_HOST="${WHATSAPP_DAEMON_HOST:-127.0.0.1}"
+  [[ "$PROBE_HOST" == "0.0.0.0" ]] && PROBE_HOST="127.0.0.1"
 
   nohup node "$DASH_DIR/src/server/whatsapp-daemon.js" > "$LOG_FILE" 2>&1 &
   local pid=$!
