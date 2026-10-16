@@ -31,6 +31,7 @@ const {
   sanitizeJid,
   withMediaSlot,
   collectMediaStreamBounded,
+  transcribeAudio,
   MAX_MEDIA_BYTES,
   MAX_CONCURRENT_MEDIA,
   DEDUP_TTL_MS,
@@ -328,8 +329,49 @@ console.log("\n=== Concurrency Limiter ===");
     await Promise.all([...active, ...queued]);
   });
 
+  console.log("\\n=== Audio Transcription ===");
+
+  await asyncTest("Transcription sends WhatsApp OGG to configured NVIDIA ASR API", async () => {
+    const originalFetch = global.fetch;
+    process.env.NVIDIA_API_KEY = "test-nvidia-key";
+    let capturedUrl;
+    let capturedOptions;
+    global.fetch = async (url, options) => {
+      capturedUrl = url;
+      capturedOptions = options;
+      return new Response(JSON.stringify({ text: "  Hola, esta es una prueba.  " }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
+    try {
+      const transcript = await transcribeAudio(Buffer.from("fake-ogg-audio"));
+      assert.strictEqual(transcript, "Hola, esta es una prueba.");
+      assert.ok(String(capturedUrl).includes("/v1/audio/transcriptions"));
+      assert.strictEqual(capturedOptions.headers.Authorization, "Bearer test-nvidia-key");
+      assert.strictEqual(capturedOptions.body.get("language"), "es-US");
+      assert.strictEqual(capturedOptions.body.get("response_format"), "json");
+      assert.strictEqual(capturedOptions.body.get("file").name, "whatsapp-voice-note.ogg");
+    } finally {
+      global.fetch = originalFetch;
+      delete process.env.NVIDIA_API_KEY;
+    }
+  });
+
+  await asyncTest("Transcription reports an empty result on provider HTTP errors", async () => {
+    const originalFetch = global.fetch;
+    process.env.NVIDIA_API_KEY = "test-nvidia-key";
+    global.fetch = async () => new Response("provider error", { status: 503 });
+    try {
+      assert.strictEqual(await transcribeAudio(Buffer.from("fake-ogg-audio")), "");
+    } finally {
+      global.fetch = originalFetch;
+      delete process.env.NVIDIA_API_KEY;
+    }
+  });
+
   // Summary
-  console.log(`\n=== Results: ${passed} passed, ${failed} failed ===`);
+  console.log(`\\n=== Results: ${passed} passed, ${failed} failed ===`);
   if (failed > 0) {
     process.exit(1);
   } else {
