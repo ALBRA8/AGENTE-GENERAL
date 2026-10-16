@@ -331,13 +331,26 @@ console.log("\n=== Concurrency Limiter ===");
 
   console.log("\\n=== Audio Transcription ===");
 
-  await asyncTest("Transcription sends WhatsApp OGG to configured NVIDIA ASR API", async () => {
-    const originalFetch = global.fetch;
+  const makeOgg = () => Buffer.concat([Buffer.from("OggS"), Buffer.from("synthetic test payload")]);
+  const withAsrEnv = (fn) => {
+    const previousKey = process.env.NVIDIA_API_KEY;
+    const previousEndpoint = process.env.NVIDIA_ASR_ENDPOINT;
     process.env.NVIDIA_API_KEY = "test-nvidia-key";
+    process.env.NVIDIA_ASR_ENDPOINT = "https://asr.example.test/v1/audio/transcriptions";
+    return Promise.resolve().then(fn).finally(() => {
+      if (previousKey === undefined) delete process.env.NVIDIA_API_KEY;
+      else process.env.NVIDIA_API_KEY = previousKey;
+      if (previousEndpoint === undefined) delete process.env.NVIDIA_ASR_ENDPOINT;
+      else process.env.NVIDIA_ASR_ENDPOINT = previousEndpoint;
+    });
+  };
+
+  await asyncTest("Valid OGG audio is sent as multipart and transcript is returned", async () => {
+    const originalFetch = global.fetch;
     let capturedUrl;
     let capturedOptions;
     global.fetch = async (url, options) => {
-      capturedUrl = url;
+      capturedUrl = String(url);
       capturedOptions = options;
       return new Response(JSON.stringify({ text: "  Hola, esta es una prueba.  " }), {
         status: 200,
@@ -345,29 +358,99 @@ console.log("\n=== Concurrency Limiter ===");
       });
     };
     try {
-      const transcript = await transcribeAudio(Buffer.from("fake-ogg-audio"));
-      assert.strictEqual(transcript, "Hola, esta es una prueba.");
-      assert.ok(String(capturedUrl).includes("/v1/audio/transcriptions"));
-      assert.strictEqual(capturedOptions.headers.Authorization, "Bearer test-nvidia-key");
-      assert.strictEqual(capturedOptions.body.get("language"), "es-US");
-      assert.strictEqual(capturedOptions.body.get("response_format"), "json");
-      assert.strictEqual(capturedOptions.body.get("file").name, "whatsapp-voice-note.ogg");
+      await withAsrEnv(async () => {
+        const transcript = await transcribeAudio(makeOgg());
+        assert.strictEqual(transcript, "Hola, esta es una prueba.");
+        assert.strictEqual(capturedUrl, process.env.NVIDIA_ASR_ENDPOINT);
+        assert.strictEqual(capturedOptions.headers.Authorization, "Bearer test-nvidia-key");
+        assert.strictEqual(capturedOptions.body.get("language"), "es-US");
+        assert.strictEqual(capturedOptions.body.get("response_format"), "json");
+        assert.strictEqual(capturedOptions.body.get("file").name, "whatsapp-voice-note.ogg");
+      });
     } finally {
       global.fetch = originalFetch;
-      delete process.env.NVIDIA_API_KEY;
     }
   });
 
-  await asyncTest("Transcription reports an empty result on provider HTTP errors", async () => {
+  await asyncTest("Provider HTTP errors are surfaced as typed failures", async () => {
     const originalFetch = global.fetch;
-    process.env.NVIDIA_API_KEY = "test-nvidia-key";
     global.fetch = async () => new Response("provider error", { status: 503 });
     try {
-      assert.strictEqual(await transcribeAudio(Buffer.from("fake-ogg-audio")), "");
+      await withAsrEnv(() => assert.rejects(
+        transcribeAudio(makeOgg()),
+        (err) => err && err.code === "ASR_HTTP_ERROR"
+      ));
     } finally {
       global.fetch = originalFetch;
-      delete process.env.NVIDIA_API_KEY;
     }
+  });
+
+  await asyncTest("ASR timeout is surfaced without logging audio or credentials", async () => {
+    const originalFetch = global.fetch;
+    global.fetch = async () => {
+      const error = new Error("timed out");
+      error.name = "TimeoutError";
+      throw error;
+    };
+    try {
+      await withAsrEnv(() => assert.rejects(
+        transcribeAudio(makeOgg()),
+        (err) => err && err.code === "ASR_TIMEOUT"
+      ));
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  await asyncTest("Invalid provider JSON is rejected", async () => {
+    const originalFetch = global.fetch;
+    global.fetch = async () => new Response("not json", { status: 200 });
+    try {
+      await withAsrEnv(() => assert.rejects(
+        transcribeAudio(makeOgg()),
+        (err) => err && err.code === "ASR_INVALID_RESPONSE"
+      ));
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  await asyncTest("Provider response without transcript is rejected", async () => {
+    const originalFetch = global.fetch;
+    global.fetch = async () => new Response(JSON.stringify({}), { status: 200 });
+    try {
+      await withAsrEnv(() => assert.rejects(
+        transcribeAudio(makeOgg()),
+        (err) => err && err.code === "ASR_EMPTY_TRANSCRIPT"
+      ));
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  await asyncTest("Empty and non-Ogg audio are rejected before network access", async () => {
+    const originalFetch = global.fetch;
+    global.fetch = async () => { throw new Error("fetch must not be called"); };
+    try {
+      await withAsrEnv(async () => {
+        await assert.rejects(transcribeAudio(Buffer.alloc(0)), (err) => err.code === "ASR_INVALID_AUDIO");
+        await assert.rejects(transcribeAudio(Buffer.from("not audio")), (err) => err.code === "ASR_INVALID_AUDIO");
+      });
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  await asyncTest("Audio stream/download errors propagate to caller", async () => {
+    const brokenStream = new Readable({
+      read() {
+        this.destroy(new Error("synthetic download failure"));
+      },
+    });
+    await assert.rejects(
+      collectMediaStreamBounded(brokenStream, 1024),
+      /synthetic download failure/
+    );
   });
 
   // Summary
