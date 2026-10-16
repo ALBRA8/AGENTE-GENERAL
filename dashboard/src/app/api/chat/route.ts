@@ -157,11 +157,9 @@ export async function POST(request: Request) {
     });
 
     if (!res.ok) {
-      const text = await res.text().catch(() => "unknown error");
-      const safe = text.replace(/nvapi-[A-Za-z0-9_\-.]{8,}/g, "nvapi-[REDACTED]");
       return NextResponse.json(
-        { error: `NVIDIA API error: HTTP ${res.status}`, detail: safe.slice(0, 200) },
-        { status: res.status }
+        { error: `NVIDIA API error: HTTP ${res.status}` },
+        { status: res.status >= 400 && res.status < 600 ? res.status : 502 }
       );
     }
 
