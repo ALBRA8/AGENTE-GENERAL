@@ -198,6 +198,7 @@ def create_app(
     # PUBLIC routes — /api/v1/*
     from albra_seed.api.routes import (
         build_public_agent_router,
+        build_public_audio_router,
         build_public_execution_router,
         build_public_health_router,
         build_public_readiness_router,

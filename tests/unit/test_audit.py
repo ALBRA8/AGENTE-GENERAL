@@ -92,6 +92,7 @@ def test_audit_log_sqlite_store_filters():
         log.record(action="a3", correlation_id="c1")
         assert len(log.filter_by_correlation_id("c1")) == 2
         assert len(log.filter_by_correlation_id("c2")) == 1
+        store.close()
 
 
 # =====================================================================

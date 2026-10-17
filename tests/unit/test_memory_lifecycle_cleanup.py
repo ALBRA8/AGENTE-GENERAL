@@ -542,13 +542,16 @@ async def test_cleanup_writes_tombstone_not_physical_delete() -> None:
         assert recs == []
 
         # Tombstones exist in the SQLite memory_tombstones table.
-        with sqlite3.connect(path) as conn:
+        conn = sqlite3.connect(path)
+        try:
             cur = conn.execute(
                 "SELECT record_id, reason FROM memory_tombstones "
                 "WHERE record_id IN (?, ?) ORDER BY record_id",
                 (rid_a, rid_b),
             )
             rows = cur.fetchall()
+        finally:
+            conn.close()
         assert len(rows) == 2
         tombstoned_ids = {row[0] for row in rows}
         assert rid_a in tombstoned_ids

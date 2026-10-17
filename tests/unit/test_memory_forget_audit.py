@@ -204,12 +204,15 @@ def test_forget_sqlite_persists_tombstone():
         fetched = _run(store2.read(rid))
         assert fetched is None  # record is gone
         # Tombstone table must carry by + reason
-        with sqlite3.connect(path) as conn:
+        conn = sqlite3.connect(path)
+        try:
             cur = conn.execute(
                 "SELECT by, reason FROM memory_tombstones WHERE record_id = ?",
                 (rid,),
             )
             row = cur.fetchone()
+        finally:
+            conn.close()
         assert row is not None
         assert row[0] == "compliance"
         assert row[1] == "gdpr-erasure"
