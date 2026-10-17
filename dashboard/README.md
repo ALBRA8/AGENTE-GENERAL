@@ -80,7 +80,7 @@ No se configura un proveedor alternativo implícito: el endpoint ASR debe valida
 
 ### Notas de voz / transcripción
 
-Para transcribir audios, el daemon necesita `NVIDIA_API_KEY` y `NVIDIA_ASR_ENDPOINT`. No hay un endpoint predeterminado porque el deployment NVCF probado anteriormente devolvió errores de proveedor; configura aquí únicamente una URL HTTPS que hayas verificado con una prueba real de audio:
+Para transcribir audios, tanto el daemon de WhatsApp como el endpoint de audio de `/api/chat` necesitan `NVIDIA_API_KEY` y `NVIDIA_ASR_ENDPOINT`. Ambos usan la API HTTP de NVIDIA; no dependen del ejecutable local `z-ai`. No hay un endpoint predeterminado porque el deployment NVCF probado anteriormente devolvió errores de proveedor; configura aquí únicamente una URL HTTPS que hayas verificado con una prueba real de audio:
 
 ```dotenv
 NVIDIA_API_KEY=tu_clave
