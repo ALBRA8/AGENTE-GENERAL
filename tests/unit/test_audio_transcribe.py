@@ -641,12 +641,19 @@ def _run_render_app_probe(env: dict, action: str, token: str | None = None) -> d
         "    print(json.dumps({'cors_origins': render_app._cors_origins, 'production_env': render_app.PRODUCTION_ENV}))\n"
     )
 
+    import os
+
+    # Resolve the repo root dynamically so the test works in CI (where
+    # the checkout lives in /home/runner/work/...) and locally.
+    # __file__ is tests/unit/test_audio_transcribe.py → repo root is 2 levels up.
+    _repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
     proc = subprocess.run(
         [sys.executable, "-c", script],
         env=env,
         capture_output=True,
         text=True,
-        cwd="/home/z/my-project/agent-general",
+        cwd=_repo_root,
         timeout=30,
     )
     if proc.returncode != 0:
