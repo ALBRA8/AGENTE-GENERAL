@@ -101,46 +101,92 @@ export async function POST(request: Request) {
       },
     ];
   } else if (body.audio) {
-    // Validate and transcribe with the installed z-ai ASR CLI.
-    const fs = await import("fs/promises");
-    const { execFileSync } = await import("child_process");
-    const audioMatch = typeof body.audio === "string" && body.audio.match(/^data:(audio\/(?:webm|ogg|mpeg|wav|mp4|x-wav));base64,([A-Za-z0-9+/]+={0,2})$/);
-    if (audioMatch) {
-      const audioMime = audioMatch[1];
-      const audioBase64 = audioMatch[2];
-      const audioExtension: Record<string, string> = { "audio/webm": "webm", "audio/ogg": "ogg", "audio/mpeg": "mp3", "audio/wav": "wav", "audio/mp4": "m4a", "audio/x-wav": "wav" };
-      const buf = Buffer.from(audioBase64, "base64");
-      if (!buf.length || buf.length > 8 * 1024 * 1024) return NextResponse.json({ error: "Audio too large or empty" }, { status: 413 });
-      const tmpFile = `/tmp/chat-audio-${process.pid}-${Date.now()}.${audioExtension[audioMime] || "audio"}`;
-      try {
-        await fs.writeFile(tmpFile, buf, { flag: "wx", mode: 0o600 });
-        const result = execFileSync("z-ai", ["asr", "-f", tmpFile, "-o", "/dev/stdout"], {
-          timeout: 30000,
-          maxBuffer: 1024 * 1024,
-          stdio: ["ignore", "pipe", "ignore"],
-        }).toString().trim();
-        let transcribed = "";
-        try {
-          const parsed = JSON.parse(result);
-          transcribed = typeof parsed.text === "string" ? parsed.text.slice(0, 12000) : "";
-        } catch {
-          transcribed = result.slice(0, 12000);
-        }
-        if (transcribed) {
-          finalMessages = [
-            { role: "system", content: systemContent },
-            { role: "user", content: `El usuario dijo (transcripción de audio): "${transcribed}". Responde al contenido del audio.` },
-          ];
-        } else {
-          return NextResponse.json({ content: "🎤 No pude transcribir el audio. ¿Puedes escribirlo?" });
-        }
-      } catch {
-        return NextResponse.json({ content: "🎤 No pude procesar el audio. ¿Puedes escribirlo?" });
-      } finally {
-        await fs.unlink(tmpFile).catch(() => {});
-      }
-    } else {
+    // Use the configured NVIDIA ASR HTTP endpoint rather than a local CLI.
+    const audioMatch = typeof body.audio === "string"
+      && body.audio.match(/^data:(audio\\/(?:webm|ogg|mpeg|wav|mp4|x-wav));base64,([A-Za-z0-9+/]+={0,2})$/);
+    if (!audioMatch) {
       return NextResponse.json({ error: "Invalid audio format" }, { status: 400 });
+    }
+
+    const audioMime = audioMatch[1];
+    const audioBytes = Buffer.from(audioMatch[2], "base64");
+    if (!audioBytes.length) {
+      return NextResponse.json({ error: "Audio is empty" }, { status: 400 });
+    }
+    if (audioBytes.length > 8 * 1024 * 1024) {
+      return NextResponse.json({ error: "Audio too large" }, { status: 413 });
+    }
+
+    const asrEndpoint = process.env.NVIDIA_ASR_ENDPOINT;
+    if (!asrEndpoint || !asrEndpoint.trim()) {
+      return NextResponse.json({ error: "Audio transcription is not configured" }, { status: 503 });
+    }
+
+    let asrUrl: URL;
+    try {
+      asrUrl = new URL(asrEndpoint);
+    } catch {
+      return NextResponse.json({ error: "Audio transcription endpoint is invalid" }, { status: 503 });
+    }
+    if (asrUrl.protocol !== "https:") {
+      return NextResponse.json({ error: "Audio transcription endpoint must use HTTPS" }, { status: 503 });
+    }
+
+    const audioExtension: Record<string, string> = {
+      "audio/webm": "webm",
+      "audio/ogg": "ogg",
+      "audio/mpeg": "mp3",
+      "audio/wav": "wav",
+      "audio/mp4": "m4a",
+      "audio/x-wav": "wav",
+    };
+    const form = new FormData();
+    form.append("language", "es-US");
+    form.append("response_format", "json");
+    form.append(
+      "file",
+      new Blob([audioBytes], { type: audioMime }),
+      `chat-audio.${audioExtension[audioMime]}`,
+    );
+
+    try {
+      const pollSeconds = Math.min(300, Math.max(1, Number.parseInt(process.env.NVIDIA_ASR_POLL_SECONDS || "120", 10) || 120));
+      const timeoutMs = Math.min(300000, Math.max(1000, Number.parseInt(process.env.NVIDIA_ASR_TIMEOUT_MS || "135000", 10) || 135000));
+      const asrResponse = await fetch(asrUrl, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "NVCF-POLL-SECONDS": String(pollSeconds),
+        },
+        body: form,
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (!asrResponse.ok) {
+        return NextResponse.json(
+          { error: `Audio transcription provider returned HTTP ${asrResponse.status}` },
+          { status: 502 },
+        );
+      }
+
+      let asrResult: { text?: unknown };
+      try {
+        asrResult = await asrResponse.json();
+      } catch {
+        return NextResponse.json({ error: "Audio transcription provider returned an invalid response" }, { status: 502 });
+      }
+      const transcribed = typeof asrResult?.text === "string" ? asrResult.text.trim().slice(0, 12000) : "";
+      if (!transcribed) {
+        return NextResponse.json({ content: "🎤 No pude transcribir el audio. ¿Puedes escribirlo?" });
+      }
+      finalMessages = [
+        { role: "system", content: systemContent },
+        { role: "user", content: `El usuario dijo (transcripción de audio): "${transcribed}". Responde al contenido del audio.` },
+      ];
+    } catch {
+      return NextResponse.json(
+        { error: "Audio transcription request failed" },
+        { status: 502 },
+      );
     }
   } else {
     // Normal text
