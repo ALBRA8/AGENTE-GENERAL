@@ -103,7 +103,7 @@ export async function POST(request: Request) {
   } else if (body.audio) {
     // Use the configured NVIDIA ASR HTTP endpoint rather than a local CLI.
     const audioMatch = typeof body.audio === "string"
-      && body.audio.match(/^data:(audio\\/(?:webm|ogg|mpeg|wav|mp4|x-wav));base64,([A-Za-z0-9+/]+={0,2})$/);
+      && body.audio.match(/^data:(audio\/(?:webm|ogg|mpeg|wav|mp4|x-wav));base64,([A-Za-z0-9+/]+={0,2})$/);
     if (!audioMatch) {
       return NextResponse.json({ error: "Invalid audio format" }, { status: 400 });
     }
