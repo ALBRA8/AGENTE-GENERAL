@@ -208,6 +208,7 @@ def create_app(
     app.include_router(build_public_readiness_router(ctx), prefix="/api/v1")
     app.include_router(build_public_agent_router(ctx), prefix="/api/v1")
     app.include_router(build_public_execution_router(ctx), prefix="/api/v1")
+    app.include_router(build_public_audio_router(ctx), prefix="/api/v1")
     app.include_router(build_provider_settings_router(ctx), prefix="/api/v1")
 
     # INTERNAL routes — diagnostics implement their own bearer + RBAC checks.

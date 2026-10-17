@@ -32,6 +32,33 @@ except ImportError:
     UploadFile = Any  # type: ignore[misc,assignment]
 
 
+# Bounded upload read: read at most `limit` bytes from the upload stream
+# without ever buffering the entire file in memory. Used by the transcribe
+# endpoint to enforce ASR_MAX_FILE_BYTES before the audio is forwarded to
+# the provider. The function does NOT rely on Content-Length — it reads
+# the stream in small chunks and stops as soon as `limit` is reached.
+_AUDIO_READ_CHUNK = 64 * 1024  # 64 KiB chunks
+
+
+async def _read_bounded(file: Any, limit: int) -> bytes:
+    """Read at most `limit` bytes from an upload stream.
+
+    Returns the bytes read (length 0..limit). If the returned length equals
+    `limit`, the caller knows the upload is at least `limit` bytes long and
+    can decide to reject it as oversized.
+    """
+    buf = bytearray()
+    remaining = int(limit)
+    while remaining > 0:
+        chunk_size = min(_AUDIO_READ_CHUNK, remaining)
+        chunk = await file.read(chunk_size)
+        if not chunk:
+            break
+        buf.extend(chunk)
+        remaining -= len(chunk)
+    return bytes(buf)
+
+
 def build_public_audio_router(ctx: RequestContext) -> Any:
     """Return a FastAPI APIRouter for audio transcription endpoints."""
     from fastapi import APIRouter, File, Form, Header, HTTPException, UploadFile  # lazy
@@ -61,36 +88,79 @@ def build_public_audio_router(ctx: RequestContext) -> Any:
         return principal
 
     async def require_transcribe_permission(principal: Any) -> None:
-        """Require explicit RBAC policy permission for audio transcription."""
-        from albra_seed.core.types import RiskLevel
+        """Require explicit RBAC policy permission for audio transcription.
+
+        Fail-closed policy: if ANY authorization component is missing or
+        raises an unexpected error, access is denied. We never silently
+        allow the request through when the security perimeter is
+        incomplete — doing so would let an unauthenticated or
+        under-privileged caller reach the ASR provider.
+        """
+        from albra_seed.core.types import RiskLevel  # noqa: F401  # re-exported symbol kept for callers
 
         policy = ctx.runtime.get_component("policy_engine")
         if policy is None:
-            return  # No policy engine configured; authenticator check is sufficient
+            # No policy engine registered → security perimeter is incomplete.
+            # Fail closed with 503 (missing essential security dependency)
+            # rather than allowing the request to reach the ASR provider.
+            raise HTTPException(
+                status_code=503,
+                detail="Authorization policy engine is not configured.",
+            )
 
         rule_set = getattr(policy, "rule_set", None)
         permission_registry = getattr(policy, "permission_registry", None)
         if rule_set is None or permission_registry is None:
-            return
+            # Policy engine exists but its rule_set / permission_registry
+            # are not wired → still fail closed. We do NOT trust the
+            # authenticator alone for authorization decisions.
+            raise HTTPException(
+                status_code=503,
+                detail="Authorization rule_set or permission_registry is not configured.",
+            )
 
         roles = list(getattr(principal, "roles", []) or [])
         # Accept either dedicated audio:transcribe or general execution:run
+        # as the explicit permission required for this action. Both must
+        # pass through the policy engine — a missing permission never
+        # short-circuits to allow.
         allowed = False
+        evaluation_error: Exception | None = None
         for action in ("audio:transcribe", "execution:run"):
-            if hasattr(permission_registry, "has_any") and permission_registry.has_any(roles, action):
-                try:
-                    verdict = await policy.evaluate(
-                        action,
-                        actor_roles=roles,
-                        actor_id=principal.identity,
-                    )
-                    if getattr(verdict, "allowed", False):
-                        allowed = True
-                        break
-                except Exception:  # noqa: BLE001
-                    pass
+            if not hasattr(permission_registry, "has_any"):
+                # PermissionRegistry missing the required method → fail closed.
+                raise HTTPException(
+                    status_code=503,
+                    detail="Permission registry does not implement has_any().",
+                )
+            if not permission_registry.has_any(roles, action):
+                continue
+            try:
+                verdict = await policy.evaluate(
+                    action,
+                    actor_roles=roles,
+                    actor_id=principal.identity,
+                )
+                if getattr(verdict, "allowed", False):
+                    allowed = True
+                    break
+            except HTTPException:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                # Record but DO NOT swallow — we will deny below unless
+                # a subsequent action explicitly returns allowed=True.
+                evaluation_error = exc
+                continue
 
         if not allowed:
+            # If we hit an unexpected error AND no action explicitly allowed,
+            # surface 503 (so operators can distinguish a missing/broken
+            # authorization component from a clean 403 denial).
+            if evaluation_error is not None:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Authorization policy evaluation failed.",
+                )
             raise HTTPException(
                 status_code=403,
                 detail="audio:transcribe permission denied",
@@ -119,17 +189,55 @@ def build_public_audio_router(ctx: RequestContext) -> Any:
         principal = await verified_principal(authorization)
         await require_transcribe_permission(principal)
 
-        # 2. Read and validate audio payload
-        try:
-            content = await file.read()
-        except Exception as exc:  # noqa: BLE001
-            raise HTTPException(status_code=400, detail="Failed to read uploaded audio file.") from exc
-
+        # 2. Read and validate audio payload with bounded memory.
+        #
+        # Read at most (max_bytes + 1) bytes from the upload stream so we
+        # can detect over-sized payloads WITHOUT loading the entire file
+        # into memory. `Content-Length` is used only as an early-reject
+        # hint — the canonical check is the bounded read itself because
+        # clients may omit or spoof the header.
         max_bytes_env = os.environ.get("ASR_MAX_FILE_BYTES")
         try:
             max_bytes = int(max_bytes_env) if max_bytes_env else DEFAULT_MAX_AUDIO_BYTES
         except ValueError:
             max_bytes = DEFAULT_MAX_AUDIO_BYTES
+        if max_bytes <= 0:
+            max_bytes = DEFAULT_MAX_AUDIO_BYTES
+
+        # Early reject: if Content-Length is present and already exceeds the
+        # limit, fail before reading the body. This is a defence-in-depth
+        # check; the bounded read below is the authoritative enforcement.
+        try:
+            declared_size = file.size  # Starlette exposes Content-Length here
+        except Exception:  # noqa: BLE001
+            declared_size = None
+        if declared_size is not None and declared_size > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Audio file size ({declared_size} bytes) exceeds the maximum allowed limit of {max_bytes} bytes.",
+            )
+
+        # Bounded read: read up to (max_bytes + 1) bytes. If we read
+        # exactly (max_bytes + 1) bytes the upload is too large and we
+        # reject it before forwarding to the provider.
+        try:
+            content = await _read_bounded(file, max_bytes + 1)
+        except Exception as exc:  # noqa: BLE001
+            try:
+                await file.close()
+            except Exception:  # noqa: BLE001
+                pass
+            raise HTTPException(status_code=400, detail="Failed to read uploaded audio file.") from exc
+
+        if len(content) > max_bytes:
+            try:
+                await file.close()
+            except Exception:  # noqa: BLE001
+                pass
+            raise HTTPException(
+                status_code=413,
+                detail=f"Audio file size exceeds the maximum allowed limit of {max_bytes} bytes.",
+            )
 
         try:
             detected_format, mime_type = validate_audio_bytes(

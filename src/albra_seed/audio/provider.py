@@ -160,23 +160,48 @@ class RestASRProvider(ASRProvider):
         if not isinstance(data, dict) or "text" not in data:
             raise ASRRemoteError("Remote ASR service response missing expected 'text' field.")
 
+        # Strict validation of the 'text' field — must be a non-empty string.
+        raw_text = data["text"]
+        if not isinstance(raw_text, str):
+            # Some providers return lists/objects — normalize defensively.
+            try:
+                raw_text = str(raw_text).strip()
+            except Exception as exc:  # noqa: BLE001
+                raise ASRRemoteError("Remote ASR service returned non-string 'text' field.") from exc
+        raw_text = raw_text.strip()
+        if not raw_text:
+            raise ASRRemoteError("Remote ASR service returned empty 'text' field.")
+
         duration = data.get("duration")
         confidence = None
         if "segments" in data and isinstance(data["segments"], list) and data["segments"]:
             # Approximate average confidence if logprob or no_speech_prob is present
             no_speech = data["segments"][0].get("no_speech_prob")
             if no_speech is not None:
-                confidence = max(0.0, min(1.0, 1.0 - float(no_speech)))
+                try:
+                    confidence = max(0.0, min(1.0, 1.0 - float(no_speech)))
+                except (TypeError, ValueError):
+                    confidence = None
+
+        # Defensive parsing of duration — providers sometimes return strings.
+        parsed_duration: float | None = None
+        if duration is not None:
+            try:
+                parsed_duration = float(duration)
+            except (TypeError, ValueError):
+                parsed_duration = None
 
         return TranscriptionResponse(
-            text=str(data["text"]).strip(),
-            language=data.get("language", language),
-            duration=float(duration) if duration is not None else None,
+            text=raw_text,
+            language=str(data.get("language", language) or language),
+            duration=parsed_duration,
             latency_ms=round(latency_ms, 2),
             format=content_type.split("/")[-1] if "/" in content_type else content_type,
             provider="rest",
             model=self._model,
             confidence=confidence,
+            # Only the host is exposed in metadata — never the full URL
+            # (which could leak query-string credentials) or the API key.
             metadata={"endpoint": self._endpoint_url.split("//")[-1].split("/")[0]},
         )
 
