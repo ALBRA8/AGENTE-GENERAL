@@ -1,0 +1,51 @@
+# render.yaml — configuración oficial para Render
+# https://render.com/docs/blueprint-spec
+#
+# Render detecta este archivo en la raíz del repo y crea/actualiza
+# automáticamente los servicios definidos. Para que un push a `main`
+# deploye automáticamente sin intervención manual, asegúrate de que
+# el servicio "agente-general" exista en Render dashboard y tenga
+# "Auto-Deploy: Yes" activado.
+#
+# El buildCommand instala el paquete con la extra `api` que trae:
+#   - fastapi
+#   - uvicorn
+#   - python-multipart (para /audio/transcribe)
+#   - httpx (para RestASRProvider)
+#   - cryptography (para settings_store con Fernet)
+#
+# El startCommand arranca uvicorn con el lifespan que inicializa el
+# runtime completo (firewall, policy_engine, approval_engine, etc.).
+# Sin `render_app:app` el lifespan no se ejecuta y readiness da
+# `uninitialized` (bug previo al commit 7a71f01).
+
+services:
+  - type: web
+    name: agente-general
+    runtime: python
+    plan: free
+    region: oregon
+    branch: main
+    rootDir: .
+    buildCommand: pip install --upgrade pip && pip install -e ".[api]"
+    startCommand: uvicorn render_app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/v1/health
+    autoDeploy: true
+    envVars:
+      # APP_ENV=production activa fail-closed en DevAuthenticator y CORS seguro.
+      # Sin esto, Render aceptaría el dev token "albra-dev-token" en producción.
+      - key: APP_ENV
+        value: production
+      # ALBRA_CORS_ORIGINS debe listarse explícitamente en producción.
+      # Render se niega a arrancar si esto falta (RuntimeError al hacer import).
+      - key: ALBRA_CORS_ORIGINS
+        value: https://agente-general.onrender.com
+      # DATA_DIR apunta al volumen persistente de Render (si existe).
+      # Si no, cae a ~/.local/share/albra — no persistente pero funcional.
+      - key: DATA_DIR
+        value: /var/data
+      # NVIDIA_API_KEY debe configurarse manualmente en Render dashboard
+      # (Environment tab) porque es un secreto y no debe versionarse.
+      # Sin esto, /api/v1/agent/info da providers:[] y el chat no funciona.
+      - key: NVIDIA_API_KEY
+        sync: false  # marca como secreto — Render pedirá valor al crear
