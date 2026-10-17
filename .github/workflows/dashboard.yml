@@ -1,0 +1,48 @@
+name: Dashboard Build
+
+on:
+  pull_request:
+    paths:
+      - "dashboard/**"
+      - ".github/workflows/dashboard.yml"
+  push:
+    branches:
+      - main
+      - "feat/**"
+      - "fix/**"
+    paths:
+      - "dashboard/**"
+      - ".github/workflows/dashboard.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dashboard-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dashboard-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Daemon syntax check
+        run: node --check src/server/whatsapp-daemon.js
+      - name: WhatsApp daemon tests
+        run: INTERNAL_API_SECRET="test-secret-that-is-at-least-32-characters-long!!" node tests/whatsapp-daemon.test.js
+      - name: ESLint
+        run: npx eslint src/app src/proxy.ts src/server/whatsapp-daemon.js tests/whatsapp-daemon.test.js
+      - name: TypeScript
+        run: npx tsc --noEmit
+      - name: Production build
+        run: npm run build

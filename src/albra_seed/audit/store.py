@@ -241,6 +241,12 @@ class SQLiteAuditStore(AuditStore):
             metadata=json.loads(metadata) if metadata else {},
         )
 
+    def close(self) -> None:
+        with self._lock:
+            if hasattr(self, "_conn") and self._conn is not None:
+                self._conn.close()
+                self._conn = None
+
 
 __all__ = [
     "AuditStore",

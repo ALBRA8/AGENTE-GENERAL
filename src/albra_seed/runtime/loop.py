@@ -159,24 +159,46 @@ class AgentLoop:
         phase_fns: dict[str, PhaseFn],
         ctx: dict[str, Any],
     ) -> list[PhaseEvent]:
-        """Run all phases in order. Stops early on FAILURE or BLOCKED."""
+        """Run phases in order, failing closed if execution lacks a permission gate."""
+        if "EXECUTE" in self.phases and "CHECK_PERMISSIONS" not in self.phases:
+            event = PhaseEvent(
+                phase="CHECK_PERMISSIONS",
+                status=PhaseStatus.BLOCKED,
+                execution_id=ctx.get("execution_id", ""),
+                error="execution phase requires CHECK_PERMISSIONS; execution blocked",
+            )
+            event.finished_at = utc_now()
+            self.trace.append(event)
+            self._emit(event)
+            return self.trace
+
         for name in self.phases:
             fn = phase_fns.get(name)
             if fn is None:
+                permission_gate_missing = name == "CHECK_PERMISSIONS" and "EXECUTE" in self.phases
                 event = PhaseEvent(
                     phase=name,
-                    status=PhaseStatus.SKIPPED,
+                    status=PhaseStatus.BLOCKED if permission_gate_missing else PhaseStatus.SKIPPED,
                     execution_id=ctx.get("execution_id", ""),
-                    error="no implementation registered",
+                    error=(
+                        "permission gate implementation missing; execution blocked"
+                        if permission_gate_missing
+                        else "no implementation registered"
+                    ),
                 )
                 event.finished_at = utc_now()
                 self.trace.append(event)
                 self._emit(event)
+                if event.status == PhaseStatus.BLOCKED:
+                    break
                 continue
             event = await self.execute_phase(name, fn, ctx)
-            if event.status in {PhaseStatus.FAILURE, PhaseStatus.BLOCKED}:
-                # Stop the loop on hard failures. Timeouts are recoverable
-                # if a downstream phase explicitly handles them.
+            if (
+                event.status in {PhaseStatus.FAILURE, PhaseStatus.BLOCKED}
+                or (name == "CHECK_PERMISSIONS" and "EXECUTE" in self.phases and event.status != PhaseStatus.SUCCESS)
+            ):
+                # A failed, missing, blocked, or timed-out permission gate must
+                # never fall through to tool execution.
                 break
         return self.trace
 

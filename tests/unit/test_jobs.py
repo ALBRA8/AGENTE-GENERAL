@@ -143,6 +143,10 @@ def test_job_history_persists():
         assert records[0].id == job.id
         assert records[0].status == JobStatus.SUCCEEDED
         assert records[0].result == {"echoed": "persist-me"}
+        queue.close()
+        history.close()
+        queue2.close()
+        history2.close()
 
 
 # -------------------------------------------------------------------
@@ -176,6 +180,7 @@ def test_sqlite_queue_round_trip():
         assert got is not None
         assert got.status == JobStatus.SUCCEEDED
         assert got.result == {"done": True}
+        q.close()
 
 
 # -------------------------------------------------------------------

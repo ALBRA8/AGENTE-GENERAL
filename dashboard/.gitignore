@@ -1,0 +1,15 @@
+node_modules/
+.next/
+out/
+.env
+.env.local
+*.log
+dev.log
+.DS_Store
+next-env.d.ts
+.agent-identity.json
+tsconfig.tsbuildinfo
+
+# Daemon operativo (no commitear pid ni logs)
+.wa-daemon.pid
+logs/

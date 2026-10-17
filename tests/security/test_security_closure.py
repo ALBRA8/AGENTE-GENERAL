@@ -411,38 +411,32 @@ class TestNoSecurityBypass:
 
     def test_no_insecure_flag_in_source(self):
         """Source code must not contain insecure=True / bypass_security=True / skip_auth=True flags."""
-        import subprocess
-        import sys
-        result = subprocess.run(
-            [
-                sys.executable, "-c",
-                "import subprocess, sys; "
-                "result = subprocess.run(['grep', '-rn', '-E', "
-                "'(insecure|bypass_security|skip_auth|allow_on_error)\\s*=\\s*True', "
-                "'src/albra_seed/'], capture_output=True, text=True); "
-                "print(result.stdout); sys.exit(0 if not result.stdout.strip() else 1)"
-            ],
-            capture_output=True, text=True
-        )
-        # Should find ZERO matches
-        assert result.returncode == 0, f"Bypass flags found:\n{result.stdout}"
+        import re
+        from pathlib import Path
+
+        pattern = re.compile(r"(insecure|bypass_security|skip_auth|allow_on_error)\s*=\s*True")
+        matches = []
+        src_dir = Path("src/albra_seed")
+        for path in src_dir.rglob("*.py"):
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            for lineno, line in enumerate(text.splitlines(), start=1):
+                if pattern.search(line):
+                    matches.append(f"{path}:{lineno}: {line}")
+        assert not matches, f"Bypass flags found:\n" + "\n".join(matches)
 
     def test_no_except_allow_pattern_in_agent(self):
         """Agent loop must not have 'except Exception: allow' style fallbacks."""
-        import subprocess
-        import sys
-        result = subprocess.run(
-            [
-                sys.executable, "-c",
-                "import subprocess, sys; "
-                "result = subprocess.run(['grep', '-n', '-E', "
-                "'except.*:.*decision\\s*=\\s*.allow', "
-                "'src/albra_seed/runtime/agent.py'], capture_output=True, text=True); "
-                "print(result.stdout); sys.exit(0 if not result.stdout.strip() else 1)"
-            ],
-            capture_output=True, text=True
-        )
-        assert result.returncode == 0, f"Found 'except: allow' pattern:\n{result.stdout}"
+        import re
+        from pathlib import Path
+
+        pattern = re.compile(r"except.*:.*decision\s*=\s*['\"]?allow")
+        matches = []
+        path = Path("src/albra_seed/runtime/agent.py")
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            if pattern.search(line):
+                matches.append(f"{path}:{lineno}: {line}")
+        assert not matches, f"Found 'except: allow' pattern:\n" + "\n".join(matches)
 
 
 # =====================================================================

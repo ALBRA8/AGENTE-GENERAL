@@ -1,0 +1,36 @@
+{
+  "name": "agente-general-dashboard",
+  "version": "0.2.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3000",
+    "build": "next build",
+    "start": "next start -p 3000",
+    "lint": "eslint src/app src/proxy.ts",
+    "wa-daemon": "node src/server/whatsapp-daemon.js",
+    "wa-daemon:start": "bash scripts/start-wa-daemon.sh start",
+    "wa-daemon:stop": "bash scripts/start-wa-daemon.sh --stop",
+    "wa-daemon:status": "bash scripts/start-wa-daemon.sh --status",
+    "typecheck": "tsc --noEmit",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.0",
+    "next": "^16.0.0",
+    "pino": "^9.0.0",
+    "qrcode": "^1.5.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.1",
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^22",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "^16.0.0",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5"
+  }
+}

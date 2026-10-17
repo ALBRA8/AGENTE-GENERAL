@@ -196,9 +196,8 @@ def test_openai_provider_raises_if_not_configured() -> None:
 
 
 def test_ollama_provider_raises_if_not_configured() -> None:
-    """OllamaProvider raises NotImplementedError without base_url."""
-    # Need OLLAMA_BASE_URL unset; _scrub_env already removes it.
-    with pytest.raises(NotImplementedError):
+    """Ollama provider fails closed when no endpoint is explicitly configured."""
+    with pytest.raises(NotImplementedError, match="OLLAMA_BASE_URL"):
         OllamaProvider()
 
 

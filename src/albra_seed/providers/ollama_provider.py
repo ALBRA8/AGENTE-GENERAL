@@ -49,9 +49,12 @@ class OllamaProvider(LLMProvider):
 
         import os
 
-        resolved_url = base_url or os.environ.get("OLLAMA_BASE_URL") or DEFAULT_OLLAMA_BASE_URL
+        resolved_url = base_url or os.environ.get("OLLAMA_BASE_URL")
         if not resolved_url:
-            raise NotImplementedError("ollama provider requires OLLAMA_BASE_URL")
+            raise NotImplementedError(
+                "ollama provider requires OLLAMA_BASE_URL "
+                "(pass base_url= or set the environment variable)"
+            )
 
         self.base_url: str = resolved_url
         self.model: str = model or self.DEFAULT_MODEL

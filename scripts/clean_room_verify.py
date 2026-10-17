@@ -299,7 +299,13 @@ def check_test_run(rep: Report) -> None:
             passed = int(m.group(2))
             failed = int(m.group(1) or m.group(3) or 0)
             break
-    details = summary or proc.stderr.strip()[:200]
+    details = summary
+    if not details:
+        # Preserve pytest diagnostics when collection/import fails before
+        # pytest emits its normal summary line.
+        details = (proc.stderr.strip() + "\n" + proc.stdout[-5000:]).strip()[:5500]
+        if not details:
+            details = f"pytest exited with code {proc.returncode} without a summary"
     if failed:
         # Keep enough of pytest's failure summary/traceback to diagnose CI
         # regressions instead of exposing only the aggregate count.

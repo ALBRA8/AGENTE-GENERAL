@@ -4,7 +4,7 @@ Architecture:
     CORE (types/base)  →  INTERFACE (LLMProvider)
                                        ↓
                                   ADAPTER (Mock, OpenAI, Anthropic, Groq,
-                                           Ollama, ZAI)
+                                           Ollama, ZAI, NVIDIA)
                                        ↓
                                   PROVIDER (ProviderRegistry + ProviderRouter
                                              + ProviderFallback + ProviderHealth)
@@ -23,6 +23,7 @@ Public API:
         GroqProvider,
         OllamaProvider,
         ZAIProvider,
+        NVIDIAProvider,
     )
 
 All external-provider modules are imported lazily by their consumers;
@@ -50,6 +51,7 @@ from albra_seed.providers.anthropic_provider import AnthropicProvider
 from albra_seed.providers.groq_provider import GroqProvider
 from albra_seed.providers.ollama_provider import OllamaProvider
 from albra_seed.providers.zai_provider import ZAIProvider
+from albra_seed.providers.nvidia_provider import NVIDIAProvider
 
 __all__ = [
     "LLMProvider",
@@ -64,4 +66,5 @@ __all__ = [
     "GroqProvider",
     "OllamaProvider",
     "ZAIProvider",
+    "NVIDIAProvider",
 ]
