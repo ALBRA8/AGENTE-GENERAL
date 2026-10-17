@@ -23,12 +23,14 @@
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.56.1",
+    "@tailwindcss/postcss": "^4.3.3",
     "@types/node": "^22",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "^16.0.0",
-    "typescript": "^5",
-    "@playwright/test": "^1.56.1"
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5"
   }
 }
