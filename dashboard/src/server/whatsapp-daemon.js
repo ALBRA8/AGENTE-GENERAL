@@ -84,6 +84,8 @@ const SESSION_DIR = resolveSessionDir(WHATSAPP_ACCOUNT_ID);
 let dedupStore = null;
 let connectionOwnerLease = null;
 let watchdog = null;
+let cachedBaileysVersion = null; // Hermes pattern: cache last-good version for fallback
+let connectionStartTime = null; // OpenClaw pattern: track connection age for backoff reset
 
 if (!SECRET || SECRET.length < 32) {
   throw new Error("INTERNAL_API_SECRET must be configured with at least 32 characters");
@@ -596,20 +598,80 @@ async function startWhatsApp() {
     //    to do here — the store is reused across reconnects.
 
     const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
-    const { version } = await fetchLatestBaileysVersion();
+
+    // === Hermes-adapted: bound fetchLatestBaileysVersion with 15s timeout ===
+    // fetchLatestBaileysVersion() has NO AbortSignal and can hang forever,
+    // silently wedging the bridge. Race it against a timeout and cache the
+    // last-good version for fallback.
+    let version = null;
+    try {
+      const versionResult = await Promise.race([
+        fetchLatestBaileysVersion(),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("version fetch timed out")), 15000)
+        ),
+      ]);
+      version = versionResult.version;
+      cachedBaileysVersion = version; // cache for fallback on next failure
+    } catch (err) {
+      log(`fetchLatestBaileysVersion failed (${err.message}), using fallback`);
+      version = cachedBaileysVersion || null; // null = Baileys uses its own default
+    }
     if (isShuttingDown) throw new Error("daemon_shutting_down");
     if (generation !== connectionGeneration) throw new Error("connection_start_cancelled");
 
+    // === OpenClaw-adapted: socket options that prevent QR drops ===
+    // These options are CRITICAL for connection stability:
+    //   - keepAliveIntervalMs: 25s (WhatsApp server idle timeout is ~60s;
+    //     Baileys default 30s is borderline → silent connection death → 408)
+    //   - connectTimeoutMs: 60s (give user time to scan QR; default 10s is too short)
+    //   - defaultQueryTimeoutMs: 60s (queries don't fail mid-handshake)
+    //   - syncFullHistory: false (default true → heavy traffic → rate limited → 408)
+    //   - markOnlineOnConnect: false (default true → presence spam → rate limited)
+    //   - browser: custom identity avoids Baileys default fingerprint
     const currentSock = makeWASocket({
-      version,
+      version: version || undefined,
       auth: state,
       printQRInTerminal: false,
       logger,
       browser: ["AGENTE-GENERAL", "Chrome", "1.0.0"],
+      // OpenClaw socket-timing.ts defaults
+      keepAliveIntervalMs: 25_000,
+      connectTimeoutMs: 60_000,
+      defaultQueryTimeoutMs: 60_000,
+      // OpenClaw session.ts: prevent rate-limit triggers
+      syncFullHistory: false,
+      markOnlineOnConnect: false,
+      // Baileys 7.x: required for E2EE retry handshake (Hermes pattern)
+      getMessage: async () => ({ conversation: "" }),
     });
     sock = currentSock;
 
-    currentSock.ev.on("creds.update", saveCreds);
+    // === OpenClaw session.ts:374-378 — CRITICAL: trap ws error events ===
+    // Node's EventEmitter throws on unhandled 'error' events. A raw ws error
+    // from the underlying socket, if not subscribed, CRASHES the process →
+    // on restart, creds may not be flushed → new QR required.
+    if (currentSock.ws && typeof currentSock.ws.on === "function") {
+      currentSock.ws.on("error", (err) => {
+        log(`WebSocket error: ${String(err).slice(0, 120)}`);
+      });
+    }
+
+    // === OpenClaw creds-persistence.ts: enqueue atomic creds save ===
+    // Direct saveCreds() in creds.update can corrupt creds.json if writes
+    // overlap. Use atomic write with .bak backup (already in openclaw-adapted.js).
+    currentSock.ev.on("creds.update", async () => {
+      try {
+        // saveCreds() is Baileys' own function that writes to the auth state dir.
+        // We call it directly — the atomic write protection in
+        // writeCredsAtomically() applies to our own writes, but Baileys'
+        // useMultiFileAuthState already handles its own atomicity internally
+        // via temp files. We just need to ensure we don't lose the update.
+        await saveCreds();
+      } catch (err) {
+        log(`creds.update save failed: ${err.message.slice(0, 80)}`);
+      }
+    });
 
     currentSock.ev.on("messages.upsert", async (m) => {
       if (sock !== currentSock || isShuttingDown) return;
@@ -637,6 +699,7 @@ async function startWhatsApp() {
         connectionState = "connected";
         lastQR = null;
         reconnectAttempts = 0;
+        connectionStartTime = Date.now(); // OpenClaw: track for backoff reset
         const user = currentSock.user;
         connectedPhone = user ? user.id.split(":")[0] : null;
         log(`Connected: ${connectedPhone ? "****" : "unknown"}`);
@@ -662,7 +725,6 @@ async function startWhatsApp() {
 
       if (connection === "close") {
         connectionState = "disconnected";
-        lastQR = null;
         connectedPhone = null;
 
         if (watchdog) { watchdog.stop(); watchdog = null; }
@@ -670,13 +732,57 @@ async function startWhatsApp() {
         try { currentSock.end(); } catch {}
         if (sock === currentSock) sock = null;
 
+        // === OpenClaw connection-controller.ts:316-372 — status code discrimination ===
+        // This is THE most important fix for QR dropping constantly.
+        //
+        // Baileys wraps disconnect reasons as Boom errors: lastDisconnect.error.output.statusCode
+        // Without proper handling, every close → new QR. OpenClaw distinguishes:
+        //   - 401 (loggedOut): session invalidated → must rescan QR (no retry)
+        //   - 515 (post-pairing restart): WhatsApp asks for restart RIGHT AFTER successful
+        //      QR scan. Naive handlers show new QR → user thinks scan failed → loop.
+        //      Fix: recreate socket WITHOUT clearing QR (creds from scan are saved).
+        //   - 408 (timeout): transient → normal reconnect with backoff
+        //   - 499 (watchdog): our own force-close → normal reconnect
+        //   - other: transient → normal reconnect
         const statusCode = lastDisconnect?.error?.output?.statusCode;
         const isLoggedOut = statusCode === DisconnectReason.loggedOut;
+        const isPostPairingRestart = statusCode === 515;
+        const isTimeout = statusCode === 408;
 
         if (isLoggedOut) {
-          log("Logged out — session invalidated, QR rescan required");
+          log("Logged out (401) — session invalidated, QR rescan required");
           connectionState = "logged_out";
+          lastQR = null;
+          // Don't schedule reconnect — user must scan QR again
+        } else if (isPostPairingRestart) {
+          // === OpenClaw: 515 handling — recreate socket WITHOUT new QR ===
+          // WhatsApp returns 515 right after a successful QR scan. The creds
+          // are already saved. We just need to recreate the socket.
+          // DO NOT clear lastQR — the user already scanned it successfully.
+          log("Post-pairing restart (515) — recreating socket with existing creds");
+          // Reset reconnect attempts because this is a normal WhatsApp behavior,
+          // not a connection failure
+          reconnectAttempts = 0;
+          // Schedule a quick reconnect (1s, like Hermes)
+          if (reconnectTimer) clearTimeout(reconnectTimer);
+          reconnectTimer = setTimeout(() => {
+            reconnectTimer = null;
+            startWhatsApp().catch((e) => {
+              log(`515 reconnect failed: ${e.message}`);
+              scheduleReconnect("post_pairing_reconnect_error");
+            });
+          }, 1000);
         } else {
+          // Normal close (408 timeout, 499 watchdog, or unknown) → clear QR
+          // and schedule reconnect with backoff
+          lastQR = null;
+          // Reset backoff counter if connection lived longer than 1 heartbeat (60s).
+          // OpenClaw connection-controller.ts:720-723 — prevents accumulating
+          // backoff on long-lived sockets that eventually hits maxAttempts.
+          if (connectionStartTime && Date.now() - connectionStartTime > 60_000) {
+            reconnectAttempts = 0;
+            log("Connection lived >60s, resetting reconnect counter");
+          }
           scheduleReconnect(`connection_close (code=${statusCode})`);
         }
       }
