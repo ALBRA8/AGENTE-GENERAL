@@ -16,7 +16,6 @@
  */
 
 const assert = require("assert");
-const Module = require("module");
 const { Readable } = require("stream");
 
 // Mock the daemon module by loading its exported functions
@@ -368,12 +367,10 @@ console.log("\n=== Concurrency Limiter ===");
     const previousEndpoint = process.env.NVIDIA_ASR_ENDPOINT;
     const previousPoll = process.env.NVIDIA_ASR_POLL_SECONDS;
     const previousTimeout = process.env.NVIDIA_ASR_TIMEOUT_MS;
-    const previousFallback = process.env.WHATSAPP_ASR_ZAI_FALLBACK;
     process.env.NVIDIA_API_KEY = "test-nvidia-key";
     process.env.NVIDIA_ASR_ENDPOINT = "https://asr.example.test/v1/audio/transcriptions";
     process.env.NVIDIA_ASR_POLL_SECONDS = "120";
     process.env.NVIDIA_ASR_TIMEOUT_MS = "135000";
-    process.env.WHATSAPP_ASR_ZAI_FALLBACK = "false";
     return Promise.resolve().then(fn).finally(() => {
       if (previousKey === undefined) delete process.env.NVIDIA_API_KEY;
       else process.env.NVIDIA_API_KEY = previousKey;
@@ -383,8 +380,6 @@ console.log("\n=== Concurrency Limiter ===");
       else process.env.NVIDIA_ASR_POLL_SECONDS = previousPoll;
       if (previousTimeout === undefined) delete process.env.NVIDIA_ASR_TIMEOUT_MS;
       else process.env.NVIDIA_ASR_TIMEOUT_MS = previousTimeout;
-      if (previousFallback === undefined) delete process.env.WHATSAPP_ASR_ZAI_FALLBACK;
-      else process.env.WHATSAPP_ASR_ZAI_FALLBACK = previousFallback;
     });
   };
 
@@ -417,30 +412,35 @@ console.log("\n=== Concurrency Limiter ===");
     }
   });
 
-  await asyncTest("Z.ai SDK fallback transcribes audio after NVIDIA provider failure", async () => {
+  await asyncTest("Missing NVIDIA ASR endpoint fails closed before network access", async () => {
     const originalFetch = global.fetch;
-    const originalLoad = Module._load;
-    global.fetch = async () => new Response("provider error", { status: 503 });
-    Module._load = function(request, parent, isMain) {
-      if (request === "z-ai-web-dev-sdk") {
-        return { default: { create: async () => ({
-          audio: { asr: { create: async ({ file_base64 }) => {
-            assert.ok(file_base64.length > 0);
-            return { text: "Transcripción alternativa en español" };
-          } } }
-        }) } };
-      }
-      return originalLoad.call(this, request, parent, isMain);
-    };
+    global.fetch = async () => { throw new Error("fetch must not be called"); };
     try {
       await withAsrEnv(async () => {
-        process.env.WHATSAPP_ASR_ZAI_FALLBACK = "true";
-        const transcript = await transcribeAudio(makeOgg());
-        assert.strictEqual(transcript, "Transcripción alternativa en español");
+        delete process.env.NVIDIA_ASR_ENDPOINT;
+        await assert.rejects(
+          transcribeAudio(makeOgg()),
+          (err) => err && err.code === "ASR_NOT_CONFIGURED"
+        );
       });
     } finally {
       global.fetch = originalFetch;
-      Module._load = originalLoad;
+    }
+  });
+
+  await asyncTest("HTTP endpoints are rejected because ASR must use HTTPS", async () => {
+    const originalFetch = global.fetch;
+    global.fetch = async () => { throw new Error("fetch must not be called"); };
+    try {
+      await withAsrEnv(async () => {
+        process.env.NVIDIA_ASR_ENDPOINT = "http://asr.example.test/transcribe";
+        await assert.rejects(
+          transcribeAudio(makeOgg()),
+          (err) => err && err.code === "ASR_NOT_CONFIGURED"
+        );
+      });
+    } finally {
+      global.fetch = originalFetch;
     }
   });
 
