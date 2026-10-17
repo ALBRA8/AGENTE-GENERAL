@@ -86,6 +86,8 @@ let connectionOwnerLease = null;
 let watchdog = null;
 let cachedBaileysVersion = null; // Hermes pattern: cache last-good version for fallback
 let connectionStartTime = null; // OpenClaw pattern: track connection age for backoff reset
+let cachedQrImage = null; // Cache QR PNG so it doesn't regenerate on every /qr request
+let cachedQrSource = null; // Track which QR string was used to generate the cached PNG
 
 if (!SECRET || SECRET.length < 32) {
   throw new Error("INTERNAL_API_SECRET must be configured with at least 32 characters");
@@ -869,8 +871,14 @@ const server = http.createServer(async (req, res) => {
 
     if (path === "/qr" && method === "GET") {
       if (!lastQR) return sendJSON(res, 200, { qr: null, message: "No QR. Call /connect first." });
-      const qrImage = await QRCode.toDataURL(lastQR, { width: 256 });
-      return sendJSON(res, 200, { qr: qrImage });
+      // Cache the QR PNG — only regenerate if the QR string changed.
+      // This prevents the image from "jumping" when the dashboard polls /qr
+      // repeatedly while the QR hasn't expired yet.
+      if (cachedQrSource !== lastQR || !cachedQrImage) {
+        cachedQrImage = await QRCode.toDataURL(lastQR, { width: 256 });
+        cachedQrSource = lastQR;
+      }
+      return sendJSON(res, 200, { qr: cachedQrImage });
     }
 
     if (path === "/connect" && method === "POST") {
