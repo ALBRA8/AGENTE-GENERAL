@@ -693,6 +693,21 @@ function WhatsAppView() {
   const [connecting, setConnecting] = useState(false);
   const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const qrRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const qrCodeRef = useRef<string | null>(null); // track current QR without re-triggering effect
+
+  const fetchQr = async () => {
+    try {
+      const qrRes = await fetch(`/api/whatsapp/daemon-proxy?path=/qr`);
+      if (qrRes.ok) {
+        const qrData = await qrRes.json();
+        if (qrData.qr && qrData.qr !== qrCodeRef.current) {
+          qrCodeRef.current = qrData.qr;
+          setQrCode(qrData.qr);
+        }
+      }
+    } catch {}
+  };
 
   const loadStatus = async () => {
     try {
@@ -702,24 +717,19 @@ function WhatsAppView() {
       if (data.status === "connected") {
         setStatus("connected");
         setPhone(data.phone || null);
-        setQrCode(null); // Clear QR when connected
+        setQrCode(null);
+        qrCodeRef.current = null;
       } else if (data.status === "linking") {
         setStatus("linking");
-        // Only fetch QR if we don't have one yet — don't clear existing QR
-        if (!qrCode) {
-          try {
-            const qrRes = await fetch(`/api/whatsapp/daemon-proxy?path=/qr`);
-            if (qrRes.ok) {
-              const qrData = await qrRes.json();
-              if (qrData.qr) setQrCode(qrData.qr);
-            }
-          } catch {}
+        // Fetch QR if we don't have one yet
+        if (!qrCodeRef.current) {
+          await fetchQr();
         }
       } else if (data.status === "disconnected") {
         setStatus("disconnected");
         setQrCode(null);
+        qrCodeRef.current = null;
       } else {
-        // unknown or daemon_offline — keep current state
         setStatus(data.status || "unknown");
       }
     } catch {
@@ -730,31 +740,45 @@ function WhatsAppView() {
   useEffect(() => {
     void Promise.resolve().then(loadStatus).finally(() => setLoading(false));
     // Poll status every 5s — only check if connected/disconnected
-    // Don't re-fetch QR on every poll (causes flicker)
     pollRef.current = setInterval(() => {
-      if (status === "linking") {
-        // Only check status, don't clear QR
-        fetch(`/api/whatsapp/daemon-proxy?path=/status`)
-          .then((r) => r.ok ? r.json() : null)
-          .then((data) => {
-            if (!data) return;
-            if (data.status === "connected") {
-              setStatus("connected");
-              setPhone(data.phone || null);
-              setQrCode(null);
-            }
-            // If still linking, keep QR as-is (no flicker)
-          })
-          .catch(() => {});
-      }
+      fetch(`/api/whatsapp/daemon-proxy?path=/status`)
+        .then((r) => r.ok ? r.json() : null)
+        .then((data) => {
+          if (!data) return;
+          if (data.status === "connected") {
+            setStatus("connected");
+            setPhone(data.phone || null);
+            setQrCode(null);
+            qrCodeRef.current = null;
+          } else if (data.status === "disconnected") {
+            setStatus("disconnected");
+            setQrCode(null);
+            qrCodeRef.current = null;
+          }
+        })
+        .catch(() => {});
     }, 5000);
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [status]);
+
+    // Refresh QR every 15s when in linking state — before it expires (~20s).
+    // The daemon caches the PNG so identical QR strings don't cause flicker.
+    // Only updates state if the QR string actually changed.
+    qrRefreshRef.current = setInterval(() => {
+      if (qrCodeRef.current !== null) {
+        fetchQr();
+      }
+    }, 15000);
+
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+      if (qrRefreshRef.current) clearInterval(qrRefreshRef.current);
+    };
+  }, []);
 
   const connect = async () => {
     setConnecting(true);
     setMsg(null);
-    setQrCode(null); // Clear old QR
+    setQrCode(null);
+    qrCodeRef.current = null;
     try {
       const res = await fetch(`/api/whatsapp/daemon-proxy`, {
         method: "POST",
@@ -766,24 +790,11 @@ function WhatsAppView() {
       setStatus("linking");
       // Wait for daemon to generate QR, then fetch it
       setTimeout(async () => {
-        try {
-          const qrRes = await fetch(`/api/whatsapp/daemon-proxy?path=/qr`);
-          if (qrRes.ok) {
-            const qrData = await qrRes.json();
-            if (qrData.qr) {
-              setQrCode(qrData.qr);
-            } else {
-              // QR not ready yet, retry in 2s
-              setTimeout(async () => {
-                const retry = await fetch(`/api/whatsapp/daemon-proxy?path=/qr`);
-                if (retry.ok) {
-                  const retryData = await retry.json();
-                  if (retryData.qr) setQrCode(retryData.qr);
-                }
-              }, 2000);
-            }
-          }
-        } catch {}
+        await fetchQr();
+        // If QR not ready, retry
+        if (!qrCodeRef.current) {
+          setTimeout(async () => { await fetchQr(); }, 2000);
+        }
       }, 3000);
     } catch (e) {
       setMsg({ type: "err", text: "No se pudo conectar. ¿Está el daemon corriendo?" });
