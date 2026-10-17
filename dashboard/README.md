@@ -72,7 +72,7 @@ El script `scripts/start-wa-daemon.sh` se encarga de:
 | `MAX_MEDIA_QUEUE` | Mensajes encolados esperando slot | `20` |
 | `MAX_RECONNECT_ATTEMPTS` | Reintentos antes de `max_reconnects` | `10` |
 | `NVIDIA_API_KEY` | Clave de NVIDIA para IA y transcripción | Sin default |
-| `NVIDIA_ASR_ENDPOINT` | Override opcional de la URL HTTPS de NVIDIA Riva ASR | Por defecto usa el endpoint NVCF configurado en el daemon |
+| `NVIDIA_ASR_ENDPOINT` | URL HTTPS explícita del endpoint ASR de NVIDIA validado para este entorno | Obligatorio para transcribir audio |
 | `NVIDIA_ASR_POLL_SECONDS` | Ventana de polling de NVCF en segundos (1–300) | `120` |
 | `NVIDIA_ASR_TIMEOUT_MS` | Timeout total de la petición ASR en milisegundos (1.000–300.000) | `135000` |
 
@@ -80,7 +80,7 @@ WhatsApp audio transcription also has an automatic Z.ai SDK fallback when the NV
 
 ### Notas de voz / transcripción
 
-Para transcribir audios, el daemon necesita `NVIDIA_API_KEY`. El endpoint Riva NVCF que se indicó para este despliegue ya está configurado como valor predeterminado; `NVIDIA_ASR_ENDPOINT` solo se necesita para sobrescribirlo:
+Para transcribir audios, el daemon necesita `NVIDIA_API_KEY` y `NVIDIA_ASR_ENDPOINT`. No hay un endpoint predeterminado porque el deployment NVCF probado anteriormente devolvió errores de proveedor; configura aquí únicamente una URL HTTPS que hayas verificado con una prueba real de audio:
 
 ```dotenv
 NVIDIA_API_KEY=tu_clave
@@ -91,7 +91,7 @@ NVIDIA_API_KEY=tu_clave
 # NVIDIA_ASR_TIMEOUT_MS=135000
 ```
 
-El endpoint ASR es independiente de `https://integrate.api.nvidia.com/v1/chat/completions`; no uses el endpoint de chat para notas de voz. El daemon envía multipart con `language=es-US`, `response_format=json` y el audio OGG. No compartas la clave en el chat ni la pegues en logs. Si la clave que compartiste previamente era completa y real, revócala y genera otra en NVIDIA antes de probar.
+El endpoint ASR es independiente de `https://integrate.api.nvidia.com/v1/chat/completions`; no uses el endpoint de chat para notas de voz. El daemon envía multipart con `language=es-US`, `response_format=json` y el audio OGG. Si el endpoint devuelve 5xx/504, cambiar el timeout del cliente no repara un worker NVCF atascado: valida/recrea el deployment o configura un endpoint ASR operativo antes de producción. No compartas la clave en el chat ni la pegues en logs. Si la clave que compartiste previamente era completa y real, revócala y genera otra en NVIDIA antes de probar.
 
 Después de configurar esas variables, reinicia **solo el daemon en el entorno de prueba** para que las lea. Envía una nota de voz corta en español desde un chat individual y revisa `dashboard/logs/wa-daemon.log`. El daemon registra códigos de fallo (por ejemplo, `ASR_NOT_CONFIGURED`, `ASR_HTTP_ERROR` o `ASR_EMPTY_TRANSCRIPT`), no la clave ni el contenido transcrito. Si falla, comparte únicamente el código y el estado HTTP, nunca secretos.
 
