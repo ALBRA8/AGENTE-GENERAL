@@ -20,8 +20,7 @@
     "pino": "^9.0.0",
     "qrcode": "^1.5.4",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "z-ai-web-dev-sdk": "^0.0.18"
+    "react-dom": "^19.0.0"
   },
   "devDependencies": {
     "@types/node": "^22",
