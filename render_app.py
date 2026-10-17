@@ -136,12 +136,18 @@ else:
     runtime.register("authenticator", DevAuthenticator())
 
 # Providers (NVIDIA / OpenAI integration)
-openai_key = os.environ.get("OPENAI_API_KEY")
+# Accept either NVIDIA_API_KEY or OPENAI_API_KEY so the same env var name
+# works for both NVIDIA NIM (which uses the OpenAI-compatible API) and
+# plain OpenAI. This matches the env var that Render's dashboard sets
+# (NVIDIA_API_KEY) without forcing operators to also set OPENAI_API_KEY.
+openai_key = os.environ.get("NVIDIA_API_KEY") or os.environ.get("OPENAI_API_KEY")
 configured_providers: list[str] = []
 if openai_key:
     from albra_seed.providers.openai_provider import OpenAIProvider
 
-    base_url = os.environ.get("OPENAI_BASE_URL", "https://integrate.api.nvidia.com/v1")
+    # NVIDIA NIM is OpenAI-compatible: base_url defaults to NVIDIA's endpoint,
+    # model defaults to z-ai/glm-5.3-flash (the model the dashboard uses).
+    base_url = os.environ.get("OPENAI_BASE_URL") or os.environ.get("NVIDIA_BASE_URL") or "https://integrate.api.nvidia.com/v1"
     model = os.environ.get("ALBRA_DEFAULT_MODEL", "z-ai/glm-5.3-flash")
     provider = OpenAIProvider(api_key=openai_key, base_url=base_url, model=model)
     runtime.register_provider(provider)
