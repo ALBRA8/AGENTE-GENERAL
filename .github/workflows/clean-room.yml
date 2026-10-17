@@ -32,7 +32,7 @@ concurrency:
 
 on:
   push:
-    branches: [main, front-2-acceptance-battery, front-2-dashboard-integration]
+    branches: [main, fix/windows-compat-grep-sqlite, front-2-acceptance-battery, front-2-dashboard-integration, "integrate/**"]
   pull_request:
     branches: [main, fix/windows-compat-grep-sqlite, front-2-acceptance-battery]
   # Allow manual triggering from the Actions tab.

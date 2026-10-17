@@ -175,24 +175,23 @@ test("Too-small JPEG (2 bytes) rejected", () => {
 
 console.log("\n=== Deduplication ===");
 
-test("First message is not duplicate", () => {
-  // Clear dedup state
-  // isDuplicate returns false on first call, true on second
+asyncTest("First message is not duplicate", async () => {
+  // isDuplicate now takes (remoteJid, msgId) and is async (persistent store).
   const id = `test-${Date.now()}`;
-  assert.strictEqual(isDuplicate(id), false);
+  assert.strictEqual(await isDuplicate("test@s.whatsapp.net", id), false);
 });
 
-test("Same message ID within TTL is duplicate", () => {
+asyncTest("Same message ID within TTL is duplicate", async () => {
   const id = `test-dup-${Date.now()}`;
-  isDuplicate(id); // First call
-  assert.strictEqual(isDuplicate(id), true); // Second call
+  await isDuplicate("test@s.whatsapp.net", id); // First call
+  assert.strictEqual(await isDuplicate("test@s.whatsapp.net", id), true); // Second call
 });
 
-test("Different message IDs are not duplicates", () => {
+asyncTest("Different message IDs are not duplicates", async () => {
   const id1 = `test-unique-1-${Date.now()}`;
   const id2 = `test-unique-2-${Date.now()}`;
-  isDuplicate(id1);
-  assert.strictEqual(isDuplicate(id2), false);
+  await isDuplicate("test@s.whatsapp.net", id1);
+  assert.strictEqual(await isDuplicate("test@s.whatsapp.net", id2), false);
 });
 
 console.log("\n=== Log Sanitization ===");

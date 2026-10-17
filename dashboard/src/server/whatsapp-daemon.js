@@ -23,6 +23,20 @@ const fs = require("fs");
 const path = require("path");
 const { timingSafeEqual } = require("crypto");
 
+// OpenClaw-adapted utilities (MIT-licensed, attributed in THIRD_PARTY_NOTICES.md)
+const {
+  resolveSessionDir,
+  ensureSessionDir,
+  restoreCredsFromBackupIfNeeded,
+  resolveReconnectPolicy,
+  computeBackoff,
+  createWatchdog,
+  WHATSAPP_WATCHDOG_TIMEOUT_ERROR,
+  acquireConnectionOwnerLock,
+  WhatsAppConnectionOwnerBusyError,
+  createPersistentDedupStore,
+} = require("./openclaw-adapted");
+
 // Load .env.local manually
 const envPath = path.join(__dirname, "..", "..", ".env.local");
 try {
@@ -50,11 +64,26 @@ const SECRET = process.env.INTERNAL_API_SECRET;
 const MAX_MEDIA_BYTES = Math.max(1, parseInt(process.env.MAX_MEDIA_BYTES || (8 * 1024 * 1024).toString(), 10) || (8 * 1024 * 1024));
 const MAX_CONCURRENT_MEDIA = Math.max(1, parseInt(process.env.MAX_CONCURRENT_MEDIA || "2", 10) || 2);
 const MAX_MEDIA_QUEUE = Math.max(0, parseInt(process.env.MAX_MEDIA_QUEUE || "20", 10) || 0);
-const MAX_RECONNECT_ATTEMPTS = parseInt(process.env.MAX_RECONNECT_ATTEMPTS || "10", 10);
-const RECONNECT_BASE_DELAY = 1000; // 1s
-const RECONNECT_MAX_DELAY = 30000; // 30s
-const DEDUP_TTL_MS = 60000; // 1 minute
-const SESSION_DIR = "/tmp/wa-session";
+
+// Reconnect policy — adapted from OpenClaw DEFAULT_RECONNECT_POLICY:
+//   initial 2s, max 30s, factor 1.8, jitter 0.25, maxAttempts 12
+// Replaces the previous hard-coded MAX_RECONNECT_ATTEMPTS=10 + base 1s + 0-999ms random jitter.
+const RECONNECT_POLICY = resolveReconnectPolicy({
+  maxAttempts: parseInt(process.env.MAX_RECONNECT_ATTEMPTS || "12", 10),
+});
+
+// Persistent session directory — replaces ephemeral /tmp/wa-session.
+// /tmp gets wiped on every Render deploy, forcing a QR rescan on every restart.
+// The new location is <DATA_DIR>/whatsapp/<accountId>/ which persists across deploys.
+const WHATSAPP_ACCOUNT_ID = process.env.WHATSAPP_ACCOUNT_ID || "default";
+const SESSION_DIR = resolveSessionDir(WHATSAPP_ACCOUNT_ID);
+
+// Persistent dedup store — replaces the in-memory Map (TTL 60s) which lost
+// all entries on daemon restart, causing duplicate replies after a crash.
+// The new store uses sha256(remoteJid+msgId), 7-day TTL, 5000 entries (OpenClaw).
+let dedupStore = null;
+let connectionOwnerLease = null;
+let watchdog = null;
 
 if (!SECRET || SECRET.length < 32) {
   throw new Error("INTERNAL_API_SECRET must be configured with at least 32 characters");
@@ -71,8 +100,10 @@ let isShuttingDown = false;
 let startPromise = null;
 let connectionGeneration = 0;
 
-// Dedup: Set of recently-processed message IDs with TTL
-const processedMessages = new Map(); // msgId -> timestamp
+// Dedup is now persistent (see dedupStore above and createPersistentDedupStore)
+// The old in-memory Map with 60s TTL was lost on every restart, causing
+// duplicate replies after a crash. The new store survives restarts via
+// a JSON file in SESSION_DIR/dedup.json (mode 0o600).
 
 // Concurrency limiter for media processing
 let activeMediaTasks = 0;
@@ -103,16 +134,28 @@ function getIdentity() {
   }
 }
 
-// === Dedup ===
-function isDuplicate(msgId) {
-  const now = Date.now();
-  // Clean expired entries
-  for (const [id, ts] of processedMessages) {
-    if (now - ts > DEDUP_TTL_MS) processedMessages.delete(id);
+// === Dedup (persistent, OpenClaw-adapted) ===
+// Replaces the old in-memory Map with TTL 60s. The new store:
+//   - Survives daemon restarts (JSON file in SESSION_DIR/dedup.json)
+//   - Uses sha256(remoteJid+msgId) as key (no cross-chat collisions)
+//   - 7-day TTL (vs previous 60s)
+//   - 5000 entries cap with LRU prune
+//   - Auto-disables on disk failure so message handling never breaks
+//
+// Initialize eagerly so tests can call isDuplicate() without first
+// starting the full WhatsApp connection. The store loads its state
+// from disk lazily on first use (see createPersistentDedupStore).
+dedupStore = createPersistentDedupStore(SESSION_DIR);
+
+async function isDuplicate(remoteJid, msgId) {
+  if (!dedupStore) return false;
+  try {
+    return await dedupStore.isDuplicate(remoteJid, msgId);
+  } catch {
+    // Best-effort: if dedup store fails, don't block message processing.
+    // The store auto-disables on repeated failures (OpenClaw behavior).
+    return false;
   }
-  if (processedMessages.has(msgId)) return true;
-  processedMessages.set(msgId, now);
-  return false;
 }
 
 // === Concurrency limiter ===
@@ -364,9 +407,10 @@ function unwrapMessage(input) {
 async function handleMessage(msg) {
   const msgId = msg.key?.id;
   if (!msgId) return;
+  const remoteJid = msg.key?.remoteJid || "";
 
-  // Dedup: skip if already processed recently
-  if (isDuplicate(msgId)) {
+  // Dedup: skip if already processed recently (now persistent across restarts)
+  if (await isDuplicate(remoteJid, msgId)) {
     log(`Duplicate message skipped: ${msgId.slice(0, 8)}`);
     return;
   }
@@ -475,19 +519,23 @@ async function handleMessage(msg) {
   }
 }
 
-// === Reconnection with exponential backoff + jitter ===
+// === Reconnection (OpenClaw-adapted policy) ===
+// Adapted from OpenClaw reconnect.ts + connection-controller.ts:
+//   - initialMs 2s, maxMs 30s, factor 1.8, jitter 0.25, maxAttempts 12
+//   - Reset reconnectAttempts to 0 if the connection lived longer than 1 heartbeat
+//   - Distinguish logged_out (no retry) from transient close (retry)
 function scheduleReconnect(reason) {
   if (isShuttingDown || reconnectTimer) return;
-  if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-    log(`Max reconnection attempts (${MAX_RECONNECT_ATTEMPTS}) reached. Manual intervention required.`);
+  if (reconnectAttempts >= RECONNECT_POLICY.maxAttempts) {
+    log(`Max reconnection attempts (${RECONNECT_POLICY.maxAttempts}) reached. Manual intervention required.`);
     connectionState = "max_reconnects_exhausted";
     return;
   }
 
   reconnectAttempts++;
-  const baseDelay = Math.min(RECONNECT_BASE_DELAY * Math.pow(2, reconnectAttempts - 1), RECONNECT_MAX_DELAY);
-  const jitter = Math.floor(Math.random() * 1000); // 0-999ms jitter
-  const delay = baseDelay + jitter;
+  // OpenClaw computeBackoff: base = min(maxMs, initialMs * factor^(attempt-1))
+  //                       final = base - random(0, base * jitter)
+  const delay = computeBackoff(RECONNECT_POLICY, reconnectAttempts);
 
   log(`Reconnect #${reconnectAttempts} in ${(delay / 1000).toFixed(1)}s (reason: ${reason})`);
 
@@ -518,6 +566,35 @@ async function startWhatsApp() {
       if (sock === previousSock) sock = null;
     }
 
+    // Stop any previous watchdog before opening a new socket.
+    if (watchdog) { watchdog.stop(); watchdog = null; }
+
+    // === OpenClaw-adapted session setup ===
+    // 1. Ensure session directory exists with mode 0o700 (persistent, not /tmp)
+    await ensureSessionDir(SESSION_DIR);
+
+    // 2. Restore creds from backup if main creds.json is corrupt
+    const restored = await restoreCredsFromBackupIfNeeded(SESSION_DIR);
+    if (restored) {
+      log("Restored creds.json from backup (main file was corrupt)");
+    }
+
+    // 3. Acquire cross-process file lock (prevents concurrent daemons on same session)
+    try {
+      connectionOwnerLease = await acquireConnectionOwnerLock(SESSION_DIR);
+    } catch (err) {
+      if (err instanceof WhatsAppConnectionOwnerBusyError) {
+        log(`Another process owns this session: ${err.message}`);
+        connectionState = "owner_busy";
+        throw err;
+      }
+      throw err;
+    }
+
+    // 4. Dedup store is already initialized at module load (see line above
+    //    `dedupStore = createPersistentDedupStore(SESSION_DIR)`). Nothing
+    //    to do here — the store is reused across reconnects.
+
     const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
     const { version } = await fetchLatestBaileysVersion();
     if (isShuttingDown) throw new Error("daemon_shutting_down");
@@ -538,6 +615,8 @@ async function startWhatsApp() {
       if (sock !== currentSock || isShuttingDown) return;
       const messages = m.messages || [];
       for (const msg of messages) {
+        // Note inbound activity for the watchdog (transport + app level)
+        watchdog?.noteInbound();
         handleMessage(msg).catch((e) => log(`Handler error: ${e.message}`));
       }
     });
@@ -561,6 +640,24 @@ async function startWhatsApp() {
         const user = currentSock.user;
         connectedPhone = user ? user.id.split(":")[0] : null;
         log(`Connected: ${connectedPhone ? "****" : "unknown"}`);
+
+        // Start dual watchdog (transport-level WS frames + app-level inbound msgs)
+        // Adapted from OpenClaw connection-controller.ts startTimers():
+        //   - 4× grace window post-reconnect (openedAfterRecentInbound)
+        //   - transportTimeoutMs: 5 min with no WS frames = dead socket
+        //   - messageTimeoutMs: 30 min with no inbound = stale session
+        watchdog = createWatchdog(currentSock, {
+          openedAfterRecentInbound: reconnectAttempts > 0,
+          onTimeout: (info) => {
+            log(`Watchdog timeout (${info.reason}): transport=${info.transportStaleForMs}ms app=${info.appSilentForMs}ms msgs=${info.handledMessages}`);
+            // Force-close the socket so scheduleReconnect kicks in
+            try { currentSock.ev.removeAllListeners(); } catch {}
+            try { currentSock.end(); } catch {}
+            if (sock === currentSock) sock = null;
+            connectionState = "disconnected";
+            scheduleReconnect(`watchdog_${info.reason}`);
+          },
+        });
       }
 
       if (connection === "close") {
@@ -568,6 +665,7 @@ async function startWhatsApp() {
         lastQR = null;
         connectedPhone = null;
 
+        if (watchdog) { watchdog.stop(); watchdog = null; }
         try { currentSock.ev.removeAllListeners(); } catch {}
         try { currentSock.end(); } catch {}
         if (sock === currentSock) sock = null;
@@ -728,7 +826,7 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   log(`WhatsApp daemon listening on ${HOST}:${PORT}`);
   log("Internal authentication configured");
-  log(`Limits: media=${MAX_MEDIA_BYTES} bytes, concurrent=${MAX_CONCURRENT_MEDIA}, reconnect_max=${MAX_RECONNECT_ATTEMPTS}`);
+  log(`Limits: media=${MAX_MEDIA_BYTES} bytes, concurrent=${MAX_CONCURRENT_MEDIA}, reconnect_max=${RECONNECT_POLICY.maxAttempts}`);
 
   // Create session dir with restrictive permissions
   try { fs.mkdirSync(SESSION_DIR, { recursive: true, mode: 0o700 }); } catch {}
@@ -789,7 +887,18 @@ module.exports = {
   normalizeRecipient,
   MAX_MEDIA_BYTES,
   MAX_CONCURRENT_MEDIA,
-  MAX_RECONNECT_ATTEMPTS,
-  DEDUP_TTL_MS,
+  // OpenClaw-adapted constants (kept for backward compat with existing tests)
+  MAX_RECONNECT_ATTEMPTS: RECONNECT_POLICY.maxAttempts,
+  // DEDUP_TTL_MS is now defined in openclaw-adapted.js (7 days, persistent).
+  // Re-exported here for backward compat with existing tests.
+  DEDUP_TTL_MS: require("./openclaw-adapted").DEDUP_TTL_MS,
   MAX_MEDIA_QUEUE,
+  // New exports (OpenClaw-adapted)
+  RECONNECT_POLICY,
+  resolveSessionDir,
+  ensureSessionDir,
+  acquireConnectionOwnerLock,
+  WhatsAppConnectionOwnerBusyError,
+  createPersistentDedupStore,
+  createWatchdog,
 };
