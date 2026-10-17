@@ -987,6 +987,29 @@ function shutdown(signal) {
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
 
+// === Critical: global error handlers to prevent process crashes ===
+// Without these, an unhandled promise rejection or uncaught exception
+// (e.g. Baileys throwing 'Connection Closed' with statusCode 428 during
+// a retry request when the socket is already closed) CRASHES the daemon.
+// On restart, the session may be corrupt → new QR required.
+//
+// Pattern from Hermes bridge_helpers.js createReconnectScheduler():
+// catch async rejections so they don't kill the process.
+process.on("unhandledRejection", (reason, promise) => {
+  const msg = reason instanceof Error ? reason.message : String(reason);
+  log(`Unhandled rejection (non-fatal): ${msg.slice(0, 120)}`);
+  // Don't exit — the daemon should survive transient Baileys errors.
+  // If the socket is dead, the watchdog or connection.update handler
+  // will trigger a reconnect.
+});
+
+process.on("uncaughtException", (err) => {
+  const msg = err instanceof Error ? err.message : String(err);
+  log(`Uncaught exception (non-fatal): ${msg.slice(0, 120)}`);
+  // Same as above — don't crash. The daemon has watchdog + reconnect
+  // logic that will recover from socket-level failures.
+});
+
 module.exports = {
   isDuplicate,
   isSupportedImageBuffer,
