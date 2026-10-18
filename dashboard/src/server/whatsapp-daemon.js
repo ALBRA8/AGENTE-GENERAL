@@ -792,9 +792,13 @@ async function startWhatsApp() {
         const isTimeout = statusCode === 408;
 
         if (isLoggedOut) {
-          log("Logged out (401) — session invalidated, QR rescan required");
+          log("Logged out (401) — session invalidated, clearing stale creds for QR rescan");
           connectionState = "logged_out";
           lastQR = null;
+          try {
+            fs.rmSync(path.join(SESSION_DIR, "creds.json"), { force: true });
+            fs.rmSync(path.join(SESSION_DIR, "creds.json.bak"), { force: true });
+          } catch {}
           // Don't schedule reconnect — user must scan QR again
         } else if (isPostPairingRestart) {
           // === OpenClaw: 515 handling — recreate socket WITHOUT new QR ===
@@ -925,6 +929,12 @@ const server = http.createServer(async (req, res) => {
       if (connectionState === "connected") return sendJSON(res, 200, { ok: true, message: "Already connected" });
       if (startPromise || ["connecting", "linking"].includes(connectionState)) {
         return sendJSON(res, 200, { ok: true, message: "Connection already in progress; check /qr" });
+      }
+      if (connectionState === "logged_out") {
+        try {
+          fs.rmSync(path.join(SESSION_DIR, "creds.json"), { force: true });
+          fs.rmSync(path.join(SESSION_DIR, "creds.json.bak"), { force: true });
+        } catch {}
       }
       reconnectAttempts = 0; // Reset on manual connect
       await startWhatsApp();
