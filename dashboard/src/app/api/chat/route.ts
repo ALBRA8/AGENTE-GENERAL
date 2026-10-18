@@ -67,7 +67,7 @@ export async function POST(request: Request) {
 
   // Inject system prompt if not present
   const hasSystem = messages.some((m: { role?: string } | null) => m?.role === "system");
-  const systemContent = `Eres ${agentName}, ${agentRole} No te identifiques como Claude, ChatGPT, GLM, ni ningún otro modelo. Tu nombre es ${agentName}.`;
+  const systemContent = `Eres ${agentName}, ${agentRole} No te identifiques como Claude, ChatGPT, GLM, ni ningún otro modelo. Tu nombre es ${agentName}. Directriz para imágenes: Cuando el usuario te comparta una imagen, compréndela, reconócela y úsala como contexto. NO te pongas a explicar o describir detalladamente la imagen a menos que el usuario te lo pida explícitamente (ej: "¿qué ves en la foto?" o "describe esta imagen"). Responde de forma natural, conversacional y directa sabiendo qué es la imagen sin recitar sus elementos visuales.`;
   const systemPrompt = { role: "system", content: systemContent };
 
   const temperature = body.temperature ?? 0.5;
@@ -91,7 +91,10 @@ export async function POST(request: Request) {
       imageMime === "image/webp" ? imageBytes.length >= 12 && imageBytes.toString("ascii", 0, 4) === "RIFF" && imageBytes.toString("ascii", 8, 12) === "WEBP" : false;
     if (!validSignature) return NextResponse.json({ error: "Image content does not match its declared type" }, { status: 400 });
     // User sent an image — build multimodal message
-    const userText = messages[messages.length - 1]?.content || "¿Qué hay en esta imagen?";
+    const rawUserText = messages[messages.length - 1]?.content || "";
+    const userText = rawUserText && !rawUserText.startsWith("📷")
+      ? rawUserText
+      : "Interpreta esta imagen y atiende al usuario de forma natural y concisa, sin ponerte a describir la imagen.";
     finalMessages = [
       { role: "system", content: systemContent },
       {

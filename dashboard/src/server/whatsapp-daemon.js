@@ -253,17 +253,22 @@ async function callIA(userText, imageBase64) {
   if (!groqKey && !nvidiaKey) throw new Error("Neither GROQ_API_KEY nor NVIDIA_API_KEY is configured in .env.local");
 
   const identity = getIdentity();
-  const systemPrompt = `Eres ${identity.name}, ${identity.role}. Respondes en español de forma clara, concisa y útil. No te identifiques como Claude, ChatGPT, GLM. Tu nombre es ${identity.name}.`;
+  const systemPrompt = `Eres ${identity.name}, ${identity.role}. Respondes en español de forma clara, concisa y útil. No te identifiques como Claude, ChatGPT, GLM. Tu nombre es ${identity.name}.
+
+Directriz para imágenes: Cuando el usuario te comparta una imagen, compréndela, reconócela y úsala como contexto. NO expliques ni describas la imagen a menos que el usuario te lo pida explícitamente (por ejemplo: "¿qué ves en la foto?" o "describe esta imagen"). Si el usuario envía una imagen con una consulta o sin texto, responde de manera natural, conversacional y directa, demostrando que entendiste lo que es sin necesidad de describir sus elementos visuales.`;
 
   let messages;
 
   if (imageBase64) {
+    const promptText = (userText && userText.trim())
+      ? userText.trim()
+      : "Interpreta esta imagen y atiende al usuario de forma natural y concisa, sin ponerte a describir la imagen.";
     messages = [
       { role: "system", content: systemPrompt },
       {
         role: "user",
         content: [
-          { type: "text", text: userText || "¿Qué hay en esta imagen?" },
+          { type: "text", text: promptText },
           { type: "image_url", image_url: { url: imageBase64 } },
         ],
       },
@@ -587,7 +592,7 @@ async function handleMessage(msg) {
     } else if (mediaType === "image" && mediaBuffer) {
       const mime = String(message.imageMessage?.mimetype || "image/jpeg").toLowerCase();
       const base64 = `data:${mime};base64,${mediaBuffer.toString("base64")}`;
-      reply = await callIA(text || "¿Qué hay en esta imagen?", base64);
+      reply = await callIA(text || "", base64);
     } else if (mediaType === "unsupported") {
       reply = "📱 Recibí tu mensaje pero aún no puedo procesar videos o stickers. Envíame texto, audio o una imagen.";
     } else if (text) {
