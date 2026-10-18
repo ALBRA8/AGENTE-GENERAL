@@ -278,6 +278,7 @@ async function callIA(userText, imageBase64) {
   // 1. Try Groq first for sub-second response times if available
   if (groqKey) {
     try {
+      const model = imageBase64 ? "qwen/qwen3.8-27b" : "openai/gpt-oss-120b";
       const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
         method: "POST",
         headers: {
@@ -285,7 +286,7 @@ async function callIA(userText, imageBase64) {
           Authorization: `Bearer ${groqKey}`,
         },
         body: JSON.stringify({
-          model: "openai/gpt-oss-120b",
+          model,
           messages,
           temperature: 0.5,
           max_tokens: 1024,
@@ -426,10 +427,56 @@ async function transcribeAudioNvidia(audioBuffer) {
   return transcript.slice(0, 12000);
 }
 
-// Keep a single explicitly configured provider. A failing or unconfigured
-// fallback must not hide the primary ASR error or pretend transcription works.
+// === ASR: Groq Whisper transcription (ultra-fast, ~500ms) ===
+async function transcribeAudioGroq(audioBuffer) {
+  const groqKey = process.env.GROQ_API_KEY;
+  if (!groqKey) return null;
+
+  const form = new FormData();
+  form.append("language", "es");
+  form.append("model", "whisper-large-v3-turbo");
+  form.append("file", new Blob([audioBuffer], { type: "audio/ogg" }), "whatsapp-voice-note.ogg");
+
+  try {
+    const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${groqKey}`,
+      },
+      body: form,
+      signal: AbortSignal.timeout(30000),
+    });
+
+    if (!res.ok) {
+      log(`Groq Whisper returned HTTP ${res.status}`);
+      return null;
+    }
+
+    const data = await res.json();
+    return typeof data?.text === "string" ? data.text.trim().slice(0, 12000) : null;
+  } catch (err) {
+    log(`Groq ASR error: ${err.message}`);
+    return null;
+  }
+}
+
+// Resilient ASR dispatch: Groq Whisper first (ultra-fast), fallback to NVIDIA
 async function transcribeAudio(audioBuffer) {
-  return transcribeAudioNvidia(audioBuffer);
+  if (process.env.GROQ_API_KEY) {
+    const groqResult = await transcribeAudioGroq(audioBuffer);
+    if (groqResult) {
+      log(`Audio successfully transcribed with Groq Whisper: "${groqResult.slice(0, 60)}..."`);
+      return groqResult;
+    }
+  }
+
+  if (process.env.NVIDIA_ASR_ENDPOINT && process.env.NVIDIA_API_KEY) {
+    return transcribeAudioNvidia(audioBuffer);
+  }
+
+  const error = new Error("No operational ASR provider configured");
+  error.code = "ASR_NOT_CONFIGURED";
+  throw error;
 }
 
 // === Message unwrapping (ephemeral, viewOnce, etc.) ===

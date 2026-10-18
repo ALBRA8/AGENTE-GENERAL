@@ -119,21 +119,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Audio too large" }, { status: 413 });
     }
 
-    const asrEndpoint = process.env.NVIDIA_ASR_ENDPOINT;
-    if (!asrEndpoint || !asrEndpoint.trim()) {
-      return NextResponse.json({ error: "Audio transcription is not configured" }, { status: 503 });
-    }
-
-    let asrUrl: URL;
-    try {
-      asrUrl = new URL(asrEndpoint);
-    } catch {
-      return NextResponse.json({ error: "Audio transcription endpoint is invalid" }, { status: 503 });
-    }
-    if (asrUrl.protocol !== "https:") {
-      return NextResponse.json({ error: "Audio transcription endpoint must use HTTPS" }, { status: 503 });
-    }
-
     const audioExtension: Record<string, string> = {
       "audio/webm": "webm",
       "audio/ogg": "ogg",
@@ -142,55 +127,84 @@ export async function POST(request: Request) {
       "audio/mp4": "m4a",
       "audio/x-wav": "wav",
     };
-    const form = new FormData();
-    form.append("language", "es-US");
-    form.append("response_format", "json");
-    form.append(
-      "file",
-      new Blob([audioBytes], { type: audioMime }),
-      `chat-audio.${audioExtension[audioMime]}`,
-    );
 
-    try {
-      const pollSeconds = Math.min(300, Math.max(1, Number.parseInt(process.env.NVIDIA_ASR_POLL_SECONDS || "120", 10) || 120));
-      const timeoutMs = Math.min(300000, Math.max(1000, Number.parseInt(process.env.NVIDIA_ASR_TIMEOUT_MS || "135000", 10) || 135000));
-      const asrKey = nvidiaKey || groqKey || openaiKey || "";
-      const asrResponse = await fetch(asrUrl, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${asrKey}`,
-          "NVCF-POLL-SECONDS": String(pollSeconds),
-        },
-        body: form,
-        signal: AbortSignal.timeout(timeoutMs),
-      });
-      if (!asrResponse.ok) {
-        return NextResponse.json(
-          { error: `Audio transcription provider returned HTTP ${asrResponse.status}` },
-          { status: 502 },
-        );
-      }
+    let transcribed = "";
 
-      let asrResult: { text?: unknown };
+    // 1. Try Groq Whisper first (ultra-fast, ~500ms)
+    if (groqKey) {
       try {
-        asrResult = await asrResponse.json();
-      } catch {
-        return NextResponse.json({ error: "Audio transcription provider returned an invalid response" }, { status: 502 });
-      }
-      const transcribed = typeof asrResult?.text === "string" ? asrResult.text.trim().slice(0, 12000) : "";
-      if (!transcribed) {
-        return NextResponse.json({ content: "🎤 No pude transcribir el audio. ¿Puedes escribirlo?" });
-      }
-      finalMessages = [
-        { role: "system", content: systemContent },
-        { role: "user", content: `El usuario dijo (transcripción de audio): "${transcribed}". Responde al contenido del audio.` },
-      ];
-    } catch {
-      return NextResponse.json(
-        { error: "Audio transcription request failed" },
-        { status: 502 },
-      );
+        const form = new FormData();
+        form.append("language", "es");
+        form.append("model", "whisper-large-v3-turbo");
+        form.append(
+          "file",
+          new Blob([audioBytes], { type: audioMime }),
+          `chat-audio.${audioExtension[audioMime] || "ogg"}`,
+        );
+
+        const groqAsr = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${groqKey}`,
+          },
+          body: form,
+          signal: AbortSignal.timeout(30000),
+        });
+
+        if (groqAsr.ok) {
+          const asrData = await groqAsr.json();
+          if (typeof asrData?.text === "string" && asrData.text.trim()) {
+            transcribed = asrData.text.trim().slice(0, 12000);
+          }
+        }
+      } catch {}
     }
+
+    // 2. Fallback to NVIDIA ASR if configured
+    if (!transcribed && process.env.NVIDIA_ASR_ENDPOINT && process.env.NVIDIA_ASR_ENDPOINT.trim()) {
+      const asrEndpoint = process.env.NVIDIA_ASR_ENDPOINT;
+      try {
+        const asrUrl = new URL(asrEndpoint);
+        if (asrUrl.protocol === "https:") {
+          const form = new FormData();
+          form.append("language", "es-US");
+          form.append("response_format", "json");
+          form.append(
+            "file",
+            new Blob([audioBytes], { type: audioMime }),
+            `chat-audio.${audioExtension[audioMime] || "ogg"}`,
+          );
+
+          const pollSeconds = Math.min(300, Math.max(1, Number.parseInt(process.env.NVIDIA_ASR_POLL_SECONDS || "120", 10) || 120));
+          const timeoutMs = Math.min(300000, Math.max(1000, Number.parseInt(process.env.NVIDIA_ASR_TIMEOUT_MS || "135000", 10) || 135000));
+          const asrKey = nvidiaKey || groqKey || openaiKey || "";
+          const asrResponse = await fetch(asrUrl, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${asrKey}`,
+              "NVCF-POLL-SECONDS": String(pollSeconds),
+            },
+            body: form,
+            signal: AbortSignal.timeout(timeoutMs),
+          });
+          if (asrResponse.ok) {
+            const asrResult = await asrResponse.json().catch(() => ({}));
+            if (typeof asrResult?.text === "string" && asrResult.text.trim()) {
+              transcribed = asrResult.text.trim().slice(0, 12000);
+            }
+          }
+        }
+      } catch {}
+    }
+
+    if (!transcribed) {
+      return NextResponse.json({ content: "🎤 No pude transcribir el audio. Por favor verifica que tu clave de Groq u OpenAI esté activa." });
+    }
+
+    finalMessages = [
+      { role: "system", content: systemContent },
+      { role: "user", content: `El usuario dijo (transcripción de nota de voz): "${transcribed}". Responde a lo que dijo de forma útil y atenta.` },
+    ];
   } else {
     // Normal text
     finalMessages = hasSystem ? messages : [systemPrompt, ...messages];
@@ -199,6 +213,7 @@ export async function POST(request: Request) {
   // 1. Try Groq first for high-speed response
   if (groqKey) {
     try {
+      const targetModel = image ? "qwen/qwen3.8-27b" : "openai/gpt-oss-120b";
       const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
         method: "POST",
         headers: {
@@ -206,7 +221,7 @@ export async function POST(request: Request) {
           Authorization: `Bearer ${groqKey}`,
         },
         body: JSON.stringify({
-          model: "openai/gpt-oss-120b",
+          model: targetModel,
           messages: finalMessages,
           temperature,
           max_tokens: maxTokens,
@@ -219,7 +234,7 @@ export async function POST(request: Request) {
         const data = await res.json();
         const msg = data?.choices?.[0]?.message;
         const content = msg?.content || msg?.reasoning_content || "(sin respuesta)";
-        return NextResponse.json({ content, model: data?.model || "openai/gpt-oss-120b", agent_name: agentName });
+        return NextResponse.json({ content, model: data?.model || targetModel, agent_name: agentName });
       }
     } catch {
       // Fall through to NVIDIA if available
