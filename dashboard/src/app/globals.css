@@ -41,3 +41,18 @@ html, body {
 button, input, textarea, select {
   font-family: inherit;
 }
+
+/* Ocultar botón rojo flotante y dev overlay de Next.js (1 Issue / Next toast) */
+nextjs-portal,
+[data-nextjs-toast],
+[data-nextjs-dialog-overlay],
+[data-nextjs-dev-overlay],
+next-route-announcer,
+div:has(> button[aria-label*="Issue"]),
+button[aria-label*="Issue"],
+div[data-issue-badge] {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}

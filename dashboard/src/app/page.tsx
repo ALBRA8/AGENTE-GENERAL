@@ -468,27 +468,65 @@ function ProviderView() {
   const [testing, setTesting] = useState(false);
   const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [apiKey, setApiKey] = useState("");
-  const [provider, setProvider] = useState("mock");
-  const [baseUrl, setBaseUrl] = useState("");
-  const [model, setModel] = useState("");
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [provider, setProvider] = useState("groq");
+  const [baseUrl, setBaseUrl] = useState("https://api.groq.com/openai/v1");
+  const [model, setModel] = useState("openai/gpt-oss-120b");
   const [temperature, setTemperature] = useState(0.5);
   const [topP, setTopP] = useState(1.0);
   const [maxTokens, setMaxTokens] = useState(1024);
   const [timeoutVal, setTimeoutVal] = useState(60);
 
+  const providerDefaults: Record<string, { base_url: string; model: string }> = {
+    groq: {
+      base_url: "https://api.groq.com/openai/v1",
+      model: "openai/gpt-oss-120b",
+    },
+    google: {
+      base_url: "https://generativelanguage.googleapis.com/v1beta/openai/",
+      model: "gemini-1.5-flash",
+    },
+    nvidia: {
+      base_url: "https://integrate.api.nvidia.com/v1",
+      model: "z-ai/glm-5.3-flash",
+    },
+    openai: {
+      base_url: "https://api.openai.com/v1",
+      model: "gpt-4o-mini",
+    },
+    mock: {
+      base_url: "",
+      model: "mock",
+    },
+  };
+
+  const handleProviderChange = (newP: string) => {
+    setProvider(newP);
+    const def = providerDefaults[newP];
+    if (def) {
+      setBaseUrl(def.base_url);
+      setModel(def.model);
+      const savedKey = (typeof window !== "undefined" ? localStorage.getItem(`albra_key_${newP}`) : null) || "";
+      setApiKey(savedKey);
+    }
+  };
+
   const load = async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/v1/provider/config`);
+      const res = await fetch(`/api/provider-settings`);
       if (res.ok) {
         const cfg = await res.json();
         setConfig(cfg);
-        setProvider(cfg.provider || "mock");
-        setBaseUrl(cfg.base_url || "");
-        setModel(cfg.model || "");
+        const p = cfg.provider || "groq";
+        setProvider(p);
+        setBaseUrl(cfg.base_url || providerDefaults[p]?.base_url || "");
+        setModel(cfg.model || providerDefaults[p]?.model || "");
         setTemperature(cfg.temperature ?? 0.5);
         setTopP(cfg.top_p ?? 1.0);
         setMaxTokens(cfg.max_tokens ?? 1024);
         setTimeoutVal(cfg.timeout ?? 60);
+        const k = cfg.api_key || (typeof window !== "undefined" ? localStorage.getItem(`albra_key_${p}`) : "") || "";
+        setApiKey(k);
       }
     } catch {}
     setLoading(false);
@@ -497,41 +535,79 @@ function ProviderView() {
   useEffect(() => { void Promise.resolve().then(load); }, []);
 
   const save = async () => {
-    setSaving(true); setMsg(null);
+    setSaving(true);
+    setMsg(null);
     try {
-      const res = await fetch(`${API_BASE}/api/v1/provider/config`, {
-        method: "PUT", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider, base_url: baseUrl, model, temperature, top_p: topP, max_tokens: maxTokens, timeout: timeoutVal, stream: false }),
+      const payload = {
+        provider,
+        base_url: baseUrl,
+        model,
+        api_key: apiKey.trim(),
+        temperature,
+        top_p: topP,
+        max_tokens: maxTokens,
+        timeout: timeoutVal,
+      };
+
+      const res = await fetch(`/api/provider-settings`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
       });
+
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setMsg({ type: "ok", text: "Configuración guardada" });
-      if (apiKey.trim()) {
-        const kr = await fetch(`${API_BASE}/api/v1/provider/api-key`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ api_key: apiKey.trim() }) });
-        if (!kr.ok) throw new Error("Error API key");
-        setApiKey("");
-        setMsg({ type: "ok", text: "Configuración + API key guardadas" });
+
+      if (typeof window !== "undefined" && apiKey.trim()) {
+        localStorage.setItem(`albra_key_${provider}`, apiKey.trim());
       }
+
+      setMsg({ type: "ok", text: "✅ Configuración y API Key guardadas con éxito" });
       await load();
-    } catch (e) { setMsg({ type: "err", text: e instanceof Error ? e.message : "Error" }); }
-    finally { setSaving(false); }
+    } catch (e) {
+      setMsg({ type: "err", text: e instanceof Error ? e.message : "Error al guardar" });
+    } finally {
+      setSaving(false);
+    }
   };
 
   const test = async () => {
-    setTesting(true); setMsg(null);
+    setTesting(true);
+    setMsg(null);
     try {
-      const res = await fetch(`${API_BASE}/api/v1/provider/test`, { method: "POST" });
+      const res = await fetch(`/api/provider-settings/test`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider,
+          base_url: baseUrl,
+          model,
+          api_key: apiKey.trim(),
+        }),
+      });
       const d = await res.json();
-      setMsg(d.ok ? { type: "ok", text: `✅ ${d.latency_ms?.toFixed(0) || "?"}ms` } : { type: "err", text: `❌ ${d.message || d.detail}` });
-    } catch { setMsg({ type: "err", text: "No se pudo probar" }); }
-    finally { setTesting(false); }
+      setMsg(
+        d.ok
+          ? { type: "ok", text: `✅ Conexión exitosa (${d.latency_ms?.toFixed(0) || "?"}ms)` }
+          : { type: "err", text: `❌ ${d.message || "Fallo en conexión"}` }
+      );
+    } catch {
+      setMsg({ type: "err", text: "Error de red al probar proveedor" });
+    } finally {
+      setTesting(false);
+    }
   };
 
   const reset = async () => {
-    if (!confirm("¿Restaurar defaults (Mock)?")) return;
+    if (!confirm("¿Restaurar defaults (Groq ultra rápido)?")) return;
     setSaving(true);
-    try { await fetch(`${API_BASE}/api/v1/provider/reset`, { method: "POST" }); await load(); setMsg({ type: "ok", text: "Restaurado" }); }
-    catch { setMsg({ type: "err", text: "Error" }); }
-    finally { setSaving(false); }
+    try {
+      handleProviderChange("groq");
+      setMsg({ type: "ok", text: "Restaurado a Groq" });
+    } catch {
+      setMsg({ type: "err", text: "Error al resetear" });
+    } finally {
+      setSaving(false);
+    }
   };
 
   if (loading) return <div style={{ padding: "2rem", textAlign: "center", color: "var(--muted-fg)" }}>Cargando...</div>;
@@ -541,33 +617,63 @@ function ProviderView() {
       <h2 style={h2Style}>🧠 Proveedor de IA</h2>
       {msg && <div style={{ ...msgStyle, color: msg.type === "ok" ? "var(--success)" : "var(--danger)", background: msg.type === "ok" ? "rgba(16,185,129,0.1)" : "rgba(239,68,68,0.1)" }}>{msg.text}</div>}
 
-      {config && (
-        <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem", flexWrap: "wrap" }}>
-          <Badge ok={config.provider !== "mock"} text={config.provider} />
-          <Badge ok={config.api_key_set} text={config.api_key_set ? "Key ✓" : "Sin key"} />
-          <Badge ok={config.last_test_ok === true} text={config.last_test_ok === true ? "Test OK" : "Sin test"} />
-        </div>
-      )}
+      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem", flexWrap: "wrap" }}>
+        <Badge ok={provider !== "mock"} text={provider.toUpperCase()} />
+        <Badge ok={Boolean(apiKey)} text={apiKey ? "API Key Guardada ✓" : "Sin Key"} />
+        <Badge ok={provider === "groq"} text={provider === "groq" ? "⚡ Alta Velocidad" : "Estándar"} />
+      </div>
 
       <div style={cardStyle}>
         <div style={fieldStyle}>
           <label style={labelStyle}>Proveedor</label>
-          <select value={provider} onChange={(e) => { setProvider(e.target.value); if (e.target.value === "nvidia") { setBaseUrl("https://integrate.api.nvidia.com/v1"); setModel("z-ai/glm-5.3"); } }} style={inputStyle}>
-            <option value="mock">Mock (offline)</option>
-            <option value="nvidia">NVIDIA NIM</option>
+          <select value={provider} onChange={(e) => handleProviderChange(e.target.value)} style={inputStyle}>
+            <option value="groq">Groq (Ultra Rápido — Llama 3.3 / GPT-OSS 120B)</option>
+            <option value="google">Google Gemini (Gemini 1.5 Flash / 2.0)</option>
+            <option value="nvidia">NVIDIA NIM (GLM 5.3 Flash / Llama 3)</option>
+            <option value="openai">OpenAI Oficial (GPT-4o / GPT-4o-mini)</option>
+            <option value="mock">Mock (offline / pruebas)</option>
           </select>
         </div>
         <div style={fieldStyle}>
           <label style={labelStyle}>Base URL</label>
-          <input type="url" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://integrate.api.nvidia.com/v1" style={inputStyle} disabled={provider === "mock"} />
+          <input type="url" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://..." style={inputStyle} disabled={provider === "mock"} />
         </div>
         <div style={fieldStyle}>
           <label style={labelStyle}>Modelo</label>
-          <input type="text" value={model} onChange={(e) => setModel(e.target.value)} placeholder="z-ai/glm-5.3" style={inputStyle} disabled={provider === "mock"} />
+          <input type="text" value={model} onChange={(e) => setModel(e.target.value)} placeholder="openai/gpt-oss-120b" style={inputStyle} disabled={provider === "mock"} />
         </div>
         <div style={fieldStyle}>
-          <label style={labelStyle}>API Key {config?.api_key_set && "(configurada)"}</label>
-          <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={config?.api_key_set ? "••••••••" : "nvapi-..."} style={inputStyle} disabled={provider === "mock"} autoComplete="off" />
+          <label style={labelStyle}>
+            API Key {apiKey ? "(Guardada ✓)" : "(No configurada)"}
+          </label>
+          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+            <input
+              type={showApiKey ? "text" : "password"}
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder={provider === "groq" ? "gsk_..." : provider === "nvidia" ? "nvapi-..." : provider === "google" ? "AIza..." : "sk-..."}
+              style={{ ...inputStyle, flex: 1, fontFamily: showApiKey ? "monospace" : "inherit" }}
+              disabled={provider === "mock"}
+              autoComplete="off"
+            />
+            <button
+              type="button"
+              onClick={() => setShowApiKey(!showApiKey)}
+              style={{
+                ...secondaryBtn,
+                padding: "0.5rem 0.75rem",
+                fontSize: "0.85rem",
+                whiteSpace: "nowrap",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: "0.25rem",
+              }}
+              title={showApiKey ? "Ocultar clave" : "Mostrar clave"}
+            >
+              {showApiKey ? "🙈 Ocultar" : "👁️ Ver"}
+            </button>
+          </div>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
           <div style={fieldStyle}>
@@ -598,6 +704,7 @@ function ProviderView() {
     </div>
   );
 }
+
 
 // =====================================================================
 // TELEGRAM VIEW
@@ -739,7 +846,7 @@ function WhatsAppView() {
 
   useEffect(() => {
     void Promise.resolve().then(loadStatus).finally(() => setLoading(false));
-    // Poll status every 5s — only check if connected/disconnected
+    // Poll status every 4s
     pollRef.current = setInterval(() => {
       fetch(`/api/whatsapp/daemon-proxy?path=/status`)
         .then((r) => r.ok ? r.json() : null)
@@ -754,19 +861,20 @@ function WhatsAppView() {
             setStatus("disconnected");
             setQrCode(null);
             qrCodeRef.current = null;
+          } else if (data.status === "linking") {
+            setStatus("linking");
+            if (!qrCodeRef.current) {
+              fetchQr();
+            }
           }
         })
         .catch(() => {});
-    }, 5000);
+    }, 4000);
 
-    // Refresh QR every 15s when in linking state — before it expires (~20s).
-    // The daemon caches the PNG so identical QR strings don't cause flicker.
-    // Only updates state if the QR string actually changed.
+    // Refresh QR every 10s when in linking state — before Baileys QR expires (~20s).
     qrRefreshRef.current = setInterval(() => {
-      if (qrCodeRef.current !== null) {
-        fetchQr();
-      }
-    }, 15000);
+      fetchQr();
+    }, 10000);
 
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
