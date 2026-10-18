@@ -114,7 +114,7 @@ class OpenAIProvider(LLMProvider):
 
         latency_ms = (time.monotonic() - t0) * 1000.0
         choice = response.choices[0]
-        content = choice.message.content or ""
+        content = choice.message.content or getattr(choice.message, "reasoning_content", None) or ""
 
         tool_calls: list = []
         # Map OpenAI tool_calls to ToolCall shape if present.

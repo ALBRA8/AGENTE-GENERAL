@@ -50,6 +50,7 @@ htmlcov/
 .env
 .env.local
 .env.*.local
+.provider-settings.json
 secrets.json
 secrets.yaml
 *.pem
@@ -68,6 +69,13 @@ Thumbs.db
 # Logs
 logs/
 *.log
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+next-env.d.ts
+tsconfig.tsbuildinfo
 
 # Build artifacts
 *.bak

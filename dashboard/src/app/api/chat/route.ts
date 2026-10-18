@@ -32,11 +32,13 @@ async function getIdentity() {
 }
 
 export async function POST(request: Request) {
-  const apiKey = process.env.NVIDIA_API_KEY;
+  const groqKey = process.env.GROQ_API_KEY;
+  const nvidiaKey = process.env.NVIDIA_API_KEY;
+  const openaiKey = process.env.OPENAI_API_KEY;
 
-  if (!apiKey) {
+  if (!groqKey && !nvidiaKey && !openaiKey) {
     return NextResponse.json(
-      { error: "NVIDIA_API_KEY not configured in .env.local" },
+      { error: "No AI provider key configured in .env.local (GROQ_API_KEY or NVIDIA_API_KEY required)" },
       { status: 500 }
     );
   }
@@ -152,10 +154,11 @@ export async function POST(request: Request) {
     try {
       const pollSeconds = Math.min(300, Math.max(1, Number.parseInt(process.env.NVIDIA_ASR_POLL_SECONDS || "120", 10) || 120));
       const timeoutMs = Math.min(300000, Math.max(1000, Number.parseInt(process.env.NVIDIA_ASR_TIMEOUT_MS || "135000", 10) || 135000));
+      const asrKey = nvidiaKey || groqKey || openaiKey || "";
       const asrResponse = await fetch(asrUrl, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${apiKey}`,
+          Authorization: `Bearer ${asrKey}`,
           "NVCF-POLL-SECONDS": String(pollSeconds),
         },
         body: form,
@@ -193,39 +196,76 @@ export async function POST(request: Request) {
     finalMessages = hasSystem ? messages : [systemPrompt, ...messages];
   }
 
-  try {
-    const res = await fetch(`${NVIDIA_BASE_URL}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: NVIDIA_MODEL,
-        messages: finalMessages,
-        temperature,
-        top_p: 1,
-        max_tokens: maxTokens,
-        stream: false,
-      }),
-      signal: AbortSignal.timeout(60000),
-    });
+  // 1. Try Groq first for high-speed response
+  if (groqKey) {
+    try {
+      const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${groqKey}`,
+        },
+        body: JSON.stringify({
+          model: "openai/gpt-oss-120b",
+          messages: finalMessages,
+          temperature,
+          max_tokens: maxTokens,
+          stream: false,
+        }),
+        signal: AbortSignal.timeout(30000),
+      });
 
-    if (!res.ok) {
+      if (res.ok) {
+        const data = await res.json();
+        const msg = data?.choices?.[0]?.message;
+        const content = msg?.content || msg?.reasoning_content || "(sin respuesta)";
+        return NextResponse.json({ content, model: data?.model || "openai/gpt-oss-120b", agent_name: agentName });
+      }
+    } catch {
+      // Fall through to NVIDIA if available
+    }
+  }
+
+  // 2. Fallback to NVIDIA NIM
+  const targetNvidiaKey = nvidiaKey || openaiKey;
+  if (targetNvidiaKey) {
+    try {
+      const res = await fetch(`${NVIDIA_BASE_URL}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${targetNvidiaKey}`,
+        },
+        body: JSON.stringify({
+          model: NVIDIA_MODEL,
+          messages: finalMessages,
+          temperature,
+          top_p: 1,
+          max_tokens: Math.max(maxTokens, 2048),
+          stream: false,
+        }),
+        signal: AbortSignal.timeout(90000),
+      });
+
+      if (!res.ok) {
+        return NextResponse.json(
+          { error: `Provider API error: HTTP ${res.status}` },
+          { status: res.status >= 400 && res.status < 600 ? res.status : 502 }
+        );
+      }
+
+      const data = await res.json();
+      const msg = data?.choices?.[0]?.message;
+      const content = msg?.content || msg?.reasoning_content || "(sin respuesta)";
+
+      return NextResponse.json({ content, model: data?.model || NVIDIA_MODEL, agent_name: agentName });
+    } catch {
       return NextResponse.json(
-        { error: `NVIDIA API error: HTTP ${res.status}` },
-        { status: res.status >= 400 && res.status < 600 ? res.status : 502 }
+        { error: "Request failed while contacting the configured model provider" },
+        { status: 500 }
       );
     }
-
-    const data = await res.json();
-    const content = data?.choices?.[0]?.message?.content || "(sin respuesta)";
-
-    return NextResponse.json({ content, model: data?.model || NVIDIA_MODEL, agent_name: agentName });
-  } catch (e) {
-    return NextResponse.json(
-      { error: "Request failed while contacting the configured model provider" },
-      { status: 500 }
-    );
   }
+
+  return NextResponse.json({ error: "No operational model provider available" }, { status: 500 });
 }

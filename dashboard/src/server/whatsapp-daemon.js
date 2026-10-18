@@ -245,10 +245,12 @@ function isSupportedImageBuffer(buffer, mime) {
   return false;
 }
 
-// === IA: call NVIDIA chat completion ===
+// === IA: call Groq / NVIDIA chat completion ===
 async function callIA(userText, imageBase64) {
-  const apiKey = process.env.NVIDIA_API_KEY;
-  if (!apiKey) throw new Error("NVIDIA_API_KEY not set");
+  const groqKey = process.env.GROQ_API_KEY;
+  const nvidiaKey = process.env.NVIDIA_API_KEY;
+
+  if (!groqKey && !nvidiaKey) throw new Error("Neither GROQ_API_KEY nor NVIDIA_API_KEY is configured in .env.local");
 
   const identity = getIdentity();
   const systemPrompt = `Eres ${identity.name}, ${identity.role}. Respondes en español de forma clara, concisa y útil. No te identifiques como Claude, ChatGPT, GLM. Tu nombre es ${identity.name}.`;
@@ -273,30 +275,68 @@ async function callIA(userText, imageBase64) {
     ];
   }
 
-  const res = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: "z-ai/glm-5.3-flash",
-      messages,
-      temperature: 0.5,
-      top_p: 1,
-      max_tokens: 1024,
-      stream: false,
-    }),
-    signal: AbortSignal.timeout(60000),
-  });
+  // 1. Try Groq first for sub-second response times if available
+  if (groqKey) {
+    try {
+      const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${groqKey}`,
+        },
+        body: JSON.stringify({
+          model: "openai/gpt-oss-120b",
+          messages,
+          temperature: 0.5,
+          max_tokens: 1024,
+          stream: false,
+        }),
+        signal: AbortSignal.timeout(30000),
+      });
 
-  if (!res.ok) {
-    log(`IA provider returned HTTP ${res.status}`);
-    throw new Error(`IA HTTP ${res.status}`);
+      if (res.ok) {
+        const data = await res.json();
+        const msg = data?.choices?.[0]?.message;
+        const text = msg?.content || msg?.reasoning_content;
+        if (text && text.trim()) return text.trim();
+      } else {
+        log(`Groq returned HTTP ${res.status}, falling back to secondary provider if available`);
+      }
+    } catch (err) {
+      log(`Groq error: ${err.message}, falling back to secondary provider if available`);
+    }
   }
 
-  const data = await res.json();
-  return data?.choices?.[0]?.message?.content || "(sin respuesta)";
+  // 2. Fallback to NVIDIA NIM
+  if (nvidiaKey) {
+    const res = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${nvidiaKey}`,
+      },
+      body: JSON.stringify({
+        model: "z-ai/glm-5.3-flash",
+        messages,
+        temperature: 0.5,
+        top_p: 1,
+        max_tokens: 2048,
+        stream: false,
+      }),
+      signal: AbortSignal.timeout(90000),
+    });
+
+    if (!res.ok) {
+      log(`NVIDIA provider returned HTTP ${res.status}`);
+      throw new Error(`IA HTTP ${res.status}`);
+    }
+
+    const data = await res.json();
+    const msg = data?.choices?.[0]?.message;
+    return msg?.content || msg?.reasoning_content || "(sin respuesta)";
+  }
+
+  throw new Error("No configured IA provider was able to respond");
 }
 
 // === ASR: NVIDIA-hosted Riva/NIM transcription ===
@@ -752,9 +792,13 @@ async function startWhatsApp() {
         const isTimeout = statusCode === 408;
 
         if (isLoggedOut) {
-          log("Logged out (401) — session invalidated, QR rescan required");
+          log("Logged out (401) — session invalidated, clearing stale creds for QR rescan");
           connectionState = "logged_out";
           lastQR = null;
+          try {
+            fs.rmSync(path.join(SESSION_DIR, "creds.json"), { force: true });
+            fs.rmSync(path.join(SESSION_DIR, "creds.json.bak"), { force: true });
+          } catch {}
           // Don't schedule reconnect — user must scan QR again
         } else if (isPostPairingRestart) {
           // === OpenClaw: 515 handling — recreate socket WITHOUT new QR ===
@@ -885,6 +929,12 @@ const server = http.createServer(async (req, res) => {
       if (connectionState === "connected") return sendJSON(res, 200, { ok: true, message: "Already connected" });
       if (startPromise || ["connecting", "linking"].includes(connectionState)) {
         return sendJSON(res, 200, { ok: true, message: "Connection already in progress; check /qr" });
+      }
+      if (connectionState === "logged_out") {
+        try {
+          fs.rmSync(path.join(SESSION_DIR, "creds.json"), { force: true });
+          fs.rmSync(path.join(SESSION_DIR, "creds.json.bak"), { force: true });
+        } catch {}
       }
       reconnectAttempts = 0; // Reset on manual connect
       await startWhatsApp();

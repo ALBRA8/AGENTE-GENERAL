@@ -135,20 +135,36 @@ if PRODUCTION_ENV:
 else:
     runtime.register("authenticator", DevAuthenticator())
 
-# Providers (NVIDIA / OpenAI integration)
-# Accept either NVIDIA_API_KEY or OPENAI_API_KEY so the same env var name
-# works for both NVIDIA NIM (which uses the OpenAI-compatible API) and
-# plain OpenAI. This matches the env var that Render's dashboard sets
-# (NVIDIA_API_KEY) without forcing operators to also set OPENAI_API_KEY.
-openai_key = os.environ.get("NVIDIA_API_KEY") or os.environ.get("OPENAI_API_KEY")
+# Providers (Groq, NVIDIA NIM, OpenAI)
 configured_providers: list[str] = []
-if openai_key:
-    from albra_seed.providers.openai_provider import OpenAIProvider
+from albra_seed.providers.openai_provider import OpenAIProvider
 
-    # NVIDIA NIM is OpenAI-compatible: base_url defaults to NVIDIA's endpoint,
-    # model defaults to z-ai/glm-5.3-flash (the model the dashboard uses).
-    base_url = os.environ.get("OPENAI_BASE_URL") or os.environ.get("NVIDIA_BASE_URL") or "https://integrate.api.nvidia.com/v1"
-    model = os.environ.get("ALBRA_DEFAULT_MODEL", "z-ai/glm-5.3-flash")
+groq_key = os.environ.get("GROQ_API_KEY")
+if groq_key:
+    groq_provider = OpenAIProvider(
+        api_key=groq_key,
+        base_url="https://api.groq.com/openai/v1",
+        model=os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b"),
+    )
+    groq_provider.name = "groq"
+    runtime.register_provider(groq_provider)
+    configured_providers.append("groq")
+
+nvidia_key = os.environ.get("NVIDIA_API_KEY")
+if nvidia_key:
+    nvidia_provider = OpenAIProvider(
+        api_key=nvidia_key,
+        base_url=os.environ.get("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"),
+        model=os.environ.get("NVIDIA_MODEL", "z-ai/glm-5.3-flash"),
+    )
+    nvidia_provider.name = "nvidia"
+    runtime.register_provider(nvidia_provider)
+    configured_providers.append("nvidia")
+
+openai_key = os.environ.get("OPENAI_API_KEY")
+if openai_key and not groq_key and not nvidia_key:
+    base_url = os.environ.get("OPENAI_BASE_URL")
+    model = os.environ.get("ALBRA_DEFAULT_MODEL", "gpt-4o-mini")
     provider = OpenAIProvider(api_key=openai_key, base_url=base_url, model=model)
     runtime.register_provider(provider)
     configured_providers.append("openai")

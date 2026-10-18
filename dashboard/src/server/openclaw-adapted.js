@@ -386,7 +386,7 @@ async function acquireConnectionOwnerLock(authDir) {
     const ageMs = Date.now() - (parsed.timestamp || 0);
     const isStale = ageMs > OWNER_LOCK_STALE_MS;
 
-    if (!isStale && parsed.pid) {
+    if (!isStale && parsed.pid && parsed.pid !== process.pid) {
       // Check if PID is alive
       const isAlive = await isPidAlive(parsed.pid);
       if (isAlive) {
