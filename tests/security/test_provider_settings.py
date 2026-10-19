@@ -262,7 +262,10 @@ class TestSettingsStore:
 
         real_db = tmp_path / "real.db"
         symlink_db = tmp_path / "symlink.db"
-        symlink_db.symlink_to(real_db)
+        try:
+            symlink_db.symlink_to(real_db)
+        except OSError:
+            pytest.skip("creating a symlink is not permitted on this host")
 
         monkeypatch.setattr(store, "_db_path", lambda: symlink_db)
 

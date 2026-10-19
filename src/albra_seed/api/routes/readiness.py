@@ -11,7 +11,7 @@ from albra_seed.runtime.lifecycle import LifecycleManager  # type-only reference
 
 def build_public_readiness_router(ctx: RequestContext) -> Any:
     """Return a FastAPI APIRouter for the public readiness endpoint."""
-    from fastapi import APIRouter  # lazy
+    from fastapi import APIRouter
 
     router = APIRouter(tags=["readiness"])
 

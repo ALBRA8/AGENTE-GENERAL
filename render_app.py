@@ -93,8 +93,24 @@ fw.add_rule(
 )
 runtime.register("firewall", fw)
 
-# HITL Approval Engine
-approval_engine = ApprovalEngine()
+# HITL Approval Engine — durable SQLite storage for production and recovery
+from albra_seed.approvals.sqlite_store import SQLiteApprovalStore
+
+approval_db_path = os.environ.get("APPROVAL_DB_PATH")
+if not approval_db_path:
+    data_dir = os.environ.get("DATA_DIR", os.path.expanduser("~/.local/share/albra"))
+    approval_db_path = os.path.join(data_dir, "approvals.db")
+
+try:
+    approval_store = SQLiteApprovalStore(approval_db_path)
+    approval_engine = ApprovalEngine(store=approval_store)
+except Exception as exc:
+    if PRODUCTION_ENV:
+        raise RuntimeError(
+            f"Failed to initialize durable SQLiteApprovalStore at {approval_db_path}: {exc}"
+        ) from exc
+    approval_engine = ApprovalEngine()
+
 runtime.register("approval_engine", approval_engine)
 
 # RBAC Registries
@@ -181,6 +197,10 @@ else:
 # Providers (Groq, NVIDIA NIM, OpenAI)
 configured_providers: list[str] = []
 from albra_seed.providers.openai_provider import OpenAIProvider
+from albra_seed.providers.registry import ProviderRegistry
+from albra_seed.providers.router import ProviderRouter
+
+provider_reg = ProviderRegistry()
 
 groq_key = os.environ.get("GROQ_API_KEY")
 if groq_key:
@@ -191,6 +211,7 @@ if groq_key:
     )
     groq_provider.name = "groq"
     runtime.register_provider(groq_provider)
+    provider_reg.register(groq_provider)
     configured_providers.append("groq")
 
 nvidia_key = os.environ.get("NVIDIA_API_KEY")
@@ -202,15 +223,26 @@ if nvidia_key:
     )
     nvidia_provider.name = "nvidia"
     runtime.register_provider(nvidia_provider)
+    provider_reg.register(nvidia_provider)
     configured_providers.append("nvidia")
 
 openai_key = os.environ.get("OPENAI_API_KEY")
-if openai_key and not groq_key and not nvidia_key:
+if openai_key:
     base_url = os.environ.get("OPENAI_BASE_URL")
     model = os.environ.get("ALBRA_DEFAULT_MODEL", "gpt-4o-mini")
-    provider = OpenAIProvider(api_key=openai_key, base_url=base_url, model=model)
-    runtime.register_provider(provider)
+    openai_provider = OpenAIProvider(api_key=openai_key, base_url=base_url, model=model)
+    openai_provider.name = "openai"
+    runtime.register_provider(openai_provider)
+    provider_reg.register(openai_provider)
     configured_providers.append("openai")
+
+if configured_providers:
+    router = ProviderRouter(
+        registry=provider_reg,
+        default_provider=configured_providers[0],
+        fallback_chain=configured_providers,
+    )
+    runtime.register("provider_router", router)
 
 # Default Agent
 identity = AgentIdentity(
@@ -242,6 +274,8 @@ async def lifespan(app_instance: any) -> AsyncGenerator[None, None]:
                 "CRITICAL: Production startup aborted. A secure non-mock authenticator must be "
                 "registered in runtime before serving traffic."
             )
+    if runtime.lifecycle.phase == LifecyclePhase.STOPPED:
+        runtime.lifecycle.force(LifecyclePhase.UNINITIALIZED)
     if runtime.lifecycle.phase == LifecyclePhase.UNINITIALIZED:
         await runtime.startup()
     try:

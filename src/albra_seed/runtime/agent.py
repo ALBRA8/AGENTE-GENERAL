@@ -537,11 +537,39 @@ class Agent:
         if retrieved_ids:
             run_ctx.metadata["retrieved_memory_ids"] = retrieved_ids
 
-        provider = self._default_provider()
-        if provider is not None:
-            response = await provider.complete(messages, context=ctx["context"])
-            ctx["draft_response"] = response
-            return {"reasoning": "provider", "draft": response.content}
+        # Candidate providers in priority order (preferring identity.providers)
+        providers_to_try: list[LLMProvider] = []
+        for name in self.identity.providers:
+            p = self.runtime.get_provider(name)
+            if p is not None and p not in providers_to_try:
+                providers_to_try.append(p)
+        if not providers_to_try:
+            default_p = self._default_provider()
+            if default_p is not None:
+                providers_to_try.append(default_p)
+
+        if providers_to_try:
+            for p in providers_to_try:
+                try:
+                    response = await p.complete(messages, context=ctx["context"])
+                    if response.errors:
+                        log.warning(
+                            "provider.error",
+                            provider=getattr(p, "name", "unknown"),
+                            errors=response.errors,
+                        )
+                        continue
+                    ctx["draft_response"] = response
+                    run_ctx.providers_used.append(getattr(p, "name", "provider"))
+                    return {"reasoning": "provider", "draft": response.content}
+                except Exception as exc:  # noqa: BLE001
+                    log.warning(
+                        "provider.exception",
+                        provider=getattr(p, "name", "unknown"),
+                        error=str(exc),
+                    )
+                    continue
+
         router = self.runtime.get_component(COMPONENT_PROVIDER_ROUTER)
         if router is not None:
             # Provider router is responsible for routing + fallbacks.

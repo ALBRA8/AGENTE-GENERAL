@@ -36,6 +36,9 @@ services:
       # Sin esto, Render aceptaría el dev token "albra-dev-token" en producción.
       - key: APP_ENV
         value: production
+      # ALBRA_API_KEY requerido en producción para autenticación Bearer segura (mínimo 32 caracteres)
+      - key: ALBRA_API_KEY
+        sync: false
       # ALBRA_CORS_ORIGINS debe listarse explícitamente en producción.
       # Render se niega a arrancar si esto falta (RuntimeError al hacer import).
       - key: ALBRA_CORS_ORIGINS
@@ -44,8 +47,13 @@ services:
       # Si no, cae a ~/.local/share/albra — no persistente pero funcional.
       - key: DATA_DIR
         value: /var/data
-      # NVIDIA_API_KEY debe configurarse manualmente en Render dashboard
-      # (Environment tab) porque es un secreto y no debe versionarse.
-      # Sin esto, /api/v1/agent/info da providers:[] y el chat no funciona.
+      # APPROVAL_DB_PATH almacena durablemente el registro SQLite de HITL
+      - key: APPROVAL_DB_PATH
+        value: /var/data/approvals.db
+      # Proveedores de IA (configurar secretos en Render dashboard)
+      - key: GROQ_API_KEY
+        sync: false
       - key: NVIDIA_API_KEY
-        sync: false  # marca como secreto — Render pedirá valor al crear
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
