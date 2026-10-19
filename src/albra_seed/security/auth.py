@@ -120,9 +120,76 @@ class NoopAuthenticator(Authenticator):
         )
 
 
+class TokenAuthenticator(Authenticator):
+    """Production-grade Bearer token / API key authenticator.
+
+    Enforces:
+      - Minimum token length of 32 characters (high entropy, prevents weak tokens).
+      - Constant-time token verification via `hmac.compare_digest` to prevent timing attacks.
+      - Safe representation (`__repr__`) and error handling that never leaks credentials.
+      - Returns a verified, non-anonymous `AuthPrincipal` with configured identity and roles.
+    """
+
+    name: str = "token"
+    is_mock: bool = False
+
+    def __init__(
+        self,
+        token: str,
+        *,
+        identity: str = "admin",
+        roles: list[str] | None = None,
+        auth_method: str = "bearer",
+    ) -> None:
+        if not isinstance(token, str) or len(token.strip()) < 32:
+            raise ValueError(
+                "TokenAuthenticator requires a token string of at least 32 characters"
+            )
+        self._token: str = token.strip()
+        self._identity: str = identity
+        self._roles: list[str] = list(roles) if roles is not None else ["reviewer"]
+        self._auth_method: str = auth_method
+
+    def __repr__(self) -> str:
+        # Never include secret token in representation.
+        return f"<TokenAuthenticator identity={self._identity!r} roles={self._roles!r} method={self._auth_method!r}>"
+
+    async def authenticate(self, credentials: Any) -> AuthPrincipal:
+        import hmac
+
+        if not isinstance(credentials, str) or not credentials.strip():
+            raise AuthenticationError("invalid credentials")
+        if not hmac.compare_digest(credentials.strip(), self._token):
+            raise AuthenticationError("invalid bearer token")
+        return AuthPrincipal(
+            kind="user",
+            identity=self._identity,
+            roles=self._roles,
+            auth_method=self._auth_method,
+            is_anonymous=False,
+        )
+
+    async def verify(self, token: str | None) -> AuthPrincipal | None:
+        import hmac
+
+        if not token or not isinstance(token, str) or not token.strip():
+            return None
+        if not hmac.compare_digest(token.strip(), self._token):
+            return None
+        return AuthPrincipal(
+            kind="user",
+            identity=self._identity,
+            roles=self._roles,
+            auth_method=self._auth_method,
+            is_anonymous=False,
+        )
+
+
 __all__ = [
     "AuthPrincipal",
     "Authenticator",
     "AuthenticationError",
     "NoopAuthenticator",
+    "TokenAuthenticator",
 ]
+

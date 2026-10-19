@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import os
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncGenerator
 
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,7 +17,7 @@ from albra_seed.policy.engine import PolicyEngine
 from albra_seed.policy.rules import PolicyRule, PolicyRuleSet
 from albra_seed.runtime.agent import Agent
 from albra_seed.runtime.lifecycle import LifecyclePhase
-from albra_seed.security.auth import AuthPrincipal
+from albra_seed.security.auth import AuthPrincipal, TokenAuthenticator
 from albra_seed.security.permissions import PermissionRegistry
 from albra_seed.security.roles import Role, RoleRegistry
 
@@ -105,12 +105,22 @@ perm_reg.grant("reviewer", "approval:list")
 perm_reg.grant("reviewer", "approval:decide")
 perm_reg.grant("reviewer", "approval:resume")
 perm_reg.grant("reviewer", "execution:run")
+perm_reg.grant("reviewer", "execution:read")
 perm_reg.grant("reviewer", "audio:transcribe")
+perm_reg.grant("reviewer", "diagnostics:read")
 runtime.register("permission_registry", perm_reg)
 
 # Policy Engine
 rules = PolicyRuleSet()
-for act in ["approval:list", "approval:decide", "approval:resume", "execution:run", "audio:transcribe"]:
+for act in [
+    "approval:list",
+    "approval:decide",
+    "approval:resume",
+    "execution:run",
+    "execution:read",
+    "audio:transcribe",
+    "diagnostics:read",
+]:
     rules.add(
         PolicyRule(
             name=f"allow-{act}",
@@ -124,16 +134,49 @@ for act in ["approval:list", "approval:decide", "approval:resume", "execution:ru
 policy_engine = PolicyEngine(rule_set=rules, permission_registry=perm_reg)
 runtime.register("policy_engine", policy_engine)
 
-# Authenticator — production-safe wiring. The dev authenticator is NEVER
-# registered when PRODUCTION_ENV is true. Operators must register a real
-# authenticator (e.g. via runtime.register("authenticator", ...)) before
-# starting the server in production; otherwise every authenticated
-# endpoint returns 503 (authenticator is not configured).
+
+def _resolve_auth_token() -> str:
+    """Resolve authentication token with strict conflict detection.
+
+    If both ALBRA_API_KEY and ALBRA_AUTH_TOKEN are set, they must match exactly;
+    any contradiction is rejected to prevent ambiguous or weak credential overrides.
+    """
+    key = os.environ.get("ALBRA_API_KEY", "").strip()
+    alt = os.environ.get("ALBRA_AUTH_TOKEN", "").strip()
+    if key and alt and key != alt:
+        raise RuntimeError(
+            "Conflicting authentication configuration: ALBRA_API_KEY and ALBRA_AUTH_TOKEN "
+            "are both set with different values. Remove ALBRA_AUTH_TOKEN or ensure they match."
+        )
+    return key or alt
+
+
+# Authenticator — production-safe wiring.
+# In production (PRODUCTION_ENV=True), a valid ALBRA_API_KEY (or ALBRA_AUTH_TOKEN)
+# of at least 32 characters must be configured.
+# If missing, empty, or insecure (< 32 chars), the authenticator slot remains empty,
+# and lifespan will explicitly abort server startup with RuntimeError.
+# In dev mode, TokenAuthenticator is used if a >= 32 char token is configured,
+# otherwise DevAuthenticator falls back to local dev credentials.
+prod_auth_token = _resolve_auth_token()
+
 if PRODUCTION_ENV:
-    # No dev fallback in production — fail closed by leaving the slot empty.
-    pass
+    if len(prod_auth_token) >= 32:
+        runtime.register(
+            "authenticator",
+            TokenAuthenticator(prod_auth_token, identity="admin", roles=["reviewer"]),
+        )
+    else:
+        # In production without valid token, leave slot empty (lifespan aborts on startup).
+        pass
 else:
-    runtime.register("authenticator", DevAuthenticator())
+    if len(prod_auth_token) >= 32:
+        runtime.register(
+            "authenticator",
+            TokenAuthenticator(prod_auth_token, identity="admin", roles=["reviewer"]),
+        )
+    else:
+        runtime.register("authenticator", DevAuthenticator())
 
 # Providers (Groq, NVIDIA NIM, OpenAI)
 configured_providers: list[str] = []
@@ -181,6 +224,24 @@ agent = Agent(identity=identity, runtime=runtime)
 
 @asynccontextmanager
 async def lifespan(app_instance: any) -> AsyncGenerator[None, None]:
+    if PRODUCTION_ENV:
+        token = _resolve_auth_token()
+        if not token:
+            raise RuntimeError(
+                "CRITICAL: Production startup aborted. ALBRA_API_KEY (or ALBRA_AUTH_TOKEN) "
+                "must be configured in production. The server refuses to start unauthenticated."
+            )
+        if len(token) < 32:
+            raise RuntimeError(
+                f"CRITICAL: Production startup aborted. ALBRA_API_KEY must be at least 32 "
+                f"characters in production (got {len(token)}). Weak credentials are rejected."
+            )
+        auth = runtime.get_component("authenticator")
+        if auth is None or getattr(auth, "is_mock", True):
+            raise RuntimeError(
+                "CRITICAL: Production startup aborted. A secure non-mock authenticator must be "
+                "registered in runtime before serving traffic."
+            )
     if runtime.lifecycle.phase == LifecyclePhase.UNINITIALIZED:
         await runtime.startup()
     try:
