@@ -570,6 +570,22 @@ class Agent:
                     )
                     continue
 
+            # If candidate providers were attempted and all failed,
+            # fail closed with a controlled error rather than falling back to
+            # a router/mock that masks the outage as success.
+            provider_names = ", ".join(getattr(p, "name", "unknown") for p in providers_to_try)
+            error_msg = f"All configured providers failed ({provider_names})"
+            run_ctx.errors.append(error_msg)
+            error_response = AgentResponse(
+                execution_id=run_ctx.execution_id,
+                correlation_id=run_ctx.correlation_id,
+                agent_id=self.identity.agent_id,
+                content="Error: Service temporarily unavailable. All configured LLM providers failed.",
+                errors=[error_msg],
+            )
+            ctx["draft_response"] = error_response
+            return {"reasoning": "failed", "draft": error_response.content}
+
         router = self.runtime.get_component(COMPONENT_PROVIDER_ROUTER)
         if router is not None:
             # Provider router is responsible for routing + fallbacks.

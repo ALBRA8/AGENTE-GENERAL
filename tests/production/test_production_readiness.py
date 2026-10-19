@@ -250,24 +250,3 @@ def test_readiness_probe_returns_200_when_ready() -> None:
         data = res.json()
         assert data["ready"] is True
         assert data["phase"] == "ready"
-
-
-# =============================================================================
-# 4. Render Blueprint Configuration Tests
-# =============================================================================
-
-
-def test_render_yaml_contains_all_required_production_declarations() -> None:
-    """Validate render.yaml configuration has all necessary environment keys."""
-    yaml_path = Path("render.yaml")
-    assert yaml_path.exists(), "render.yaml must exist in root"
-    content = yaml_path.read_text(encoding="utf-8")
-
-    assert "APP_ENV" in content
-    assert "production" in content
-    assert "ALBRA_API_KEY" in content
-    assert "APPROVAL_DB_PATH" in content
-    assert "GROQ_API_KEY" in content
-    assert "NVIDIA_API_KEY" in content
-    assert "OPENAI_API_KEY" in content
-    assert "healthCheckPath: /api/v1/health" in content

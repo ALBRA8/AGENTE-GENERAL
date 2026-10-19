@@ -100,6 +100,4 @@ token.
 CI tests cover CORS rejection/default-off behavior, request-size rejection, rate-limit thresholds and headers, and invalid limiter configuration. A live deployment check is still required to verify HTTP-to-HTTPS redirect, certificate validity, proxy header trust, and edge-level distributed rate limiting. Do not mark production readiness complete until these deployment checks and the dashboard build/security scan have passed in CI and the deployed environment.
 
 
-### Dashboard API destination allowlist
-
-The dashboard sends its administrator bearer token only to `NEXT_PUBLIC_API_BASE` when its origin matches `NEXT_PUBLIC_ALLOWED_API_ORIGINS`. Set the latter to a comma-separated list of exact trusted API origins, for example `https://api.example.com`. The default allowlist contains only `https://agente-general.onrender.com`. Localhost is permitted for development only. Never add origins controlled by untrusted users.
+The dashboard sends its administrator bearer token only to `NEXT_PUBLIC_API_BASE` when its origin matches `NEXT_PUBLIC_ALLOWED_API_ORIGINS`. Set the latter to a comma-separated list of exact trusted API origins, for example `https://api.example.com`. Localhost is permitted for development only. Never add origins controlled by untrusted users.

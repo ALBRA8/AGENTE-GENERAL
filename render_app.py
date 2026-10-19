@@ -27,25 +27,15 @@ load_dotenv(dotenv_path=env_file)
 
 # ---------------------------------------------------------------------------
 # Environment detection — production deployments must NOT silently fall
-# back to insecure dev credentials. Two independent signals are used:
+# back to insecure dev credentials. Standard APP_ENV is used:
 #
-#   * APP_ENV: explicit environment tag ("production" | "dev" | "staging" | ...)
-#   * PYTHONPATH or process env indicating a containerized/Cloud Run/Render
-#     deployment (presence of RENDER or DYNO env vars).
+#   * APP_ENV: explicit environment tag ("production" | "prod")
 #
-# A non-dev environment requires the operator to provide a real
-# authenticator via ALBRA_AUTHENTICATOR_MODULE / ALBRA_AUTHENTICATOR_CLASS
-# (resolved at runtime through runtime.register()). If neither is wired
-# and we are in production, the app refuses to register DevAuthenticator
-# and every authenticated request will fail with 503 — that is the
-# safe-by-default posture required by the security review.
+# In production, the app requires a valid ALBRA_API_KEY (>= 32 chars)
+# and refuses to register DevAuthenticator.
 # ---------------------------------------------------------------------------
 def _is_production_env() -> bool:
-    if os.environ.get("APP_ENV", "").lower() in {"production", "prod"}:
-        return True
-    if os.environ.get("RENDER") or os.environ.get("DYNO"):
-        return True
-    return False
+    return os.environ.get("APP_ENV", "").strip().lower() in {"production", "prod"}
 
 
 PRODUCTION_ENV = _is_production_env()

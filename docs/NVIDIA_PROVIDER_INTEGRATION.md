@@ -126,17 +126,15 @@ python -m pytest tests/ -q --ignore=tests/llm_real
 All tests use mocks — NO real NVIDIA API calls are made during the test
 suite.
 
-## Deploying to Render
+## Production Deployment
 
-1. Set `SETTINGS_ENCRYPTION_KEY` in Render's environment variables
+1. Set `SETTINGS_ENCRYPTION_KEY` in your environment variables
    (generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`).
 2. Optionally set `ALBRA_PROVIDER_CONFIG_DB` to a path on a persistent
-   disk (e.g. `/data/provider_config.db`). If using Render's ephemeral
-   filesystem, the config will NOT survive redeploys.
-3. Install the `cryptography` package: add `cryptography>=42.0.0` to
-   Render's build requirements, or install with
-   `pip install 'albra-seed[crypto]'`.
-4. The startup command remains unchanged:
+   volume (e.g. `/var/data/provider_config.db`).
+3. Install dependencies with:
+   `pip install -e '.[api,crypto]'`.
+4. Run the production ASGI server:
    `uvicorn render_app:app --host 0.0.0.0 --port $PORT`
 
 ## What happens when the provider is down

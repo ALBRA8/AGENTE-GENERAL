@@ -3,8 +3,8 @@
 import { useState } from "react";
 
 const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE || "https://agente-general.onrender.com";
-const DEFAULT_ALLOWED_API_ORIGINS = ["https://agente-general.onrender.com"];
+  process.env.NEXT_PUBLIC_API_BASE || "http://localhost:9000";
+const DEFAULT_ALLOWED_API_ORIGINS = ["http://localhost:9000"];
 const ALLOWED_API_ORIGINS = (
   process.env.NEXT_PUBLIC_ALLOWED_API_ORIGINS ||
   DEFAULT_ALLOWED_API_ORIGINS.join(",")

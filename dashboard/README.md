@@ -131,7 +131,7 @@ que el daemon cargó desde el mismo `.env.local`.
 
 | Variable | Descripción | Default |
 |---|---|---|
-| `NEXT_PUBLIC_API_BASE` | URL del backend ALBRA SEED | `https://agente-general.onrender.com` |
+| `NEXT_PUBLIC_API_BASE` | URL del backend ALBRA SEED | `http://localhost:9000` |
 | `DASHBOARD_ACCESS_USER` | Usuario para proteger dashboard y endpoints en producción | Obligatorio en producción |
 | `DASHBOARD_ACCESS_PASSWORD` | Contraseña de acceso al dashboard (larga y única) | Obligatorio en producción |
 | `INTERNAL_API_SECRET` | Secreto interno compartido con el daemon WhatsApp (mínimo 32 caracteres) | Obligatorio para habilitar el proxy WhatsApp |
