@@ -21,6 +21,7 @@ from albra_seed.core.types import (
     RunContext,
 )
 from albra_seed.providers.registry import ProviderRegistry
+from albra_seed.security.output_redaction import redact_secrets
 
 log = structlog.get_logger("albra.providers.fallback")
 
@@ -74,7 +75,7 @@ class ProviderFallback:
                 latency = (time.monotonic() - t0) * 1000.0
                 # If response has explicit errors, treat as failure.
                 if response.errors:
-                    last_error = "; ".join(response.errors)
+                    last_error = "; ".join(redact_secrets(str(e)) for e in response.errors)
                     self._record_transition(name, "error", latency, last_error, idx)
                     health = self.registry.health_for(name)
                     if health is not None:
@@ -94,7 +95,7 @@ class ProviderFallback:
                 return response
             except Exception as exc:
                 latency = (time.monotonic() - t0) * 1000.0
-                last_error = f"{type(exc).__name__}: {exc}"
+                last_error = redact_secrets(f"{type(exc).__name__}: {exc}")
                 self._record_transition(name, "exception", latency, last_error, idx)
                 health = self.registry.health_for(name)
                 if health is not None:

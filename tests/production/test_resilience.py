@@ -230,13 +230,15 @@ async def test_response_errors_and_invalid_json_trigger_fallback() -> None:
 
 
 # =====================================================================
-# 5. Diagnostic records provider without exposing secrets
+# 5. Diagnostic records provider without exposing secrets in logs or responses
 # =====================================================================
 
 
 @pytest.mark.asyncio
-async def test_provider_diagnostic_without_exposing_secrets() -> None:
-    """Diagnostic tracing tracks provider used and redacts potential API key leaks."""
+async def test_provider_diagnostic_without_exposing_secrets(capsys) -> None:
+    """Diagnostic tracing tracks provider used and redacts potential API key leaks from logs and responses."""
+    import structlog.testing
+
     secret_key = "gsk_live_secret_key_999888777666555444333222111"
     groq = SimulatedProvider("groq", fail_mode="429", secret_leak=secret_key)
     nvidia = SimulatedProvider("nvidia", response_text="Safe answer from NVIDIA")
@@ -249,7 +251,8 @@ async def test_provider_diagnostic_without_exposing_secrets() -> None:
         task="Test secret redaction in resilience",
     )
 
-    response = await agent.run("Check secret redaction", session=session, context=ctx)
+    with structlog.testing.capture_logs() as captured_logs:
+        response = await agent.run("Check secret redaction", session=session, context=ctx)
 
     # Provider used is identified
     assert ctx.providers_used == ["nvidia"]
@@ -264,6 +267,15 @@ async def test_provider_diagnostic_without_exposing_secrets() -> None:
         str(ctx.errors),
     ):
         assert secret_key not in surface
+
+    # Secret is NOT present in structlog captured logs
+    for log_entry in captured_logs:
+        assert secret_key not in str(log_entry)
+
+    # Secret is NOT present in stdout or stderr
+    captured_stdio = capsys.readouterr()
+    assert secret_key not in captured_stdio.out
+    assert secret_key not in captured_stdio.err
 
 
 # =====================================================================
@@ -280,4 +292,72 @@ async def test_hitl_recovery_integrity_verified(tmp_path) -> None:
 
     # Execute the existing durable HITL recovery test
     await test_restart_recovery_dispatches_only_the_exact_saved_call(tmp_path)
+
+
+# =====================================================================
+# 7. Empty provider list fails closed without Mock
+# =====================================================================
+
+
+@pytest.mark.asyncio
+async def test_empty_providers_list_fails_closed_without_mock() -> None:
+    """When identity.providers is empty, the agent fails closed and never returns a mock success."""
+    cfg = SeedConfig()
+    rt = Runtime(config=cfg)
+    identity = AgentIdentity(
+        name="no-providers-agent",
+        version="1.0.0",
+        providers=[],  # Explicitly empty
+    )
+    agent = Agent(identity=identity, runtime=rt)
+
+    session = Session(agent_id=agent.identity.agent_id)
+    ctx = RunContext(
+        agent_id=agent.identity.agent_id,
+        session_id=session.session_id,
+        task="Test empty providers list",
+    )
+
+    response = await agent.run("Hello empty providers", session=session, context=ctx)
+
+    assert "[mock]" not in response.content.lower()
+    assert "Error: Service temporarily unavailable" in response.content
+    assert any("No LLM providers configured" in err for err in response.errors)
+    assert ctx.status == ExecutionStatus.FAILED
+    assert ctx.providers_used == []
+
+
+# =====================================================================
+# 8. Production environment rejects MockProvider as success
+# =====================================================================
+
+
+@pytest.mark.asyncio
+async def test_production_env_rejects_mock_as_success(monkeypatch) -> None:
+    """In production (APP_ENV=production), mock provider cannot masquerade as successful LLM completion."""
+    monkeypatch.setenv("APP_ENV", "production")
+
+    cfg = SeedConfig()
+    rt = Runtime(config=cfg)
+    # Default AgentIdentity has providers=["mock"], but in production Mock is rejected
+    identity = AgentIdentity(
+        name="mock-in-production-agent",
+        version="1.0.0",
+        providers=["mock"],
+    )
+    agent = Agent(identity=identity, runtime=rt)
+
+    session = Session(agent_id=agent.identity.agent_id)
+    ctx = RunContext(
+        agent_id=agent.identity.agent_id,
+        session_id=session.session_id,
+        task="Test mock in production",
+    )
+
+    response = await agent.run("Hello mock in production", session=session, context=ctx)
+
+    assert "[mock]" not in response.content.lower()
+    assert "Error: Service temporarily unavailable" in response.content
+    assert any("No real LLM providers" in err or "Mock provider responses are rejected" in err for err in response.errors)
+    assert ctx.status == ExecutionStatus.FAILED
 

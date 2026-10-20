@@ -18,6 +18,7 @@ only identity + a reference to the Runtime.
 from __future__ import annotations
 
 import asyncio
+import os
 import uuid
 from typing import TYPE_CHECKING, Any
 
@@ -25,6 +26,7 @@ import structlog
 
 from albra_seed.core.base import LLMProvider
 from albra_seed.core.identity import AgentIdentity
+from albra_seed.security.output_redaction import redact_secrets
 from albra_seed.core.types import (
     AgentResponse,
     AutonomyLevel,
@@ -538,6 +540,22 @@ class Agent:
             run_ctx.metadata["retrieved_memory_ids"] = retrieved_ids
 
         # Candidate providers in priority order (preferring identity.providers)
+        is_production = os.environ.get("APP_ENV", "").strip().lower() in {"production", "prod"}
+
+        # If identity.providers is explicitly empty, fail closed immediately
+        if not self.identity.providers:
+            error_msg = "No LLM providers configured for execution"
+            run_ctx.errors.append(error_msg)
+            error_response = AgentResponse(
+                execution_id=run_ctx.execution_id,
+                correlation_id=run_ctx.correlation_id,
+                agent_id=self.identity.agent_id,
+                content="Error: Service temporarily unavailable. No LLM providers configured.",
+                errors=[error_msg],
+            )
+            ctx["draft_response"] = error_response
+            return {"reasoning": "failed", "draft": error_response.content}
+
         providers_to_try: list[LLMProvider] = []
         for name in self.identity.providers:
             p = self.runtime.get_provider(name)
@@ -548,25 +566,43 @@ class Agent:
             if default_p is not None:
                 providers_to_try.append(default_p)
 
+        # In production, filter out MockProvider from candidate providers
+        if is_production:
+            providers_to_try = [p for p in providers_to_try if not getattr(p, "is_mock", False)]
+            if not providers_to_try:
+                error_msg = "No real LLM providers configured or available in production"
+                run_ctx.errors.append(error_msg)
+                error_response = AgentResponse(
+                    execution_id=run_ctx.execution_id,
+                    correlation_id=run_ctx.correlation_id,
+                    agent_id=self.identity.agent_id,
+                    content="Error: Service temporarily unavailable. No real LLM providers available in production.",
+                    errors=[error_msg],
+                )
+                ctx["draft_response"] = error_response
+                return {"reasoning": "failed", "draft": error_response.content}
+
         if providers_to_try:
             for p in providers_to_try:
                 try:
                     response = await p.complete(messages, context=ctx["context"])
                     if response.errors:
+                        safe_errors = [redact_secrets(str(e)) for e in response.errors]
                         log.warning(
                             "provider.error",
                             provider=getattr(p, "name", "unknown"),
-                            errors=response.errors,
+                            errors=safe_errors,
                         )
                         continue
                     ctx["draft_response"] = response
                     run_ctx.providers_used.append(getattr(p, "name", "provider"))
                     return {"reasoning": "provider", "draft": response.content}
                 except Exception as exc:  # noqa: BLE001
+                    safe_err = redact_secrets(str(exc))
                     log.warning(
                         "provider.exception",
                         provider=getattr(p, "name", "unknown"),
-                        error=str(exc),
+                        error=safe_err,
                     )
                     continue
 
@@ -590,11 +626,42 @@ class Agent:
         if router is not None:
             # Provider router is responsible for routing + fallbacks.
             response = await router.complete(messages, context=ctx["context"])
+            # In production, do not allow router to return mock responses as success.
+            if is_production and (
+                response.content.startswith("[mock]")
+                or response.metadata.get("provider") == "mock"
+                or getattr(response, "is_mock", False)
+            ):
+                error_msg = "Mock provider responses are rejected in production"
+                run_ctx.errors.append(error_msg)
+                error_response = AgentResponse(
+                    execution_id=run_ctx.execution_id,
+                    correlation_id=run_ctx.correlation_id,
+                    agent_id=self.identity.agent_id,
+                    content="Error: Service temporarily unavailable. No real LLM providers available.",
+                    errors=[error_msg],
+                )
+                ctx["draft_response"] = error_response
+                return {"reasoning": "failed", "draft": error_response.content}
+
             ctx["draft_response"] = response
             run_ctx.providers_used.append(getattr(router, "name", "router"))
             return {"reasoning": "router", "draft": response.content}
-        # No provider and no router — emit a no-op draft so the rest of
-        # the loop can proceed (CORE_ONLY graceful degradation).
+
+        # No provider and no router — fail closed if in production or providers were empty
+        if is_production or not self.identity.providers:
+            error_msg = "No LLM providers available"
+            run_ctx.errors.append(error_msg)
+            error_response = AgentResponse(
+                execution_id=run_ctx.execution_id,
+                correlation_id=run_ctx.correlation_id,
+                agent_id=self.identity.agent_id,
+                content="Error: Service temporarily unavailable. No LLM providers available.",
+                errors=[error_msg],
+            )
+            ctx["draft_response"] = error_response
+            return {"reasoning": "failed", "draft": error_response.content}
+
         return {"reasoning": "no-provider", "draft": ctx["RECEIVE"]["content"]}
 
     async def _phase_plan(self, agent: Agent, ctx: dict[str, Any]) -> dict[str, Any]:
