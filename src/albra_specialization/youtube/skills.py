@@ -111,7 +111,7 @@ def _handler(client: YoutubeHarnessClient, operation: str,
     return handler
 
 
-# ── definición de las 9 skills (mandato §14) ────────────────────────
+# ── definición de las 11 skills (mandato §14 + PB-02 de INT-015) ────
 def build_youtube_skills(client: YoutubeHarnessClient
                          ) -> list[tuple[SkillContract, SkillHandler]]:
     """Devuelve [(contrato, handler)] para registrar en SkillRegistry."""
@@ -173,6 +173,20 @@ def build_youtube_skills(client: YoutubeHarnessClient
                              "project_id": {"type": "string"},
                              "deep": {"type": "boolean"}}), True,
          None),  # preflight vs doctor según argumentos
+        # ── P3-B (PB-02): skills justificadas por INT-015 ───────────
+        ("skill.youtube.validate", RiskLevel.LOW, _P_READ,
+         "Valida un Creative Production JSON en el arnés SIN crear nada: "
+         "errores estructurales, avisos y normalizaciones. Cierra el flujo "
+         "seguro del host: salud → validar → submit → launch.",
+         _object_schema(["production_json"],
+                        {"production_json": {"type": "object"}}), True,
+         "youtube.validate_production"),
+        ("skill.youtube.system_status", RiskLevel.LOW, _P_READ,
+         "Salud del arnés: disponibilidad de proveedores (nvidia/gemini/"
+         "whisper/youtube_publish) y contadores de proyectos por estado. "
+         "Comprobación natural antes de launch.",
+         _object_schema([], {}), True,
+         "youtube.system_status"),
     ]
 
     out: list[tuple[SkillContract, SkillHandler]] = []

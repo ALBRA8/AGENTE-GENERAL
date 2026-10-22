@@ -27,10 +27,14 @@ _SKILL_ACTIONS = [
     "skill.youtube.publish",
     "skill.youtube.flow_status",
     "skill.youtube.doctor",
+    # P3-B (PB-02): skills read-only justificadas por INT-015
+    "skill.youtube.validate",
+    "skill.youtube.system_status",
 ]
 
 _READ_SKILLS = {"skill.youtube.status", "skill.youtube.qa",
-                "skill.youtube.flow_status", "skill.youtube.doctor"}
+                "skill.youtube.flow_status", "skill.youtube.doctor",
+                "skill.youtube.validate", "skill.youtube.system_status"}
 _HITL_SKILLS = {"skill.youtube.publish"}
 
 
