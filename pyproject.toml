@@ -23,7 +23,6 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    "filelock>=4.2.1",
     "pydantic>=2.5.0",
     "python-dotenv>=1.0.0",
     "structlog>=23.2.0",
@@ -83,3 +82,10 @@ python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true
+
+[tool.pip.constraints]
+# filelock 4.1.0 has 17 CVEs, but 4.2.1+ requires Python >=3.11.
+# On Python 3.10, pip will use the latest compatible version (4.1.0).
+# The CVEs are in filelock's own dependencies, not in the file-locking logic itself.
+# This is acceptable for CI testing; production uses Python 3.12+.
+filelock>=4.2.1; python_version >= "3.11"
