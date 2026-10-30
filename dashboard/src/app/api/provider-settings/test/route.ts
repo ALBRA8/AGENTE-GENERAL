@@ -42,6 +42,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true, latency_ms, message: "Conexión exitosa" });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ ok: false, message: err.message || "Error al conectar" }, { status: 200 });
+    return NextResponse.json({ ok: false, message: message || "Error al conectar" }, { status: 200 });
   }
 }
