@@ -98,6 +98,6 @@ export async function PUT(request: Request) {
     return NextResponse.json({ ok: true, config: toSave });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: err.message || "Failed to save" }, { status: 500 });
+    return NextResponse.json({ error: message || "Failed to save" }, { status: 500 });
   }
 }
