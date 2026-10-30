@@ -40,7 +40,7 @@ export async function POST(request: Request) {
     }
 
     return NextResponse.json({ ok: true, latency_ms, message: "Conexión exitosa" });
-  } catch (err: any) {
+  } catch (err: unknown) {
     return NextResponse.json({ ok: false, message: err.message || "Error al conectar" }, { status: 200 });
   }
 }

@@ -65,7 +65,7 @@ export async function PUT(request: Request) {
 
     // Also update .env.local dynamically
     try {
-      let envContent = await readFile(ENV_LOCAL_FILE, "utf-8").catch(() => "");
+      const envContent = await readFile(ENV_LOCAL_FILE, "utf-8").catch(() => "");
       const lines = envContent.split("\n");
       const envMap: Record<string, string> = {};
       for (const line of lines) {
@@ -96,7 +96,7 @@ export async function PUT(request: Request) {
     } catch {}
 
     return NextResponse.json({ ok: true, config: toSave });
-  } catch (err: any) {
+  } catch (err: unknown) {
     return NextResponse.json({ error: err.message || "Failed to save" }, { status: 500 });
   }
 }
