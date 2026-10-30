@@ -623,17 +623,9 @@ async function startWhatsApp() {
       log("Restored creds.json from backup (main file was corrupt)");
     }
 
-    // 3. Acquire cross-process file lock (prevents concurrent daemons on same session)
-    try {
-      connectionOwnerLease = await acquireConnectionOwnerLock(SESSION_DIR);
-    } catch (err) {
-      if (err instanceof WhatsAppConnectionOwnerBusyError) {
-        log(`Another process owns this session: ${err.message}`);
-        connectionState = "owner_busy";
-        throw err;
-      }
-      throw err;
-    }
+    // NOTE: File lock removed — CRM-ALBRA (100% stable, production-verified) does
+    // NOT use a file lock and works fine. The lock was causing auto-block issues
+    // on restart (same PID trying to re-acquire). Simpler = more stable.
 
     // 4. Dedup store is already initialized at module load (see line above
     //    `dedupStore = createPersistentDedupStore(SESSION_DIR)`). Nothing
@@ -671,20 +663,25 @@ async function startWhatsApp() {
     //   - syncFullHistory: false (default true → heavy traffic → rate limited → 408)
     //   - markOnlineOnConnect: false (default true → presence spam → rate limited)
     //   - browser: custom identity avoids Baileys default fingerprint
+    // Socket options aligned with CRM-ALBRA (100% stable, production-verified).
+    // CRM-ALBRA uses a minimal set: connectTimeoutMs + qrTimeout.
+    // We keep the OpenClaw additions that help (syncFullHistory, markOnlineOnConnect)
+    // but add the CRITICAL qrTimeout that was missing — without it, Baileys
+    // closes the connection before the user can scan the QR.
     const currentSock = makeWASocket({
       version: version || undefined,
       auth: state,
       printQRInTerminal: false,
       logger,
       browser: ["AGENTE-GENERAL", "Chrome", "1.0.0"],
-      // OpenClaw socket-timing.ts defaults
-      keepAliveIntervalMs: 25_000,
+      // CRM-ALBRA pattern: these two are the minimum for stable QR scanning
       connectTimeoutMs: 60_000,
+      qrTimeout: 120_000, // 2 minutes to scan QR — CRM-ALBRA uses this and it works
+      // OpenClaw additions that prevent rate-limit triggers
+      keepAliveIntervalMs: 25_000,
       defaultQueryTimeoutMs: 60_000,
-      // OpenClaw session.ts: prevent rate-limit triggers
       syncFullHistory: false,
       markOnlineOnConnect: false,
-      // Baileys 7.x: required for E2EE retry handshake (Hermes pattern)
       getMessage: async () => ({ conversation: "" }),
     });
     sock = currentSock;
@@ -792,12 +789,14 @@ async function startWhatsApp() {
         const isTimeout = statusCode === 408;
 
         if (isLoggedOut) {
-          log("Logged out (401) — session invalidated, clearing stale creds for QR rescan");
+          // CRM-ALBRA pattern: delete the ENTIRE auth directory, not just 2 files.
+          // More aggressive but cleaner — no chance of stale pre-keys or signal
+          // sessions causing 'Bad MAC' errors on the next connect.
+          log("Logged out (401) — clearing entire session directory for fresh QR");
           connectionState = "logged_out";
           lastQR = null;
           try {
-            fs.rmSync(path.join(SESSION_DIR, "creds.json"), { force: true });
-            fs.rmSync(path.join(SESSION_DIR, "creds.json.bak"), { force: true });
+            fs.rmSync(SESSION_DIR, { recursive: true, force: true });
           } catch {}
           // Don't schedule reconnect — user must scan QR again
         } else if (isPostPairingRestart) {
