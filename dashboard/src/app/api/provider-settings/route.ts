@@ -65,7 +65,7 @@ export async function PUT(request: Request) {
 
     // Also update .env.local dynamically
     try {
-      let envContent = await readFile(ENV_LOCAL_FILE, "utf-8").catch(() => "");
+      const envContent = await readFile(ENV_LOCAL_FILE, "utf-8").catch(() => "");
       const lines = envContent.split("\n");
       const envMap: Record<string, string> = {};
       for (const line of lines) {
