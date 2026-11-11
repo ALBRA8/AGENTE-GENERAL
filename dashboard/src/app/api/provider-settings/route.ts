@@ -96,7 +96,7 @@ export async function PUT(request: Request) {
     } catch {}
 
     return NextResponse.json({ ok: true, config: toSave });
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message || "Failed to save" }, { status: 500 });
+  } catch (err: unknown) {
+    return NextResponse.json({ error: (err instanceof Error ? err.message : String(err)) || "Failed to save" }, { status: 500 });
   }
 }
