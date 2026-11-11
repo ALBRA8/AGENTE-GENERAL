@@ -114,10 +114,12 @@ jobs:
 
       - name: Dependency vulnerability audit
         # Audit the resolved runtime + CI dependency environment, including transitive packages.
+        # --skip-editable: albra-seed is installed in editable mode (pip install -e .)
+        # and pip-audit can't audit editable packages — it errors instead of skipping.
         # This does not replace a lockfile or a production-image/SBOM audit.
         run: |
           python -m pip install --upgrade "setuptools>=83.0.0" pip-audit
-          pip-audit
+          pip-audit --skip-editable
 
       - name: Clean-room verification
         # 16 real PASS/FAIL gates + 1 informational scope-doc check R
