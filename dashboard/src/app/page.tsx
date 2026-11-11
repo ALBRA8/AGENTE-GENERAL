@@ -133,6 +133,7 @@ function ChatView() {
   const [agentName, setAgentName] = useState("AGENTE GENERAL");
   const [attachedImage, setAttachedImage] = useState<string | null>(null);
   const [attachedImageName, setAttachedImageName] = useState<string>("");
+  const [attachedDocument, setAttachedDocument] = useState<{ text: string; filename: string } | null>(null);
   const [recording, setRecording] = useState(false);
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
   const [audioChunks, setAudioChunks] = useState<Blob[]>([]);
@@ -158,25 +159,70 @@ function ChatView() {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages]);
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type.toLowerCase())) {
-      setError("Adjunta una imagen PNG, JPEG o WebP");
-      e.target.value = "";
-      return;
+
+    const isImage = file.type.startsWith("image/");
+    const isDocument = [
+      "application/pdf",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/msword",
+      "application/vnd.ms-excel",
+      "text/plain",
+      "text/csv",
+      "text/markdown",
+      "application/json",
+      "application/rtf",
+    ].includes(file.type.toLowerCase()) || /\.(pdf|docx?|xlsx?|txt|csv|md|json|rtf)$/i.test(file.name);
+
+    if (isImage) {
+      if (!["image/jpeg", "image/png", "image/webp"].includes(file.type.toLowerCase())) {
+        setError("Adjunta una imagen PNG, JPEG o WebP");
+        e.target.value = "";
+        return;
+      }
+      if (file.size > 8 * 1024 * 1024) {
+        setError("La imagen debe pesar máximo 8 MiB");
+        e.target.value = "";
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        setAttachedImage(reader.result as string);
+        setAttachedImageName(file.name);
+      };
+      reader.readAsDataURL(file);
+    } else if (isDocument) {
+      if (file.size > 10 * 1024 * 1024) {
+        setError("El documento debe pesar máximo 10 MiB");
+        e.target.value = "";
+        return;
+      }
+
+      setError(null);
+      // Upload to /api/chat/document for parsing
+      const formData = new FormData();
+      formData.append("file", file);
+
+      try {
+        const res = await fetch("/api/chat/document", { method: "POST", body: formData });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          setError(data.error || `Error procesando documento (HTTP ${res.status})`);
+          e.target.value = "";
+          return;
+        }
+        const data = await res.json();
+        setAttachedDocument({ text: data.text, filename: data.filename });
+      } catch {
+        setError("No se pudo procesar el documento. Verifica tu conexión.");
+      }
+    } else {
+      setError("Formato no soportado. Acepta: imágenes, PDF, Word, Excel, TXT, CSV, MD, JSON, RTF");
     }
-    if (file.size > 8 * 1024 * 1024) {
-      setError("La imagen debe pesar máximo 8 MiB");
-      e.target.value = "";
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      setAttachedImage(reader.result as string);
-      setAttachedImageName(file.name);
-    };
-    reader.readAsDataURL(file);
+    e.target.value = "";
   };
 
   const startRecording = async () => {
@@ -247,9 +293,23 @@ function ChatView() {
   };
 
   const send = async () => {
-    if ((!input.trim() && !attachedImage) || sending) return;
-    const content = input.trim() || (attachedImage ? "📷 Imagen" : "");
-    const userMsg: ChatMessage = { id: Math.random().toString(36).slice(2), role: "user", content: attachedImage ? `${content}\n📷 ${attachedImageName}` : content };
+    if ((!input.trim() && !attachedImage && !attachedDocument) || sending) return;
+
+    let content = input.trim();
+    let displayContent = content;
+
+    if (attachedImage) {
+      content = content || "Analiza esta imagen";
+      displayContent = `${content}\n📷 ${attachedImageName}`;
+    }
+
+    if (attachedDocument) {
+      const docContent = `📎 Documento: ${attachedDocument.filename}\n\n--- Contenido del documento ---\n${attachedDocument.text}\n--- Fin del documento ---\n\n${content || "Analiza este documento y responde cualquier pregunta sobre su contenido."}`;
+      content = docContent;
+      displayContent = `${input.trim() || "📎 Analizando documento"}\n📄 ${attachedDocument.filename}`;
+    }
+
+    const userMsg: ChatMessage = { id: Math.random().toString(36).slice(2), role: "user", content: displayContent };
     const pendingMsg: ChatMessage = { id: "pending", role: "assistant", content: "", pending: true };
     setMessages((p) => [...p, userMsg, pendingMsg]);
     setInput("");
@@ -268,7 +328,7 @@ function ChatView() {
         body: JSON.stringify({
           messages: history,
           temperature: 0.5,
-          max_tokens: 1024,
+          max_tokens: 2048,
           ...(attachedImage ? { image: attachedImage } : {}),
         }),
       });
@@ -283,6 +343,7 @@ function ChatView() {
       setMessages((p) => p.map((m) => m.id === "pending" ? { ...m, id: Math.random().toString(36).slice(2), content: reply, pending: false } : m));
       setAttachedImage(null);
       setAttachedImageName("");
+      setAttachedDocument(null);
     } catch (e) {
       const err = e instanceof Error ? e.message : "Error";
       setMessages((p) => p.map((m) => m.id === "pending" ? { ...m, id: Math.random().toString(36).slice(2), content: `❌ ${err}`, pending: false, error: true } : m));
@@ -310,7 +371,7 @@ function ChatView() {
       <div ref={scrollRef} style={messagesContainerStyle}>
         {messages.length === 0 && (
           <div style={{ textAlign: "center", color: "var(--muted-fg)", padding: "2rem", fontSize: "0.875rem" }}>
-            💬 Escribe un mensaje, adjunta una imagen o graba audio para conversar con el agente.
+            💬 Escribe un mensaje, adjunta una imagen 📷 o documento 📄 (PDF, Word, Excel, TXT), o graba audio 🎤 para conversar con el agente.
           </div>
         )}
         {messages.map((msg) => (
@@ -331,16 +392,28 @@ function ChatView() {
         </div>
       )}
 
+      {/* Document preview */}
+      {attachedDocument && (
+        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.5rem", padding: "0.5rem", background: "var(--muted)", borderRadius: "0.5rem" }}>
+          <span style={{ fontSize: "1.5rem" }}>📄</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: "0.8rem", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{attachedDocument.filename}</div>
+            <div style={{ fontSize: "0.7rem", color: "var(--muted-fg)" }}>{attachedDocument.text.length} caracteres extraídos</div>
+          </div>
+          <button onClick={() => setAttachedDocument(null)} style={smallBtn}>✕</button>
+        </div>
+      )}
+
       {error && <div style={errorBannerStyle}>⚠️ {error}</div>}
 
       {/* Input bar with + and mic */}
-      <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept="image/*" style={{ display: "none" }} />
+      <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept="image/*,.pdf,.docx,.doc,.xlsx,.xls,.txt,.csv,.md,.json,.rtf" style={{ display: "none" }} />
       <div style={{ display: "flex", gap: "0.4rem", marginTop: "0.5rem", alignItems: "flex-end" }}>
         <button
           onClick={() => fileInputRef.current?.click()}
           disabled={sending}
           style={iconBtn}
-          title="Adjuntar imagen"
+          title="Adjuntar imagen o documento (PDF, Word, Excel, TXT...)"
         >
           ＋
         </button>
