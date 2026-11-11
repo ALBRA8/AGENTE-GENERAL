@@ -16,11 +16,14 @@
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^6.7.0",
+    "mammoth": "^1.8.0",
     "next": "^16.0.0",
+    "pdfjs-dist": "^4.7.76",
     "pino": "^9.0.0",
     "qrcode": "^1.5.4",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@playwright/test": "^1.56.1",
