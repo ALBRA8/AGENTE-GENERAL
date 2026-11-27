@@ -41,8 +41,11 @@ class InMemoryMemoryStore(MemoryStore):
         context_id: str | None = None,
         memory_type: MemoryType | None = None,
         limit: int = 50,
+        org_id: str | None = None,
     ) -> list[MemoryRecord]:
-        want = MemoryIsolator.key_for(agent_id, domain, user_id, context_id)
+        # T9: org bucket included in the comparison — None normalizes to "",
+        # so legacy (org-less) records never match an org-scoped query.
+        want = MemoryIsolator.key_for(agent_id, domain, user_id, context_id, org_id)
         results: list[MemoryRecord] = []
         for record in self._records.values():
             have = MemoryIsolator.key_for(
@@ -50,6 +53,7 @@ class InMemoryMemoryStore(MemoryStore):
                 record.domain,
                 record.user_id,
                 record.context_id,
+                getattr(record, "org_id", None),
             )
             if have != want:
                 continue
@@ -78,11 +82,21 @@ class InMemoryMemoryStore(MemoryStore):
             }
             return True
 
-    async def count(self, *, agent_id: str, domain: str = "default") -> int:
+    async def count(
+        self,
+        *,
+        agent_id: str,
+        domain: str = "default",
+        org_id: str | None = None,
+    ) -> int:
         n = 0
         for record in self._records.values():
-            if record.agent_id == agent_id and record.domain == domain:
-                n += 1
+            if record.agent_id != agent_id or record.domain != domain:
+                continue
+            record_org = getattr(record, "org_id", None) or ""
+            if record_org != (org_id or ""):
+                continue
+            n += 1
         return n
 
     async def update(self, record_id: str, **fields: Any) -> MemoryRecord | None:

@@ -140,12 +140,15 @@ class MemoryRetriever:
         user_id: str | None = None,
         context_id: str | None = None,
         limit: int | None = None,
+        org_id: str | None = None,
     ) -> list[RetrievedMemory]:
         """Retrieve ranked memories for the given query + isolation dims.
 
-        The composite isolation key ``(agent_id, domain, user_id,
+        The composite isolation key ``(org_id, agent_id, domain, user_id,
         context_id)`` is enforced by the underlying store's ``query()`` —
-        we never re-implement isolation here. Records returned by the
+        we never re-implement isolation here (T9, S4.4: the org bucket is
+        part of the key, so cross-organization recall is impossible).
+        Records returned by the
         store but whose lifecycle state is ``DELETED`` / ``FORGOTTEN`` /
         ``ARCHIVED`` (i.e. ``is_alive == False``) are excluded.
 
@@ -176,6 +179,7 @@ class MemoryRetriever:
                 user_id=user_id,
                 context_id=context_id,
                 limit=limit if limit is not None else self._config.candidate_limit,  # bounded pool before ranking
+                org_id=org_id,
             )
         except Exception:  # noqa: BLE001
             # CORE_ONLY safety: a store error must NOT crash the reasoning

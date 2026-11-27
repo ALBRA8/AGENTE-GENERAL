@@ -97,6 +97,10 @@ class Session(BaseModel):
     user_id: str | None = None
     context_id: str | None = None
     domain: str = "default"
+    # T9 (S4.4): tenant organization that owns this session. Propagated to
+    # RunContext and memory ops so tenant runs stay org-scoped. None keeps
+    # legacy (non-tenant) sessions unchanged.
+    org_id: str | None = None
     messages: list[Message] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=utc_now)
@@ -268,13 +272,15 @@ class RunContext(BaseModel):
     # Isolation dimensions (MEM-WRITE). These mirror the Session fields of
     # the same name and are propagated from `session` by `Agent.run()` so the
     # agent loop (RECORD phase in particular) can write memory into the
-    # correct (agent_id, domain, user_id, context_id) isolation bucket without
-    # re-fetching the Session. Defaults keep existing call sites working — a
-    # RunContext constructed without a Session stays in the "default" domain
-    # with no user/context, exactly as before.
+    # correct (org_id, agent_id, domain, user_id, context_id) isolation
+    # bucket without re-fetching the Session. Defaults keep existing call
+    # sites working — a RunContext constructed without a Session stays in the
+    # "default" domain with no user/context, exactly as before.
     user_id: str | None = None
     context_id: str | None = None
     domain: str = "default"
+    # T9 (S4.4): tenant organization bucket (see Session.org_id).
+    org_id: str | None = None
     # Free-form metadata (MEM-READ). Cross-cutting per-run data lives here so
     # phases can record auxiliary provenance (e.g. ``retrieved_memory_ids``)
     # without needing bespoke RunContext fields for every signal. Default

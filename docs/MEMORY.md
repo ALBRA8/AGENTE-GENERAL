@@ -34,16 +34,22 @@ class MemoryType(str, Enum):
 
 **Location**: `albra_seed/memory/isolator.py`
 
-Every memory record lives in a bucket keyed by a 4-tuple:
+Every memory record lives in a bucket keyed by a 5-tuple (S4.4/T9: the
+tenant organization is the FIRST component):
 
 ```
-(agent_id, domain, user_id, context_id)
+(org_id, agent_id, domain, user_id, context_id)
 ```
 
 `MemoryIsolator.key_for(...)` produces an immutable `MemoryKey`. Two records
-are in the same bucket iff ALL four components match.
+are in the same bucket iff ALL five components match. `org_id=None` is
+normalized to `""` — the LEGACY bucket, byte-for-byte compatible with keys
+written before S4.4 — and never mixes with an org-scoped bucket. When
+`agent_id` carries the tenant identity prefix `org:<X>`, an explicit
+`org_id` MUST equal `X` (`assert_org_consistent` raises `PermissionError`
+otherwise); org ids must match the `org_<id>` platform format.
 
-### 2.1 Why four components?
+### 2.1 Why five components?
 
 | Component     | Purpose                                                           | Example                              |
 | ------------- | ---------------------------------------------------------------- | ------------------------------------ |
@@ -393,7 +399,7 @@ responsible for its own domain memories (with provenance + evidence).
 
 These invariants are enforced by code AND covered by tests:
 
-- [x] Memory isolated by composite key `(agent_id, domain, user_id, context_id)`.
+- [x] Memory isolated by composite key `(org_id, agent_id, domain, user_id, context_id)` — tenant org first (S4.4/T9); legacy `org_id=None` bucket stays readable and never crosses into an org bucket.
 - [x] Provenance attached automatically on every `remember()`.
 - [x] `is_fact=True` requires `evidence_ids` non-empty.
 - [x] FACT evidence requires `confidence >= 0.9` AND qualifying `source_type`.

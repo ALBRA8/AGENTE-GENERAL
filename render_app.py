@@ -24,6 +24,11 @@ from albra_seed.security.roles import Role, RoleRegistry
 env_file = Path(__file__).resolve().parent / ".env"
 load_dotenv(dotenv_path=env_file)
 
+# CRM dispatch bridge (R-AG-1, S4.4) — hosted integration from the
+# specialization layer; mounted through the generic extra_extensions hook
+# so the universal seed stays domain-neutral (contamination invariant).
+from albra_specialization.crm.bridge import install_crm_dispatch as _install_crm_dispatch
+
 
 # ---------------------------------------------------------------------------
 # Environment detection — production deployments must NOT silently fall
@@ -106,11 +111,21 @@ perm_reg.grant("reviewer", "approval:decide")
 perm_reg.grant("reviewer", "approval:resume")
 perm_reg.grant("reviewer", "execution:run")
 perm_reg.grant("reviewer", "audio:transcribe")
+# CRM bridge (R-AG-1, S4.4): the CRM adapter's principal may dispatch
+# conversation turns through the versioned contract.
+perm_reg.grant("reviewer", "crm:dispatch")
 runtime.register("permission_registry", perm_reg)
 
 # Policy Engine
 rules = PolicyRuleSet()
-for act in ["approval:list", "approval:decide", "approval:resume", "execution:run", "audio:transcribe"]:
+for act in [
+    "approval:list",
+    "approval:decide",
+    "approval:resume",
+    "execution:run",
+    "audio:transcribe",
+    "crm:dispatch",
+]:
     rules.add(
         PolicyRule(
             name=f"allow-{act}",
@@ -123,6 +138,19 @@ for act in ["approval:list", "approval:decide", "approval:resume", "execution:ru
     )
 policy_engine = PolicyEngine(rule_set=rules, permission_registry=perm_reg)
 runtime.register("policy_engine", policy_engine)
+
+# Tenant memory (T9, S4.4): organization-scoped memory for the CRM bridge.
+# The SQLite store isolates every record by
+# (org_id, agent_id, domain, user_id, context_id); set ALBRA_MEMORY_DB to a
+# file path for durable memory (default :memory: keeps dev runs hermetic).
+from albra_seed.memory.manager import MemoryManager
+from albra_seed.memory.sqlite_store import SQLiteMemoryStore
+
+_memory_db = os.environ.get("ALBRA_MEMORY_DB", ":memory:")
+memory_store = SQLiteMemoryStore(_memory_db)
+runtime.register_memory_store("default", memory_store)
+runtime.register("memory_store", memory_store)
+runtime.register("memory_manager", MemoryManager(store=memory_store))
 
 # Authenticator — production-safe wiring. The dev authenticator is NEVER
 # registered when PRODUCTION_ENV is true. Operators must register a real
@@ -190,7 +218,11 @@ async def lifespan(app_instance: any) -> AsyncGenerator[None, None]:
             await runtime.shutdown()
 
 
-app = create_app(runtime, agents={identity.agent_id: agent})
+app = create_app(
+    runtime,
+    agents={identity.agent_id: agent},
+    extra_extensions=[_install_crm_dispatch],
+)
 app.router.lifespan_context = lifespan
 
 

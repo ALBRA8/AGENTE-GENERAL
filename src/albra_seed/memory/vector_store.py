@@ -55,6 +55,7 @@ class VectorMemoryStore(MemoryStore):
             "domain": record.domain,
             "user_id": record.user_id or "",
             "context_id": record.context_id or "",
+            "org_id": record.org_id or "",
             "memory_type": record.memory_type.value,
             "confidence": float(record.confidence),
             "is_fact": int(bool(record.is_fact)),
@@ -79,12 +80,16 @@ class VectorMemoryStore(MemoryStore):
         context_id: str | None = None,
         memory_type: MemoryType | None = None,
         limit: int = 50,
+        org_id: str | None = None,
     ) -> list[MemoryRecord]:
+        # T9: org bucket in the metadata filter — legacy ("") and org-scoped
+        # records can never cross.
         where: dict[str, Any] = {
             "agent_id": agent_id,
             "domain": domain,
             "user_id": user_id or "",
             "context_id": context_id or "",
+            "org_id": org_id or "",
         }
         if memory_type is not None:
             where["memory_type"] = memory_type.value
@@ -105,11 +110,19 @@ class VectorMemoryStore(MemoryStore):
         del self._records[record_id]
         return True
 
-    async def count(self, *, agent_id: str, domain: str = "default") -> int:
+    async def count(
+        self,
+        *,
+        agent_id: str,
+        domain: str = "default",
+        org_id: str | None = None,
+    ) -> int:
         return sum(
             1
             for r in self._records.values()
-            if r.agent_id == agent_id and r.domain == domain
+            if r.agent_id == agent_id
+            and r.domain == domain
+            and (getattr(r, "org_id", None) or "") == (org_id or "")
         )
 
     async def search(
@@ -121,12 +134,14 @@ class VectorMemoryStore(MemoryStore):
         user_id: str | None = None,
         context_id: str | None = None,
         n_results: int = 5,
+        org_id: str | None = None,
     ) -> list[MemoryRecord]:
         where: dict[str, Any] = {
             "agent_id": agent_id,
             "domain": domain,
             "user_id": user_id or "",
             "context_id": context_id or "",
+            "org_id": org_id or "",
         }
         res = self._collection.query(
             query_texts=[query],
