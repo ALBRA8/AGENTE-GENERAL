@@ -2,7 +2,11 @@
 
 Uses stdlib `sqlite3` only — no extra deps for the default stack.
 Auto-creates the schema. Stores JSON-serialized records.
-Composite index on (agent_id, domain, user_id, context_id).
+Composite index on (org_id, agent_id, domain, user_id, context_id) —
+T9 (S4.4): ``org_id`` is the tenant dimension. Existing databases are
+migrated additively (ALTER TABLE ADD COLUMN org_id); legacy rows keep
+``org_id = NULL`` → the legacy "" bucket, which can never mix with
+org-scoped records.
 """
 
 from __future__ import annotations
@@ -25,6 +29,7 @@ CREATE TABLE IF NOT EXISTS memory_records (
     domain TEXT NOT NULL DEFAULT 'default',
     user_id TEXT,
     context_id TEXT,
+    org_id TEXT,
     memory_type TEXT NOT NULL,
     content_json TEXT NOT NULL,
     confidence REAL NOT NULL DEFAULT 0.0,
@@ -49,6 +54,13 @@ CREATE TABLE IF NOT EXISTS memory_tombstones (
 );
 """
 
+# T9 index — created AFTER the legacy migration adds the org_id column, so
+# opening a pre-S4.4 database never fails at schema-script time.
+_SCHEMA_ORG_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_memory_iso_org
+    ON memory_records(COALESCE(org_id, ''), agent_id, domain, user_id, context_id);
+"""
+
 
 class SQLiteMemoryStore(MemoryStore):
     """SQLite-backed memory store. Strict isolation by composite key."""
@@ -68,7 +80,23 @@ class SQLiteMemoryStore(MemoryStore):
         else:
             Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
             self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
+        # Name-based row access. MANDATORY for legacy migrations: ALTER TABLE
+        # ADD COLUMN appends org_id AFTER full_json, so positional access
+        # (row[-1]) would read the wrong column on migrated databases.
+        self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
+        # T9 legacy migration: databases created before S4.4 lack the org_id
+        # column. Add it additively — existing rows keep NULL (legacy bucket).
+        columns = {
+            row[1] for row in self._conn.execute(
+                "PRAGMA table_info(memory_records)"
+            ).fetchall()
+        }
+        if "org_id" not in columns:
+            self._conn.execute(
+                "ALTER TABLE memory_records ADD COLUMN org_id TEXT"
+            )
+        self._conn.executescript(_SCHEMA_ORG_INDEX)
         self._conn.commit()
 
     def _serialize(self, record: MemoryRecord) -> dict[str, Any]:
@@ -81,10 +109,11 @@ class SQLiteMemoryStore(MemoryStore):
             self._conn.execute(
                 """
                 INSERT OR REPLACE INTO memory_records
-                (record_id, agent_id, domain, user_id, context_id, memory_type,
-                 content_json, confidence, is_fact, provenance_id, execution_id,
-                 correlation_id, version, created_at, modified_at, full_json)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                (record_id, agent_id, domain, user_id, context_id, org_id,
+                 memory_type, content_json, confidence, is_fact, provenance_id,
+                 execution_id, correlation_id, version, created_at, modified_at,
+                 full_json)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     record.record_id,
@@ -92,6 +121,7 @@ class SQLiteMemoryStore(MemoryStore):
                     record.domain,
                     record.user_id,
                     record.context_id,
+                    record.org_id,
                     record.memory_type.value,
                     json.dumps(data.get("content")),
                     float(record.confidence),
@@ -109,7 +139,7 @@ class SQLiteMemoryStore(MemoryStore):
         return record.record_id
 
     def _deserialize(self, row: sqlite3.Row | tuple) -> MemoryRecord:
-        full = row[-1] if isinstance(row, tuple) else row["full_json"]
+        full = row["full_json"] if not isinstance(row, tuple) else row[-1]
         return MemoryRecord.model_validate_json(full)
 
     async def read(self, record_id: str) -> MemoryRecord | None:
@@ -133,16 +163,21 @@ class SQLiteMemoryStore(MemoryStore):
         context_id: str | None = None,
         memory_type: MemoryType | None = None,
         limit: int = 50,
+        org_id: str | None = None,
     ) -> list[MemoryRecord]:
+        # T9: the org bucket is part of the key — COALESCE maps legacy NULL
+        # rows to "" so they can never match an org-scoped query.
         sql = (
             "SELECT * FROM memory_records WHERE agent_id = ? AND domain = ? "
-            "AND COALESCE(user_id, '') = ? AND COALESCE(context_id, '') = ?"
+            "AND COALESCE(user_id, '') = ? AND COALESCE(context_id, '') = ? "
+            "AND COALESCE(org_id, '') = ?"
         )
         params: list[Any] = [
             agent_id,
             domain,
             user_id or "",
             context_id or "",
+            org_id or "",
         ]
         if memory_type is not None:
             sql += " AND memory_type = ?"
@@ -181,12 +216,19 @@ class SQLiteMemoryStore(MemoryStore):
             self._conn.commit()
         return True
 
-    async def count(self, *, agent_id: str, domain: str = "default") -> int:
+    async def count(
+        self,
+        *,
+        agent_id: str,
+        domain: str = "default",
+        org_id: str | None = None,
+    ) -> int:
         with self._lock:
             assert self._conn is not None
             cur = self._conn.execute(
-                "SELECT COUNT(*) FROM memory_records WHERE agent_id = ? AND domain = ?",
-                (agent_id, domain),
+                "SELECT COUNT(*) FROM memory_records "
+                "WHERE agent_id = ? AND domain = ? AND COALESCE(org_id, '') = ?",
+                (agent_id, domain, org_id or ""),
             )
             (n,) = cur.fetchone()
         return int(n)

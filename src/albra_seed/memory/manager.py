@@ -9,6 +9,13 @@ Wraps a concrete MemoryStore and adds:
 
 Strict isolation is enforced on every call.
 
+T9 (S4.4): every operation accepts ``org_id`` — the tenant organization
+that owns the memory. The organization is validated against the D-014 agent
+identity on EVERY operation (remember/recall/get/forget/consolidate/
+cleanup/count), and every store query filters on the org bucket, so a
+caller scoped to organization A can never read, list, mutate or delete
+records of organization B.
+
 FACT-rule integrity is delegated to `MemoryProvenance.validate_fact` — the
 SINGLE source of truth. This module does NOT re-implement fact validation.
 """
@@ -56,6 +63,7 @@ class MemoryManager:
         domain: str = "default",
         user_id: str | None = None,
         context_id: str | None = None,
+        org_id: str | None = None,
         confidence: float = 0.0,
         source: str = "agent",
         source_type: str = "agent",
@@ -64,6 +72,10 @@ class MemoryManager:
         correlation_id: str | None = None,
         is_fact: bool = False,
     ) -> MemoryRecord:
+        # T9: validate the org/agent tenant boundary BEFORE building anything.
+        if org_id is not None:
+            MemoryIsolator.validate_org_id(org_id)
+            MemoryIsolator.assert_org_consistent(agent_id, org_id)
         # Build the record first so the unified FACT rule can see all fields.
         record = MemoryRecord(
             record_id=new_id("mem"),
@@ -71,6 +83,7 @@ class MemoryManager:
             domain=domain,
             user_id=user_id,
             context_id=context_id,
+            org_id=org_id,
             memory_type=memory_type,
             content=content,
             confidence=confidence,
@@ -98,6 +111,7 @@ class MemoryManager:
             record.domain,
             record.user_id,
             record.context_id,
+            record.org_id,
         )
         await self.store.write(record)
         self.lifecycle.record_created(record.record_id, by=source)
@@ -112,7 +126,11 @@ class MemoryManager:
         context_id: str | None = None,
         memory_type: MemoryType | None = None,
         limit: int = 50,
+        org_id: str | None = None,
     ) -> list[MemoryRecord]:
+        if org_id is not None:
+            MemoryIsolator.validate_org_id(org_id)
+            MemoryIsolator.assert_org_consistent(agent_id, org_id)
         records = await self.store.query(
             agent_id=agent_id,
             domain=domain,
@@ -120,6 +138,7 @@ class MemoryManager:
             context_id=context_id,
             memory_type=memory_type,
             limit=limit,
+            org_id=org_id,
         )
         for r in records:
             self.lifecycle.record_accessed(r.record_id)
@@ -131,12 +150,17 @@ class MemoryManager:
         *,
         reason: str | None = None,
         by: str | None = None,
+        org_id: str | None = None,
     ) -> bool:
         """Delete a memory record and write a tombstone to the underlying store.
 
         The tombstone contains: ``record_id``, timestamp, ``by`` (who deleted),
         ``reason`` (why). Tombstones are persisted in SQLite stores; in-memory
         stores keep them until process restart.
+
+        T9 (S4.4): when ``org_id`` is provided, the record MUST belong to that
+        organization. A cross-organization delete attempt raises
+        PermissionError and never touches the other tenant's data.
 
         If an ``audit_sink`` was configured on the MemoryManager, a structured
         audit event is also emitted:
@@ -153,6 +177,7 @@ class MemoryManager:
         record = await self.store.read(record_id)
         if record is None:
             return False
+        self._assert_record_org(record, org_id)
         ok = await self.store.delete(record_id, by=by, reason=reason)
         if ok:
             self.lifecycle.record_deleted(record_id, reason=reason)
@@ -212,6 +237,7 @@ class MemoryManager:
         user_id: str | None = None,
         context_id: str | None = None,
         execution_id: str | None = None,
+        org_id: str | None = None,
     ) -> int:
         """Delete all WORKING memories matching the isolation dimensions.
 
@@ -219,8 +245,8 @@ class MemoryManager:
         cancel) to garbage-collect transient working memory.
 
         Isolation is enforced by the underlying store's ``query()`` against
-        the composite key ``(agent_id, domain, user_id, context_id)``. When
-        ``execution_id`` is provided, only WORKING records whose
+        the composite key ``(org_id, agent_id, domain, user_id, context_id)``.
+        When ``execution_id`` is provided, only WORKING records whose
         ``execution_id`` matches are deleted — so a long-lived context can
         carry WORKING memory from unrelated past executions and those stay
         untouched.
@@ -232,6 +258,9 @@ class MemoryManager:
 
         Returns the number of records deleted.
         """
+        if org_id is not None:
+            MemoryIsolator.validate_org_id(org_id)
+            MemoryIsolator.assert_org_consistent(agent_id, org_id)
         records = await self.store.query(
             agent_id=agent_id,
             domain=domain,
@@ -239,6 +268,7 @@ class MemoryManager:
             context_id=context_id,
             memory_type=MemoryType.WORKING,
             limit=1000,
+            org_id=org_id,
         )
         if execution_id:
             records = [r for r in records if r.execution_id == execution_id]
@@ -252,16 +282,46 @@ class MemoryManager:
                 self.lifecycle.record_deleted(r.record_id, reason="working_cleanup")
         return deleted
 
-    async def get(self, record_id: str) -> MemoryRecord | None:
+    async def get(
+        self,
+        record_id: str,
+        *,
+        org_id: str | None = None,
+    ) -> MemoryRecord | None:
+        """Read one record. T9: with ``org_id`` set, cross-organization reads
+        raise PermissionError instead of returning the other tenant's data.
+        """
         record = await self.store.read(record_id)
         if record is not None:
+            self._assert_record_org(record, org_id)
             self.lifecycle.record_accessed(record_id)
         return record
 
     async def count(
-        self, *, agent_id: str, domain: str = "default"
+        self,
+        *,
+        agent_id: str,
+        domain: str = "default",
+        org_id: str | None = None,
     ) -> int:
-        return await self.store.count(agent_id=agent_id, domain=domain)
+        if org_id is not None:
+            MemoryIsolator.validate_org_id(org_id)
+            MemoryIsolator.assert_org_consistent(agent_id, org_id)
+        return await self.store.count(agent_id=agent_id, domain=domain, org_id=org_id)
+
+    def _assert_record_org(self, record: MemoryRecord, org_id: str | None) -> None:
+        """T9 guard for by-id operations: an explicit caller org MUST match
+        the record's org. Records without org (legacy "") are readable by
+        callers without an org context only."""
+        if org_id is None:
+            return
+        MemoryIsolator.validate_org_id(org_id)
+        record_org = record.org_id if getattr(record, "org_id", None) else ""
+        if record_org != org_id:
+            raise PermissionError(
+                "memory isolation violation: record belongs to a different "
+                f"organization (record={record_org or 'legacy'!r} caller={org_id!r})"
+            )
 
     async def _maybe_audit(self, event: dict[str, Any]) -> None:
         """Forward an audit event to the configured sink, if any.

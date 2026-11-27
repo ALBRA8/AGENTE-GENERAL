@@ -179,11 +179,12 @@ class Agent:
                 permissions=list(self.identity.permissions),
                 # MEM-WRITE: propagate isolation dimensions from the Session so
                 # the RECORD phase (and any future phase) can route memory
-                # writes into the correct (agent_id, domain, user_id,
+                # writes into the correct (org_id, agent_id, domain, user_id,
                 # context_id) bucket without re-fetching the Session.
                 user_id=session.user_id,
                 context_id=session.context_id,
                 domain=session.domain,
+                org_id=session.org_id,
             )
 
         # Mark state.
@@ -269,6 +270,7 @@ class Agent:
                         user_id=context.user_id,
                         context_id=context.context_id,
                         execution_id=context.execution_id,
+                        org_id=context.org_id,
                     )
             except Exception:  # noqa: BLE001
                 pass  # CORE_ONLY safe — fail silently
@@ -503,6 +505,7 @@ class Agent:
                     domain=run_ctx.domain,
                     user_id=run_ctx.user_id,
                     context_id=run_ctx.context_id,
+                    org_id=run_ctx.org_id,
                 )
                 if memories:
                     retrieved_ids = [rm.record.record_id for rm in memories]
@@ -968,6 +971,7 @@ class Agent:
                         domain=run_ctx.domain,
                         user_id=run_ctx.user_id,
                         context_id=run_ctx.context_id,
+                        org_id=run_ctx.org_id,
                         memory_type=MemoryType.WORKING,
                         content=ctx.get("RECEIVE", {}).get("content"),
                         execution_id=run_ctx.execution_id,
@@ -1034,6 +1038,7 @@ class Agent:
                 domain=run_ctx.domain,
                 user_id=run_ctx.user_id,
                 context_id=run_ctx.context_id,
+                org_id=run_ctx.org_id,
                 memory_type=MemoryType.WORKING,
                 content=structured_content,
                 source="agent",
@@ -1056,6 +1061,7 @@ class Agent:
                 domain=run_ctx.domain,
                 user_id=run_ctx.user_id,
                 context_id=run_ctx.context_id,
+                org_id=run_ctx.org_id,
                 memory_type=MemoryType.EPISODIC,
                 content=receive_content,
                 source="agent",

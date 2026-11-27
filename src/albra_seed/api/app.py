@@ -35,8 +35,16 @@ def create_app(
     title: str = "ALBRA SEED API",
     version: str = "1.0.0",
     a2a_server: Any = None,
+    extra_extensions: list[Any] | None = None,
 ) -> Any:
-    """Create a FastAPI app bound to `runtime`."""
+    """Create a FastAPI app bound to `runtime`.
+
+    ``extra_extensions``: callables invoked as ``extension(app, ctx)``
+    after the seed routers are mounted. Hosted integrations (specialization
+    layer, e.g. ``albra_specialization/*``) use this generic hook to mount
+    their own routes + exception handlers WITHOUT the seed importing them
+    — the seed stays domain-neutral (contamination invariant).
+    """
     fastapi = _require_fastapi()
     from fastapi import Request
     from fastapi.exceptions import RequestValidationError
@@ -210,6 +218,11 @@ def create_app(
     app.include_router(build_public_execution_router(ctx), prefix="/api/v1")
     app.include_router(build_public_audio_router(ctx), prefix="/api/v1")
     app.include_router(build_provider_settings_router(ctx), prefix="/api/v1")
+
+    # Hosted integrations (specialization layer) mount via the generic
+    # extension hook — the seed never imports domain-specific modules.
+    for extension in extra_extensions or []:
+        extension(app, ctx)
 
     # INTERNAL routes — diagnostics implement their own bearer + RBAC checks.
     from albra_seed.api.routes import build_internal_diagnostics_router

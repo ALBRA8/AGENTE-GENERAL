@@ -197,13 +197,21 @@ class Guardrail(ABC):
 
 
 class MemoryRecord(BaseModel):
-    """A single memory record with full provenance."""
+    """A single memory record with full provenance.
+
+    T9 (S4.4): ``org_id`` is a first-class tenant-isolation dimension.
+    It carries the tenant organization (``org_<id>``) that owns the record
+    and is enforced by ``MemoryIsolator`` on every manager/store operation.
+    ``None`` keeps legacy records (written before S4.4) readable — they
+    stay in the legacy "" bucket and can never mix with org-scoped ones.
+    """
 
     record_id: str = Field(default_factory=lambda: new_id("mem"))
     agent_id: str
     domain: str = "default"
     user_id: str | None = None
     context_id: str | None = None
+    org_id: str | None = None
     memory_type: MemoryType
     content: Any
     confidence: float = 0.0
@@ -222,7 +230,9 @@ class MemoryRecord(BaseModel):
 class MemoryStore(ABC):
     """MemoryDV — universal memory store. Five memory types supported:
     episodic / semantic / factual / procedural / working.
-    Memory must be isolatable by agent_id + domain + user/context.
+    Memory must be isolatable by org_id + agent_id + domain + user/context
+    (T9, S4.4: ``org_id`` is the tenant dimension; ``None``/"" is the
+    legacy bucket and never mixes with org-scoped records).
     """
 
     @abstractmethod
@@ -243,6 +253,7 @@ class MemoryStore(ABC):
         context_id: str | None = None,
         memory_type: MemoryType | None = None,
         limit: int = 50,
+        org_id: str | None = None,
     ) -> list[MemoryRecord]:
         raise NotImplementedError
 
@@ -257,5 +268,11 @@ class MemoryStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def count(self, *, agent_id: str, domain: str = "default") -> int:
+    async def count(
+        self,
+        *,
+        agent_id: str,
+        domain: str = "default",
+        org_id: str | None = None,
+    ) -> int:
         raise NotImplementedError
